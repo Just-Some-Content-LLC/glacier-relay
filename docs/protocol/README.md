@@ -1,6 +1,6 @@
 # Glacier Relay Protocol
 
-The wire protocol is intentionally unspecified until M1. M1 stage 1 (2026-10-06) fixed the **envelope** (version 1) and the first event, `mission.playing`, in the native adapter; the wire itself is still to be chosen in stage 2. See `docs/design/M1_FIRST_SEMANTIC_EVENT.md`.
+M1 (2026-10-06) fixed the **envelope** (version 1), the first event `mission.playing` (schema 1) and the wire (NDJSON over an outbound TCP client to a loopback BEAM listener); see `docs/design/M1_FIRST_SEMANTIC_EVENT.md`. M2 Stage A added `mission.stopped` (schema 1, same payload shape), the falling edge of the same predicate; see `docs/design/M2_TELEMETRY.md`, which also states what each event does and does not claim.
 
 ## Logical envelope
 

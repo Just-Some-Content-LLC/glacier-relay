@@ -23,6 +23,8 @@ Capture a bounded useful vocabulary: mission lifecycle, player state, kills/paci
 
 Exit: mission summary generated from events rather than manual state inspection.
 
+**Status: in progress.** Stage A (bounded mission lifecycle: `mission.stopped`, attempts derived from events, connection evidence kept separate, first event-derived summary) is implemented and tested without the game; its runtime experiment is proposed and not yet run. Stage A alone does not complete M2. Design and record: `docs/design/M2_TELEMETRY.md`. Code: ZHMModSDK `relay/m2`, `relay/` here.
+
 ## M3 — Live observability
 Phoenix/LiveView dashboard for current mission state and event stream.
 
