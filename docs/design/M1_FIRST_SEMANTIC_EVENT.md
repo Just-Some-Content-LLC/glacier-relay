@@ -189,3 +189,85 @@ Commands, player transform streaming, registry serialization, generic RPC, authe
 4. **Code location:** new `Mods/GlacierRelay` (option A) or inside Hitmen (option B)?
 5. **BEAM environment:** Elixir in WSL2 or on Windows, and `relay/` in this repository?
 6. **Staging:** approve building Stage 1 now (no network), with Stage 2 as a separate authorization?
+
+---
+
+## 12. Stage 1 implementation record (2026-10-06)
+
+Decisions 1 to 6 were approved as written, with two refinements: Stage 2's wire is an approved *direction*, not yet an implementation; and BEAM will run in WSL2, with Windows-native → WSL2 loopback connectivity to be verified explicitly in Stage 2, not assumed.
+
+**Built, not deployed.** `GlacierRelay.dll` has never been loaded by the game. The Stage 1 runtime experiment needs its own authorization.
+
+### Branch and commits
+
+`Just-Some-Content-LLC/ZHMModSDK` branch `relay/m1`, created from the M0 baseline `5cc7f1b1` (not from the Hitmen branch; Hitmen stays commented out of the build and untouched). Head `0640cc89`.
+
+| Commit | Change |
+|---|---|
+| `0ab5a0c5` R1 | `Mods/GlacierRelay` skeleton, wired into `MODS`; `RelayLog` (durable log derived from the probe's, fmt + Win32 only) |
+| `d6656164` R2 | `SceneState` (plain values); `SceneObservation` (the Glacier-facing reads); per-frame observation with change logging |
+| `39a015a7` R3 | `MissionObserver` (predicate + edge), `RelayEvent.h`; `GlacierRelayTests` target without the SDK |
+| `46803c99` R4 | `RelayEnvelope` + JSON quoting, `IRelaySink`, `LogRelaySink`, `RelayAdapter`; tests |
+| `0640cc89` R5 | Plugin publishes `mission.playing` from the frame update |
+
+### Architecture as built
+
+```
+Mods/GlacierRelay/Src
+  Glacier-facing (include SDK headers):      GlacierRelay.cpp/.h, SceneObservation.cpp/.h
+  Engine-independent (no SDK header):        SceneState.h, MissionObserver.cpp/.h, RelayEvent.h,
+                                             RelayEnvelope.cpp/.h, Json.cpp/.h, IRelaySink.h,
+                                             LogRelaySink.cpp/.h, RelayAdapter.cpp/.h, RelayLog.cpp/.h
+Mods/GlacierRelay/Tests                      MissionObserverTests.cpp, RelayAdapterTests.cpp
+```
+
+The split is enforced, not just documented: `GlacierRelayTests` compiles every engine-independent file with only `Mods/GlacierRelay/Src` and the vcpkg include directory on its path and links fmt only, so an SDK include in any of them fails the build.
+
+Per frame: `SceneObservation::ObserveScene()` → `SceneState` → `MissionObserver::Update()` → optional `MissionPlayingEvent` → `RelayAdapter::Publish()` → `PublishedEnvelope` → `LogRelaySink::Publish()` → durable log. Everything runs on the frame thread inside the probe's log-only fault guard. No hooks are registered at all.
+
+### Event, predicate, edge, envelope
+
+- `MissionObserver::IsMissionPlaying(scene)` = `available && scene_type == "mission" && loading_stage == 8 && scene_loaded`. Inputs are read from the scene context and application engine each frame (`m_SceneInitParameters.m_Type`, `m_LoadingStage`, `m_pScene`, `m_bSceneLoaded`); no hook, so restarts are covered.
+- `Update()` returns an event only on false → true. Unobservable state counts as false.
+- `MissionPlayingEvent { scene_resource, scene_type, codename_hint, optional game_session_id }`. The session id is read from inline player slot 0 on the edge frame only, never through the SDK's array model, and nothing keys on it.
+- Envelope v1 as in section 4; payload schema version 1. Produced text, from the standalone replay:
+
+```json
+{"protocol_version":1,"adapter_instance_id":"430c0943-ba88-4795-aa88-e9f09c4ae47c","sequence":1,"timestamp":"2026-10-06T21:44:35.419Z","event_type":"mission.playing","schema_version":1,"payload":{"scene_resource":"assembly:/_PRO/Scenes/Missions/Paris/_Scene_FashionShowHit_01.entity","scene_type":"mission","codename_hint":"Peacock","game_session_id":"2516109819408417528-6f46ac15-6033-4821-9d65-5ed7659392bb"}}
+```
+
+### `IRelaySink` contract
+
+`void Publish(const PublishedEnvelope&)`, called on the frame thread, must not block. `PublishedEnvelope` is `{ event_type, sequence, json }`, owned strings and an integer; the JSON is one object without a trailing newline. The header states that the interface must not grow toward `IHitmenTransport` (no listen, no connection handles, no inbound bytes). `LogRelaySink` writes `published <type> #<seq>: <json>` to the durable log and does nothing else.
+
+### Tests performed
+
+1. `GlacierRelayTests` (unit, SDK-free): predicate cases; edge detection replaying experiment 4's sequence (boot, menu, Paris, restart without `LoadScene`, return to menu) with exactly one event per mission entry and none for the menu; event without session id; observability loss and regain; JSON quoting; payload with and without session id; exact envelope text; sequence numbering; sink receives owned values and no newline; UUID v4 shape and distinctness; timestamp shape. All pass.
+2. Standalone end-to-end replay (`%TEMP%\glacier-m0\hitmen\relaytest\`, not committed): the same scene sequence through `MissionObserver` → `RelayAdapter` → the real `LogRelaySink` → `RelayLog`. Exactly two envelopes, sequences 1 and 2, both parse as JSON with the expected keys.
+
+### Clean build and inertness
+
+Clean configure, build and tests from a deleted build tree at `0640cc89`: pass, no warnings from relay sources. `GlacierRelay.dll` SHA-256 `01adc65857468e9b42b4a812ec649f380f8fa18d0c0cfae1700ead2eb671548d`.
+
+| Check | Result |
+|---|---|
+| Imports | `ZHMModSDK.dll`, `KERNEL32`, `USER32`, `SHELL32`, `IMM32` only; no socket or HTTP API |
+| Exports | the three SDK plugin exports only |
+| Hooks | none registered (`AddDetour` absent from the source) |
+| Engine writes | none: no assignment through any `Globals::` pointer, no `SetProperty`, no transform setter, no actor access, no `Functions::` calls |
+| UI | none (no ImGui) |
+| Threads | none created by the adapter; everything runs on the frame thread |
+| SDK core | unchanged; `CMakeLists.txt` differs from baseline only by the `GlacierRelay` entry |
+| Hitmen | untouched and not built on this branch |
+
+### Proposed Stage 1 runtime experiment (awaiting authorization)
+
+Same discipline as the probe run (`research/HITMEN_RUNTIME_PROBE.md`), with `GlacierRelay.dll` as the single variable against M0:
+
+1. Pre-flight: game version unchanged; M0 hashes; `Retail\mods\GlacierRelay.dll` absent; no Hitmen DLL present; backups of `mods.ini` and a `Retail` hash list.
+2. Install: copy `_build\relay-x64-Debug\Mods\GlacierRelay\GlacierRelay.dll` to `Retail\mods\`; add `[glacierrelay]` to `mods.ini`. M0 mod set otherwise.
+3. Run: launch via Steam → menu → attach Visual Studio (native) → Paris → walk → restart → exit to menu → **a second mission** → walk → exit to menu → quit.
+4. Pass: envelopes `#1` (Paris), `#2` (restart), `#3` (second mission) in the durable log, none at the menu, each valid JSON with the expected scene resource; `mission playing` transitions coherent; no `ERROR`/`FAULT`; game stable; exit code 0.
+5. Rollback and verify by hash, as before.
+
+Stage 2 (TCP sink, BEAM listener in WSL2, explicit loopback connectivity check) is not started.

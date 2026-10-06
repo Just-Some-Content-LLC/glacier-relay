@@ -1,6 +1,6 @@
 # Glacier Relay Protocol
 
-The wire protocol is intentionally unspecified until M1.
+The wire protocol is intentionally unspecified until M1. M1 stage 1 (2026-10-06) fixed the **envelope** (version 1) and the first event, `mission.playing`, in the native adapter; the wire itself is still to be chosen in stage 2. See `docs/design/M1_FIRST_SEMANTIC_EVENT.md`.
 
 ## Logical envelope
 
