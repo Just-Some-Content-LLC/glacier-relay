@@ -396,3 +396,63 @@ Same discipline as the Stage 1 run, with the Stage 2 DLL and BEAM up:
 4. Pass: BEAM logs `mission.playing #1` (Paris), `#2` (restart), `#3` (Sapienza) with the native log's instance id, sequence numbers, timestamps, scene resources and session ids matching line for line; `MissionSession` state shows that instance with `last_sequence: 3`, `gaps: []`; nothing at the menu; the native log shows `sent #1..#3` and no drops; no `ERROR`/`FAULT`; game stable; exit code 0; BEAM logs the disconnect when the process ends.
 5. Optionally, while in Sapienza: stop and restart BEAM once to see the reconnect in the game (no event is expected during that window). Only if approved.
 6. Rollback and verify by hash. Stop BEAM.
+
+---
+
+## 15. M1 final runtime experiment (2026-10-06, 22:41Z to 22:50Z) — PASS
+
+Authorized explicitly. Objective: prove `Glacier runtime → semantic observation → mission.playing edge → envelope v1 → TcpRelaySink → Windows/WSL2 loopback → BEAM Wire.Connection → decoded event → MissionSession` with a live game.
+
+Setup: `GlacierRelay.dll` from `relay/m1` `a28840e6` (SHA-256 `5ab6e64c…60f25`), M0 mod set plus GlacierRelay, defaults (`tcp`, 4747, no `glacierrelay.ini`). BEAM: `iex -S mix` in WSL2 (OTP 28.4.2, Elixir 1.19.6), output captured; listening only on `127.0.0.1:4747`; `wslrelay.exe` forwarding on the Windows side. Pre-flight: game `3.280.0.0` / build `24833614`, all 26 M0 hashes, no stale artifacts, `mods.ini` = M0, both repositories clean (`a28840e6`, `efdc9c9`), port 4747 free on both sides before the listener started. Two game-directory changes, both reverted afterwards.
+
+### Results
+
+| Stage | Result | Evidence |
+|---|---|---|
+| R1 wire at menu | ✅ | Native: module loaded, adapter instance `d9281e62-1a66-480f-b060-9c763d28b524`, `tcp sink: connected to 127.0.0.1:4747` at 22:42:54.295Z, 1 ms after creation. BEAM: `accepted 127.0.0.1:42288` at the same instant. Menu scene 5 → 8, type empty. No event, no sequence consumed, no warnings. Debugger attached afterwards without disturbance. |
+| R2 Paris load | ✅ | `#1` at 22:44:38.230Z, same frame as stage 8 + loaded. Native `queued #1`, `sent #1 (412 bytes)`; BEAM logged it 77 ms later. No further event while the predicate stayed true. |
+| R3 Paris restart | ✅ | Predicate dropped at 22:45:44.243Z (no `LoadScene` involved), `#2` at 22:45:55.143Z, BEAM 2 ms later, no gap, exactly one event, session id changed. Menu afterwards: no event. |
+| R4 Sapienza | ✅ | Loaded flag true at stage 7 (22:47:20.398Z); `#3` only at stage 8 (22:47:20.571Z); BEAM 2 ms later. Menu afterwards: no event. |
+| R5 normal exit | ✅ | Game terminated normally; no native teardown line (as always); BEAM saw the TCP close: `disconnected after 3 line(s), 0 rejected` at 22:48:29.785Z. BEAM stopped afterwards. |
+
+Pass criteria, all met: exactly three events (#1 Paris, #2 restart, #3 Sapienza); one instance id; sequences 1, 2, 3; schema version 1; no menu events; no drops (`sent 3`, `dropped 0`); no gaps; `MissionSession` final state `last_sequence: 3, received: 3, gaps: [], playing?: true`; no `WARN`/`ERROR`/`FAULT` in 56 native lines; no debugger break; stable game; normal exit.
+
+### Envelope comparison
+
+| Field | Native log | BEAM | Match |
+|---|---|---|---|
+| protocol_version / schema_version | 1 / 1 (adapter line; schema fixed in source) | 1 / 1 (decoded struct) | ✅ |
+| adapter_instance_id | `d9281e62-1a66-480f-b060-9c763d28b524` | same, all three events and in `MissionSession` | ✅ |
+| sequence | sent #1, #2, #3 | #1, #2, #3 | ✅ |
+| timestamp | 22:44:38.230Z, 22:45:55.143Z, 22:47:20.571Z (sent-line times) | identical in the `timestamp` field | ✅ |
+| event_type | `mission.playing` (queued lines) | `mission.playing` | ✅ |
+| scene_resource / scene_type / codename_hint | edge-frame `scene:` lines: Paris `Peacock` `mission` ×2, `CoastalTown/Mission01` `Octopus` `mission` | identical | ✅ |
+| game_session_id | not logged natively with the TCP sink (see below) | `…741370494288-3c7e9125…`, `…740562344438-6a0d92fc…`, `…739755688879-5642b9af…`, three distinct values | one-sided |
+| body size | 412, 412, 403 bytes | not logged; the 9-byte difference equals the resource-name length difference between the Paris and Sapienza paths | consistent |
+
+`MissionSession.state()` queried in the live `iex` session after the quit:
+
+```
+"d9281e62-1a66-480f-b060-9c763d28b524" => %Instance{last_sequence: 3, playing?: true, received: 3, gaps: [],
+  last_event: %Envelope{sequence: 3, timestamp: "2026-10-06T22:47:20.571Z", event_type: "mission.playing", schema_version: 1,
+    payload: %{scene_resource: ".../CoastalTown/Mission01.entity", scene_type: "mission", codename_hint: "Octopus", game_session_id: "2516109739755688879-..."}}}
+```
+
+### TCP lifecycle observed
+
+One connection for the whole session: connect at 22:42:54.295Z (1 ms), three sends, close observed by BEAM at 22:48:29.785Z when the game process ended. No reconnects, no drops, no inbound bytes. Native log lines came from two threads: the frame thread (52 lines) and the sender thread (4 lines).
+
+### Observations and open items (not acted on)
+
+1. **Native-side body logging.** `TcpRelaySink` logs sequence, timestamp and byte count but not the JSON body (`LogRelaySink` did). The session id was therefore verified only on the BEAM side. A sink-independent "published" line in the adapter would make both sides comparable field by field. Candidate change after review.
+2. **Latency.** First event 77 ms sender-to-log (first decode path in BEAM), then 2 ms. Not a target; recorded for later.
+3. **`playing?` stays true after the game exits**, because no `mission.ended` event exists and the session does not react to the disconnect. Expected under the M1 contract; a lifecycle decision for M2.
+4. The session id's leading number again decreased monotonically across the three entries.
+
+### Cleanup
+
+`GlacierRelay.dll` removed, `mods.ini` restored, BEAM stopped (no listener on either side), all 107 `Retail` files verified against pre-flight hashes, no relay or Hitmen file under the game root. Evidence (native log SHA-256 `cd83c23c…1519`, BEAM output, SDK log, `mods.ini` before/after, `Retail` listings and hashes) in `%TEMP%\glacier-m0\hitmen\m1-run1\`.
+
+### M1 exit criterion
+
+`ROADMAP.md` M1: "a running WOA mission causes one versioned semantic event to be received and validated by Elixir." Satisfied three times in one run: a live HITMAN process produced `mission.playing` (envelope v1, schema v1), it crossed the native/BEAM boundary over TCP loopback, and `GlacierRelay.Wire.Envelope` validated it into OTP-owned `MissionSession` state. **M1 is a candidate for completion**, pending review. `ROADMAP.md` is unchanged.
