@@ -155,3 +155,63 @@ Together with `External/RakNet` in the SDK tree, this is direct evidence for res
 ## Artifacts
 
 Not committed (local only, `%TEMP%\glacier-m0\hitmen\`): `w1.log`, `w2.log`, `probe/probe.log` (full 45-error output), `probe/run-probe.cmd`, `shim/`.
+
+---
+
+# Experiment 2: GNS removal and mechanical repairs
+
+Date: 2026-10-06
+
+Direction (agreed after experiment 1): do **not** repair GNS. Replace it with a transport seam, fix only the mechanical drift, and defer anything that changes meaning (H1, H2, H3, H7) for deliberate investigation. No runtime loading.
+
+## Commits on `research/hitmen-revival`
+
+Each commit is one root cause, so the history stays bisectable.
+
+| Commit | ID | Change |
+|---|---|---|
+| `04329728` | S1 | Replace GNS with `IHitmenTransport` / `NullHitmenTransport` (`Mods/Hitmen/Src/HitmenTransport.h`). Reverts W1's GNS package/link and W2's `openssl`. Message encode/decode is unchanged. The historical contract is preserved in `HITMEN_GNS_CONTRACT.md`. |
+| `c9da62fc` | D2 | `#include "backends/imgui_impl_dx12.h"` → `#include <imgui_impl_dx12.h>` (vcpkg layout). Hitmen never calls the DX12 backend; the include is kept so any transitive `imgui.h` dependency is preserved. |
+| `09a45c72` | H4 | `#include "Glacier/ZActor.h"` |
+| `6b6240ad` | H5 | `TEntityRef::m_ref` → `m_entityRef` (5 uses) |
+| `6e1881d7` | H6 | `SBrickAllocationInfo::entityRef` / `runtimeResourceID` → `m_EntityRef` / `m_RuntimeResourceID` |
+| `2effb125` | H9 | `ZEntityRef::m_pEntity` → `m_pObj` (new, see below) |
+
+After S1, the build files differ from upstream `5cc7f1b1` **only** by `Hitmen` being re-enabled in `MODS`. There is no GNS and no OpenSSL; configure removed the `openssl` vcpkg package.
+
+## Newly exposed root causes
+
+Fixing the experiment-1 causes uncovered errors they had been hiding:
+
+| # | Root cause | Errors | Hidden by | Introduced upstream | Classification |
+|---|---|---|---|---|---|
+| H8 | `ZActorManager::m_aActiveActors` no longer exists. Upstream **reinterpreted the layout**: `TEntityRef<ZActor> m_aActiveActors[1000]` at `0x1F68`, indexed by `Globals::NextActorId`, is now `TMaxArray<TEntityRef<ZActor>, 500> m_activatedActors` at `0x1F68`, beside the new `m_aActors[500]`, `m_enabledActors`, `m_aliveActors` and **`m_aliveHm5Characters`** lists (`Hitmen.cpp` `SendNpcPositions`, `OnNpcPositions`). | 10 | H4 (incomplete type) | `c2e1cc3d` 2025-12-08 | **Glacier type/layout drift, semantic.** The NPC path's cross-instance identity is "index into this array", so this is not a rename. **Deferred.** |
+| H9 | `ZEntityRef::m_pEntity` renamed `m_pObj` (same `ZEntityType**`), passed to `GetSubEntity` in the `hitmen.brick` lookup | 1 | H6 | `4b2c64b4` 2026-01-21 (same refactor as H5) | ZHM API rename. **Fixed.** |
+
+Root causes in total: 9 (H1 to H9).
+
+## Build after the mechanical repairs
+
+Real build (no probe or shim), target `Hitmen`, branch head `2effb125`: **31 errors, all in `Hitmen.cpp` / `Hitmen.h`, 0 warnings in Hitmen**.
+
+| Root cause | Errors | Lines |
+|---|---|---|
+| H1 `LoadScene` / `ZSceneData` | 13 | `Hitmen.h:41`, `Hitmen.cpp:54, 441` |
+| H2 `ZPlayerRegistry_GetLocalPlayer` hook | 2 | `55` |
+| H3 `Get/SetWorldMatrix` | 3 | `129, 184` (the H3 uses at `159, 212` are still hidden behind H8) |
+| H8 `ZActorManager` actor storage | 10 | `143–159, 208–212` |
+| H7 `ZPlayerRegistry::m_pLocalPlayer` | 3 | `368` |
+| **Total** | **31** | |
+
+Verified: **no errors come from the transport seam or any mechanical repair.** GNS and OpenSSL are fully gone from configure and build.
+
+## Observations for the deferred work
+
+Reading the full source changes the risk assessment for two of the deferred causes:
+
+- **H1 is low-risk in behavior.** Hitmen's `OnLoadScene` detour is a pass-through: its body is only commented-out scene-swap experiments, and it returns `Continue`. The decision is whether Hitmen needs a load-scene hook at all; the scene lifecycle check for the dormant revival may be better served by `OnClearScene` plus the existing `m_bSceneLoaded` poll.
+- **H2 is low-risk in behavior.** The `GetLocalPlayer` detour is also a pass-through (call the original, return the result). **Hitmen already uses the SDK's replacement `SDK()->GetLocalPlayer()`** (`OnFrameUpdate`, `OnDrawMenu`). The hook registration looks vestigial.
+- **H7** is confined to a single debug log line in the "Player registry" menu button. The rest of that button dumps `m_aPlayerData[0..3]` controller fields (RakNet replica, multiplayer flags, net player, player IDs), which **compile against the current SDK unchanged**. That button is the ready-made instrument for the H2/H7 "how does the game represent the local player now" investigation.
+- **H3** and **H8** sit only on the networking send/receive paths: `SendInputsAndPosition` and `SendNpcPositions` (transform reads), and `OnInputsAndPosition` and `OnNpcPositions` (transform writes). In the current source **none of these paths can run**. The sends and `ProcessMessages` / `UpdateConnection` are only called from the commented-out block in `OnFrameUpdate`, and `NullHitmenTransport` never delivers a message.
+
+So reaching a building dormant DLL depends mainly on decisions about what to *remove or disable* in the dormant configuration, rather than on recreating lost engine behavior.
