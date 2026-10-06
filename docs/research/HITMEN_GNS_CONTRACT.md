@@ -101,4 +101,13 @@ That layout no longer exists in the SDK (H8): `ZActorManager` was reinterpreted 
 
 ## Revival seam
 
-`Mods/Hitmen/Src/HitmenTransport.h` (`research/hitmen-revival`) defines `IHitmenTransport`. Each method is annotated with the GNS calls it replaces: `StartServer`, `Connect`, `PollConnected`, `ReceiveMessages` and `SendUnreliable`. The only implementation, `NullHitmenTransport`, never opens a socket and logs a warning if the UI tries to host or connect. The message encode/decode code above is unchanged and still drives through the seam. A future implementation of the seam is the natural attachment point for the native-adapter → BEAM boundary.
+`Mods/Hitmen/Src/HitmenTransport.h` (`research/hitmen-revival`) defines `IHitmenTransport`. Each method is annotated with the GNS calls it replaces: `StartServer`, `Connect`, `PollConnected`, `ReceiveMessages` and `SendUnreliable`. The only implementation, `NullHitmenTransport`, never opens a socket and logs a warning if the UI tries to host or connect. At `04329728` the message encode/decode code above was unchanged and still drove through the seam. A future implementation of the seam is the natural attachment point for the native-adapter → BEAM boundary.
+
+### Status after experiment 3 (2026-10-06)
+
+The message code no longer compiles into the DLL. `de76e4bc` (H3) and `b8c66ead` (H8) wrap `ProcessMessages`, `SendInputsAndPosition`, `OnInputsAndPosition`, `SendNpcPositions` and `OnNpcPositions` in `#if 0`. The text is unchanged and stays in `Hitmen.cpp` as evidence for this document. Their declarations remain in `Hitmen.h`, so any call to one fails at link time. Of the seam, only `StartServer`, `Connect` and `PollConnected` still have live callers (the menu and the unused `UpdateConnection`), all ending in `NullHitmenTransport`.
+
+Two findings from that work refine the contract above:
+
+- **`SetWorldMatrix` was probably already the editor setter.** In the SDK's vtable model, today's `SetObjectToWorldMatrixFromEditor` sits in the slot `SetWorldMatrix` had in 2023, so the 2023 receive path most likely called the same engine function under an older guess at its name. Whether that function is suitable for runtime replication is still open (`HITMEN_COMPILE_ARCHAEOLOGY.md`, experiment 3, H3).
+- **The actor array held 500 entries, not 1000, and is a dense list.** The index sent in `NpcPositions` was a position in `m_activatedActors`, not a slot id. See `HITMEN_ENTITY_IDENTITY.md`.

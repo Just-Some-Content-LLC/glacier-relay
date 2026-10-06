@@ -215,3 +215,139 @@ Reading the full source changes the risk assessment for two of the deferred caus
 - **H3** and **H8** sit only on the networking send/receive paths: `SendInputsAndPosition` and `SendNpcPositions` (transform reads), and `OnInputsAndPosition` and `OnNpcPositions` (transform writes). In the current source **none of these paths can run**. The sends and `ProcessMessages` / `UpdateConnection` are only called from the commented-out block in `OnFrameUpdate`, and `NullHitmenTransport` never delivers a message.
 
 So reaching a building dormant DLL depends mainly on decisions about what to *remove or disable* in the dormant configuration, rather than on recreating lost engine behavior.
+
+---
+
+# Experiment 3: deferred causes and the dormant build gate
+
+Date: 2026-10-06
+
+Direction: resolve H1, H2, H3, H7 and H8 by understanding what the 2023 code intended and what the current SDK provides, keeping only behavior whose meaning is understood. The goal is a Hitmen DLL that builds and is behaviorally inert, not restored multiplayer. **No Hitmen DLL was copied, installed or loaded. No game files were touched.**
+
+## Commits on `research/hitmen-revival`
+
+| Commit | ID | Change | Hitmen errors after |
+|---|---|---|---|
+| `de96af48` | H1 | Adapt the `OnLoadScene` detour to `bool (ZEntitySceneContext*, SSceneInitParameters&)` | 18 (by count; not rebuilt per commit) |
+| `64b2c19f` | H2 | Remove the `GetLocalPlayer` detour | 16 |
+| `5763007a` | H7 | Replace the `m_pLocalPlayer` debug line with the player data array's size and begin pointer | 13 |
+| `de76e4bc` | H3 | Compile out `ProcessMessages`, `SendInputsAndPosition`, `OnInputsAndPosition` (`#if 0`) | 10 |
+| `b8c66ead` | H8 | Compile out `SendNpcPositions`, `OnNpcPositions` (`#if 0`) | **0** |
+
+The per-commit error counts are the experiment-2 counts minus each fixed cause; only `b8c66ead` and the final head were actually built. H3 was committed before H8 because `ProcessMessages` references `OnNpcPositions`: excluding the dispatcher first means no commit leaves a live reference to an excluded function.
+
+## H1: scene lifecycle
+
+**What the old hook did.** Nothing. Since `773c7cc7` (2023-04-09) the detour body has been commented-out scene-swap experiments (forcing a different `m_sceneName` and brick list) followed by `return HookResult<void>(HookAction::Continue())`. There is no code before or after a call to the original, and it never called the original itself.
+
+**Current hook semantics.** `Hooks::ZEntitySceneContext_LoadScene` is `Hook<bool(ZEntitySceneContext*, SSceneInitParameters&)>`. The SDK runs each registered detour in order. A detour that returns `HookAction::Continue()` produces no return value; when every detour continues, the SDK calls the original and returns its result (`Hook.h`, `Hook<ReturnType(Args...)>::Call`). A detour that returns `HookAction::Return(value)` ends the chain: later detours and the original do not run.
+
+**The `bool`.** Not documented upstream. `f0e85638` (2025-12-17, "Change ZEntitySceneContext::LoadScene return type from void to bool") changed the hook signature and every in-tree detour mechanically, with no explanation. No SDK or mod code reads the value, and every in-tree detour returns `Continue`. The vtable declaration in `ZScene.h` still says `virtual void LoadScene(...)`. Its meaning is **unknown**. Because Hitmen's detour continues, it never has to produce one.
+
+**Does Hitmen need more than call-through?** No. Scene-transition reset logic lives in `OnClearScene` (clears `m_OtherHitman`, `m_FirstHitman`, `m_SceneLoaded`), and scene readiness is polled in `OnFrameUpdate`. Neither depends on the load hook.
+
+**Adaptation.** Signature and `HookResult` type only. The commented-out experiments are left verbatim, old field names included.
+
+**Correction to experiments 1 and 2.** They attributed all of H1 to `13ae7b83`. That commit renamed `ZSceneData` to `SSceneInitParameters` (same layout, fields renamed). The `void` → `bool` change is the separate, later `f0e85638`.
+
+## H2 and H7: local player and the player registry
+
+Researched together; the code changes are independent and committed separately.
+
+**H2: the detour was removed, not reconstructed.**
+
+- The hook object has not existed since `c3ca2d5b` (2024-12-13). The engine function is no longer located by the SDK at all.
+- The detour body, unchanged since 2023, was `CallOriginal` then `Return(out)`: an identity pass-through that touched no Hitmen state.
+- Hitmen's two local-player lookups were switched upstream to `SDK()->GetLocalPlayer()` (`17bdce46`, `982f28ab`). That function walks `ZPlayerRegistry::m_PlayerData` directly and does not go through a hook, so a detour could not observe or change it even if the hook were restored.
+- `m_FirstHitman`, the only member plausibly related, is never assigned. The detour reads as scaffolding for redirecting which Hitman counts as local, never written.
+
+There is no evidence that Hitmen depended on anything the detour did.
+
+**H7: `m_pLocalPlayer` was one of three readings of the same 8 bytes.**
+
+| Date | Commit | SDK model of `ZPlayerRegistry` at `0x390` |
+|---|---|---|
+| 2023-03-06 | `89d417b1` | `SNetPlayerData* m_pLocalPlayer` |
+| 2024-12-26 | `982f28ab` | `SNetPlayerData* m_pPlayerData[2]`; `int64_t m_nLocalPlayerId` at `0x3A0` |
+| 2025-09-26 | `a4a9f2a4` | `TArray<SNetPlayerData> m_PlayerData` |
+
+A `TArray` is three pointers (begin, end, allocation end). So the 2023 "local player" pointer is the array's begin pointer, the 2024 "second player" pointer is its end pointer, and the 2024 "local player id" is its allocation-end pointer. No replacement was invented: the single debug line that used the field now prints `m_PlayerData`'s size and begin pointer, which is the same memory under the current reading.
+
+**What the current `ZPlayerRegistry` exposes without mutation** (all by plain reads of `Globals::PlayerRegistry`):
+
+- `m_aPlayerData[4]` at `0x50`: four inline `SNetPlayerData` slots (`0xD0` bytes each). Per slot: `m_nPlayerId`, and a `ZNetPlayerController` with `m_pRakNetReplica`, `m_bLocalPlayer`, `m_bConnectedToMultiplayer`, `m_pNetPlayer`, `m_SelectedCharacterId`, `m_OutfitId`, a session id string, `m_HitmanEntity`, and several unnamed flag words.
+- `m_PlayerData` at `0x390`: the list of registered players. `ModSDK::GetLocalPlayer` returns the `m_HitmanEntity` of the first entry with no `m_pNetPlayer`, else the first entry. Upstream's own comment says this "probably won't work correctly in multiplayer".
+- The inline slots end exactly where the array begins (`0x50 + 4 × 0xD0 = 0x390`). Whether `m_PlayerData` is a view over those slots or separate storage is **not known**; the registry dump now reports it.
+
+The field annotations in `ZPlayerRegistry.h` (for example "0000000B when in multiplayer", "0x55bd4b73 for player one") are upstream's notes from an unknown game version. None are verified on `3.280.0.0`.
+
+## H3: transform access
+
+All four H3 sites were inside the 2023 sync functions, which were already unreachable. They were compiled out rather than renamed.
+
+- **Reads** (`GetWorldMatrix` → `GetObjectToWorldMatrix`): the accessor returns the cached world matrix and first calls the engine's `ZSpatialEntity_UpdateCachedWorldMat` if the entity's dirty flag is set. It is the accessor every in-tree mod uses. The dormant build uses it for the local Hitman only (observability, below).
+- **Writes** (`SetWorldMatrix` → `SetObjectToWorldMatrixFromEditor`): not substituted. New finding: in the SDK's vtable model the renamed setter occupies the **same slot** `SetWorldMatrix` had in 2023 (12th `ZSpatialEntity` virtual, immediately before `CalculateBounds`). `4b3394e6` briefly swapped the two declarations; `df472b3d` restored the order the same day. So the rename appears to correct the name of the function the 2023 code was already calling, rather than point at a different one. That does not settle whether an editor-path setter is appropriate for runtime replication (it may bypass or trigger physics, room and streaming updates differently from gameplay movement). The question stays open and transform writes stay out of the build.
+
+## H8: NPC identity
+
+Compiled out, not ported. The 2023 protocol used the index into `ZActorManager::m_aActiveActors` as the NPC's cross-machine identity. The current model shows that array was really a 500-entry dense list of activated actors (`m_activatedActors`) whose order is local to one process. Full findings, the identifiers the engine does offer, and requirements for a stable scheme are in `HITMEN_ENTITY_IDENTITY.md`.
+
+## Dormant build gate
+
+Clean configure and build of target `Hitmen` (build tree deleted first; preset `x64-Debug` in `_build/hitmen-x64-Debug`; no install step), run twice: at `b8c66ead` (after H8) and at the final head `e748cdde` (after the observability commits below).
+
+| # | Check | Result | Evidence |
+|---|---|---|---|
+| 1 | Clean configure and build | ✅ | Both runs exit 0; `Hitmen.dll` linked. No warnings from Hitmen sources. |
+| 2 | GNS absent | ✅ | No `gamenetworkingsockets` in `CMakeCache.txt` or `build.ninja`; no `_deps` entry; the `CPMAddPackage` and link lines are still commented out |
+| 3 | OpenSSL not reintroduced | ✅ | Not in `vcpkg.json`; no `openssl` under `vcpkg_installed`; no `openssl`/`libssl`/`libcrypto` in the cache or build file |
+| 4 | `NullHitmenTransport` is the only transport | ✅ | `IHitmenTransport` has one implementation; the only construction site is `std::make_unique<NullHitmenTransport>()` |
+| 5 | Hitmen cannot open a socket | ✅ | `Hitmen.dll` imports only `ZHMModSDK.dll`, `KERNEL32`, `USER32`, `SHELL32`, `IMM32`. No `ws2_32`, `mswsock`, `winhttp` or `wininet`, and no socket- or HTTP-named import. |
+| 6 | No remote transform mutation path | ✅ | With `#if 0` regions and comments stripped, the Hitmen sources contain no `SetObjectToWorldMatrix*`, `SetWorldMatrix`, `SetProperty`, `memcpy`, `ReadBytes` or input-processor access. The object file has no `OnInputsAndPosition` or `ProcessMessages` symbol. |
+| 7 | No NPC synchronization path | ✅ | Same scan: no `ActorManager`, `m_activatedActors`, `m_aActiveActors` or `NextActorId`. No `SendNpcPositions` / `OnNpcPositions` symbol. |
+| 8 | Hitmen DLL builds | ✅ | `_build/hitmen-x64-Debug/Mods/Hitmen/Hitmen.dll` with `Hitmen.pdb` |
+
+Scope notes for check 5: `SHELL32!ShellExecuteW` and the `IMM32` imports are attributed to the statically linked Dear ImGui (open-link and IME support), not to Hitmen code; this attribution was not confirmed symbol by symbol. The statement is about `Hitmen.dll` only. The SDK core and other mods (for example the Editor mod's WebSocket server) are upstream baseline behavior and outside this gate.
+
+Binary compatibility with the installed baseline: every one of the 14 functions `Hitmen.dll` imports from `ZHMModSDK.dll` is exported by the M0 build of that DLL (`_install/x64-Debug/bin/ZHMModSDK.dll`, SHA-256 `1358c4e7…`, the file M0 installed). The branch changes nothing under `ZHMModSDK/`, so the SDK core the game already has is the one Hitmen was compiled against.
+
+### What the dormant build still does
+
+Stated plainly, so "inert" is not overread:
+
+- Registers two detours (`OnClearScene`, `OnLoadScene`) that only log and continue.
+- Registers a per-frame update with the engine's game loop manager and unregisters it in the destructor.
+- Each frame, once a scene is loaded: reads scene state, calls `SDK()->GetLocalPlayer()`, queries the `ZSpatialEntity` interface, and iterates the loaded-brick list looking for `hitmen.brick` (the legacy second-Hitman discovery, which only goes further if that brick is present).
+- Reads the local Hitman's world matrix (which can trigger the engine's lazy cache refresh), and reads `ZPlayerRegistry`.
+- `ZGuid::ToString` in the registry dump allocates and frees a small `ZString` through the SDK.
+- Draws two menu buttons. "Hitmen" opens a window whose "Start server" button reaches `NullHitmenTransport::StartServer`, which logs a warning and returns false.
+
+It does not create a second Hitman (that is content in `hitmen.brick`, added to global data by the SMF content mod in `Mods/Hitmen/Smf`, which is **not** deployed), write any transform, property or input state, read or write any actor, or open any network connection.
+
+## Observability commits
+
+Added only after the gate passed. No behavior change; details and the proposed first-run procedure are in `HITMEN_RUNTIME_PROBE.md`.
+
+| Commit | ID | Change |
+|---|---|---|
+| `ff19bd57` | O1 | Durable per-process log (`HitmenLog`), unbuffered, outside the game directory |
+| `0838b04d` | O2 | Module attach/detach, constructor/destructor, detour registration, `OnEngineInitialized` |
+| `874ad676` | O3 | `OnLoadScene` / `OnClearScene` enter and exit; observed scene-state changes |
+| `723d673d` | O4 | Local-player resolution, `hitmen.brick` presence, local transform reads |
+| `e01effd2` | O5 | Player-registry dump moved to the durable log; runs once per scene and from the menu |
+| `e748cdde` | O6 | Log-only SEH filter around the probe paths (never handles the exception) |
+
+Final head `e748cdde`: `Hitmen.dll` SHA-256 `4a2176be9089889ab665ba1ec107a848c0b8a8c1f3d2a77dffb77af781d0a669` (local build; not reproducible bit-for-bit, recorded to identify the artifact a later run uses).
+
+## State at the hard stop
+
+- Hitmen builds from a clean tree.
+- Networking is inert (null transport, no socket imports, sync code compiled out).
+- Mutation paths are compiled out.
+- Durable logging exists and was exercised outside the game.
+- The debugger workflow and first-run procedure are written (`HITMEN_RUNTIME_PROBE.md`).
+- **Not done, by design:** nothing was copied into the game directory and the DLL has never been loaded by HITMAN. The first runtime load needs explicit approval.
+
+## Artifacts (local only, not committed)
+
+`%TEMP%\glacier-m0\hitmen\`: `build-hitmen-clean.cmd`, `build-hitmen-incr.cmd`, `clean1.log` (gate build at `b8c66ead`), `clean2.log` (gate build at `e748cdde`), `logtest\` (standalone logger test and its output log).
