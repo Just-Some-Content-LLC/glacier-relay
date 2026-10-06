@@ -2,6 +2,20 @@
 
 Source examined: upstream `Mods/Hitmen/Src/Hitmen.cpp` as available during project formation (2026-10-03).
 
+## Status at M0 baseline (2026-10-06)
+
+**Characterization: dormant experimental source. Its current compilability and runtime compatibility are unknown.**
+
+M0 (see `M0_BASELINE.md`) found that at ZHMModSDK `5cc7f1b1`:
+
+- `Hitmen` is commented out of the top-level `MODS` list in `CMakeLists.txt`, and is therefore **not built, installed or shipped**.
+- Its networking dependency is also disabled: `#CPMAddPackage("gh:ValveSoftware/GameNetworkingSockets@1.4.1")` at the top level, and `#GameNetworkingSockets::static` in `Mods/Hitmen/CMakeLists.txt`.
+- Both were disabled in upstream commit `40d86dc7` (2024-12-22, "Update dependencies").
+- Since then, `Mods/Hitmen` has received only cross-cutting mechanical edits made alongside SDK-wide refactors (for example `13ae7b83` 2025-10-22, `6fdbdfa1` 2026-08-12, `e10ddf81` 2026-08-12). **None of these edits have been compile-validated by the upstream build.**
+- The README still lists Hitmen as a sample mod.
+
+This replaces the earlier description of Hitmen as an "unfinished experimental implementation". Everything below about what the source shows still holds as a statement about the source text. None of it is evidence that the code compiles, or behaves as described, against the current SDK or game.
+
 ## PROVEN in source
 
 - The module initializes Valve GameNetworkingSockets.
@@ -41,9 +55,11 @@ Strong evidence exists for:
 - Freelancer compatibility.
 - More than one remote client.
 - Stability on current WOA builds.
+- That it compiles against the current SDK (not built upstream since 2024-12-22).
 
 ## Research questions
 
+0. Does the dormant Hitmen source still compile against current ZHMModSDK? If not, what is the catalogue of API and structure drift?
 1. Does the current SDK still load the Hitmen brick successfully?
 2. Can the second Hitman participate in interaction/animation systems without corrupting local-player assumptions?
 3. Which player registry/network remnants derive from historical Glacier multiplayer/Ghost Mode?
