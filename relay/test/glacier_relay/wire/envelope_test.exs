@@ -105,4 +105,48 @@ defmodule GlacierRelay.Wire.EnvelopeTest do
   test "payload keys the backend does not know are ignored, not errors" do
     assert {:ok, _} = decode(put_in(valid_map(), ["payload", "future_field"], true))
   end
+
+  defp stopped_map, do: Map.put(valid_map(), "event_type", "mission.stopped")
+
+  test "decodes mission.stopped v1 with the same payload shape as mission.playing" do
+    assert {:ok, %Envelope{event_type: "mission.stopped", schema_version: 1, payload: payload}} =
+             decode(put_in(stopped_map(), ["payload", "game_session_id"], "sid"))
+
+    assert payload == %{
+             scene_resource: "assembly:/x.entity",
+             scene_type: "mission",
+             codename_hint: "X",
+             game_session_id: "sid"
+           }
+  end
+
+  test "mission.stopped accepts empty scene fields (observability lost on the fall frame)" do
+    empty =
+      stopped_map()
+      |> put_in(["payload", "scene_resource"], "")
+      |> put_in(["payload", "scene_type"], "")
+      |> put_in(["payload", "codename_hint"], "")
+
+    assert {:ok, %Envelope{payload: %{scene_resource: "", scene_type: "", codename_hint: ""}}} =
+             decode(empty)
+  end
+
+  test "rejects malformed mission.stopped" do
+    assert {:error, {:missing_field, "scene_resource"}} =
+             decode(update_in(stopped_map(), ["payload"], &Map.delete(&1, "scene_resource")))
+
+    assert {:error, {:invalid_field, "scene_resource"}} =
+             decode(put_in(stopped_map(), ["payload", "scene_resource"], 7))
+
+    assert {:error, {:missing_field, "codename_hint"}} =
+             decode(update_in(stopped_map(), ["payload"], &Map.delete(&1, "codename_hint")))
+
+    assert {:error, {:invalid_field, "game_session_id"}} =
+             decode(put_in(stopped_map(), ["payload", "game_session_id"], 1))
+
+    assert {:error, {:unsupported_schema_version, "mission.stopped", 2}} =
+             decode(Map.put(stopped_map(), "schema_version", 2))
+
+    assert {:error, {:invalid_field, "payload"}} = decode(Map.put(stopped_map(), "payload", []))
+  end
 end
