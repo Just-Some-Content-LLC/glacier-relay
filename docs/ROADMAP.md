@@ -16,6 +16,8 @@ Kill/re-scope trigger: upstream tooling cannot operate against the current game 
 
 Exit: a running WOA mission causes one versioned semantic event to be received and validated by Elixir.
 
+**Status: ✅ COMPLETE (2026-10-06).** Met three times in one controlled run: HITMAN 3.280.0.0 emitted `mission.playing` (envelope v1, schema v1) on the Paris load, a Paris restart and the Sapienza load; each crossed TCP loopback from Windows into the WSL2 BEAM and was validated into `MissionSession` state (sequences 1, 2, 3, no gaps, no drops, no faults). Evidence and design: `docs/design/M1_FIRST_SEMANTIC_EVENT.md` (sections 13 to 15, commit `3bb397e`); ADR 0005. Code: ZHMModSDK `relay/m1` `a28840e6` and `relay/` at this commit. The exit criterion above is recorded as originally written. Tag: `research/m1-first-semantic-event`.
+
 ## M2 — Telemetry
 Capture a bounded useful vocabulary: mission lifecycle, player state, kills/pacifications, disguises, items and objectives.
 
