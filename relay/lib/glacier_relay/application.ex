@@ -1,20 +1,20 @@
 defmodule GlacierRelay.Application do
-  # See https://hexdocs.pm/elixir/Application.html
-  # for more information on OTP Applications
-  @moduledoc false
+  @moduledoc """
+  Supervision for M1: the mission session (where events land), a dynamic supervisor for accepted
+  connections, and the listener. One-for-one: a listener crash rebinds the port without touching
+  live connections or the session; a connection crash affects only that connection.
+  """
 
   use Application
 
   @impl true
   def start(_type, _args) do
     children = [
-      # Starts a worker by calling: GlacierRelay.Worker.start_link(arg)
-      # {GlacierRelay.Worker, arg}
+      GlacierRelay.MissionSession,
+      {DynamicSupervisor, name: GlacierRelay.Wire.ConnectionSupervisor, strategy: :one_for_one},
+      GlacierRelay.Wire.Listener
     ]
 
-    # See https://hexdocs.pm/elixir/Supervisor.html
-    # for other strategies and supported options
-    opts = [strategy: :one_for_one, name: GlacierRelay.Supervisor]
-    Supervisor.start_link(children, opts)
+    Supervisor.start_link(children, strategy: :one_for_one, name: GlacierRelay.Supervisor)
   end
 end
