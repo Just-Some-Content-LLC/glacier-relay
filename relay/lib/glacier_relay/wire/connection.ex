@@ -1,7 +1,9 @@
 defmodule GlacierRelay.Wire.Connection do
   @moduledoc """
   One accepted TCP connection from a native adapter. Owns the socket, frames NDJSON, decodes and
-  validates each envelope, and hands valid ones to `GlacierRelay.MissionSession`.
+  validates each envelope, and hands valid ones to `GlacierRelay.MissionSession` with the time
+  they were received. It also reports its own open and close to the session as transport
+  evidence; the session decides what that means (never "the mission ended").
 
   Failure policy:
   - a line that is not a valid envelope is logged and dropped; the connection continues
@@ -21,11 +23,14 @@ defmodule GlacierRelay.Wire.Connection do
 
   @impl true
   def init({socket, max_line_bytes}) do
+    peer = peer(socket)
+    MissionSession.connection_opened(peer)
+
     {:ok,
      %{
        socket: socket,
        framing: Framing.new(max_line_bytes),
-       peer: peer(socket),
+       peer: peer,
        lines: 0,
        rejected: 0
      }}
@@ -42,6 +47,7 @@ defmodule GlacierRelay.Wire.Connection do
       {:error, :line_too_long} ->
         Logger.error("relay: #{state.peer}: line exceeds the limit; closing")
         :gen_tcp.close(socket)
+        MissionSession.connection_closed(:line_too_long)
         {:stop, :normal, state}
     end
   end
@@ -51,11 +57,13 @@ defmodule GlacierRelay.Wire.Connection do
       "relay: #{state.peer} disconnected after #{state.lines} line(s), #{state.rejected} rejected"
     )
 
+    MissionSession.connection_closed(:peer_closed)
     {:stop, :normal, state}
   end
 
   def handle_info({:tcp_error, socket, reason}, %{socket: socket} = state) do
     Logger.warning("relay: #{state.peer} socket error #{inspect(reason)}")
+    MissionSession.connection_closed({:tcp_error, reason})
     {:stop, :normal, state}
   end
 
@@ -64,7 +72,7 @@ defmodule GlacierRelay.Wire.Connection do
 
     case Envelope.decode(line) do
       {:ok, envelope} ->
-        MissionSession.handle_event(envelope)
+        MissionSession.handle_event(envelope, DateTime.utc_now())
         state
 
       {:error, reason} ->

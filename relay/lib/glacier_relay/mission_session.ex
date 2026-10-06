@@ -1,35 +1,59 @@
 defmodule GlacierRelay.MissionSession do
   @moduledoc """
-  Where decoded semantic events land inside BEAM. For M1 it keeps, per adapter instance, the last
-  sequence seen, whether a mission is playing, the last event, and any sequence gaps, and tells
-  subscribers about each event. No gameplay authority, no persistence.
+  Where evidence lands inside BEAM. Holds one `Lifecycle.Instance` per adapter instance id and
+  routes three kinds of evidence into it without mixing them (M2 design):
 
-  A gap (sequence not equal to last + 1) is recorded, not treated as an error: delivery is
-  best-effort during a live connection, and a new instance id means the game process restarted.
+  - validated semantic envelopes from `Wire.Connection` (game lifecycle evidence),
+  - the adapter instance id each envelope names (adapter/process evidence),
+  - connection open/close from `Wire.Connection` (transport evidence).
+
+  A connection is attributed to an instance only once it has delivered a valid envelope naming
+  one; until then it is an unidentified connection, and if it closes first it stays that way. A
+  connection closing never asserts anything about a mission; see `GlacierRelay.Lifecycle`.
+
+  Subscribers receive `{:relay_event, %Envelope{}}` for every event and
+  `{:relay_connection, :opened | :identified | :closed, info}` for connection evidence.
+  No gameplay authority, no persistence.
   """
 
   use GenServer
   require Logger
 
+  alias GlacierRelay.{Lifecycle, Summary}
   alias GlacierRelay.Wire.Envelope
 
-  defmodule Instance do
-    @moduledoc false
-    defstruct last_sequence: 0, playing?: false, last_event: nil, received: 0, gaps: []
-  end
+  @max_unidentified 32
 
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
-  @doc "Delivers a validated envelope. Called by connection processes."
-  def handle_event(%Envelope{} = envelope), do: GenServer.cast(__MODULE__, {:event, envelope})
+  @doc "Called by a connection process when its socket has been accepted."
+  def connection_opened(peer, at \\ DateTime.utc_now()),
+    do: GenServer.cast(__MODULE__, {:connection_opened, self(), peer, at})
 
-  @doc "The caller's process receives `{:relay_event, %Envelope{}}` for every event from now on."
+  @doc "Delivers a validated envelope from the calling connection process."
+  def handle_event(%Envelope{} = envelope, received_at \\ DateTime.utc_now()),
+    do: GenServer.cast(__MODULE__, {:event, self(), envelope, received_at})
+
+  @doc "Called by a connection process when its socket closed or failed."
+  def connection_closed(reason, at \\ DateTime.utc_now()),
+    do: GenServer.cast(__MODULE__, {:connection_closed, self(), reason, at})
+
+  @doc "The caller's process receives evidence notifications from now on."
   def subscribe, do: GenServer.call(__MODULE__, {:subscribe, self()})
 
+  @doc "Per-instance lifecycle state, keyed by adapter instance id."
   def state, do: GenServer.call(__MODULE__, :state)
 
+  @doc "The event-derived summary as data (`GlacierRelay.Summary.build/1`)."
+  def summary, do: GenServer.call(__MODULE__, :summary)
+
+  @doc "The event-derived summary as text."
+  def summary_text, do: GenServer.call(__MODULE__, :summary_text)
+
   @impl true
-  def init(_opts), do: {:ok, %{instances: %{}, subscribers: MapSet.new()}}
+  def init(_opts) do
+    {:ok, %{instances: %{}, connections: %{}, unidentified: [], subscribers: MapSet.new()}}
+  end
 
   @impl true
   def handle_call({:subscribe, pid}, _from, state) do
@@ -38,44 +62,144 @@ defmodule GlacierRelay.MissionSession do
   end
 
   def handle_call(:state, _from, state), do: {:reply, state.instances, state}
+  def handle_call(:summary, _from, state), do: {:reply, Summary.build(state.instances), state}
+
+  def handle_call(:summary_text, _from, state),
+    do: {:reply, Summary.render(state.instances, state.unidentified), state}
 
   @impl true
-  def handle_cast({:event, %Envelope{} = envelope}, state) do
-    instance = Map.get(state.instances, envelope.adapter_instance_id, %Instance{})
-    expected = instance.last_sequence + 1
+  def handle_cast({:connection_opened, pid, peer, at}, state) do
+    ref = Process.monitor(pid)
+    connection = %{peer: peer, opened_at: at, instance_id: nil, monitor: ref}
+    notify(state, {:relay_connection, :opened, %{peer: peer, at: at}})
+    {:noreply, put_in(state.connections[pid], connection)}
+  end
 
-    gaps =
-      if envelope.sequence == expected or instance.last_sequence == 0 do
-        instance.gaps
-      else
-        Logger.warning(
-          "relay: sequence gap for #{envelope.adapter_instance_id}: expected #{expected}, got #{envelope.sequence}"
-        )
+  def handle_cast({:event, pid, %Envelope{} = envelope, received_at}, state) do
+    id = envelope.adapter_instance_id
+    instance = Map.get_lazy(state.instances, id, fn -> Lifecycle.new(id) end)
 
-        [{expected, envelope.sequence} | instance.gaps]
-      end
+    {state, instance} = identify(state, pid, id, instance, received_at)
+    {instance, notes} = Lifecycle.apply_event(instance, envelope, received_at)
 
-    instance = %{
-      instance
-      | last_sequence: max(instance.last_sequence, envelope.sequence),
-        playing?: envelope.event_type == GlacierRelay.Events.mission_playing(),
-        last_event: envelope,
-        received: instance.received + 1,
-        gaps: gaps
-    }
+    for note <- notes, do: log_note(id, note)
 
     Logger.info(
-      "relay: #{envelope.event_type} ##{envelope.sequence} from #{envelope.adapter_instance_id} at #{envelope.timestamp}: #{inspect(envelope.payload)}"
+      "relay: #{envelope.event_type} ##{envelope.sequence} from #{id} at #{envelope.timestamp}: #{inspect(envelope.payload)}"
     )
 
-    for pid <- state.subscribers, do: send(pid, {:relay_event, envelope})
+    notify(state, {:relay_event, envelope})
+    {:noreply, put_in(state.instances[id], instance)}
+  end
 
-    {:noreply,
-     %{state | instances: Map.put(state.instances, envelope.adapter_instance_id, instance)}}
+  def handle_cast({:connection_closed, pid, reason, at}, state) do
+    {:noreply, close_connection(state, pid, reason, at)}
   end
 
   @impl true
-  def handle_info({:DOWN, _ref, :process, pid, _reason}, state) do
+  def handle_info({:DOWN, _ref, :process, pid, reason}, state) do
+    state =
+      if Map.has_key?(state.connections, pid),
+        do: close_connection(state, pid, {:down, reason}, DateTime.utc_now()),
+        else: state
+
     {:noreply, %{state | subscribers: MapSet.delete(state.subscribers, pid)}}
+  end
+
+  # -- internals -----------------------------------------------------------------------------
+
+  # Attributes the connection to the instance on its first valid envelope. A connection that was
+  # never announced (direct callers in tests) is treated as opened at identification time.
+  defp identify(state, pid, id, instance, at) do
+    case state.connections[pid] do
+      %{instance_id: ^id} ->
+        {state, instance}
+
+      %{instance_id: nil} = connection ->
+        instance =
+          Lifecycle.connection_identified(instance, connection.peer, connection.opened_at, at)
+
+        notify(
+          state,
+          {:relay_connection, :identified, %{peer: connection.peer, instance_id: id, at: at}}
+        )
+
+        {put_in(state.connections[pid], %{connection | instance_id: id}), instance}
+
+      %{instance_id: other} = connection ->
+        # The same socket switched instance ids: not something the native adapter does, but it is
+        # evidence, so record it as a new attribution rather than drop the event.
+        Logger.warning("relay: #{connection.peer} delivered instance #{id} after #{other}")
+
+        instance =
+          Lifecycle.connection_identified(instance, connection.peer, connection.opened_at, at)
+
+        {put_in(state.connections[pid], %{connection | instance_id: id}), instance}
+
+      nil ->
+        {state, instance}
+    end
+  end
+
+  defp close_connection(state, pid, reason, at) do
+    case Map.pop(state.connections, pid) do
+      {nil, _} ->
+        state
+
+      {%{monitor: ref} = connection, connections} ->
+        Process.demonitor(ref, [:flush])
+        state = %{state | connections: connections}
+
+        notify(
+          state,
+          {:relay_connection, :closed,
+           %{peer: connection.peer, instance_id: connection.instance_id, at: at, reason: reason}}
+        )
+
+        case connection.instance_id do
+          nil ->
+            record = %{
+              peer: connection.peer,
+              opened_at: connection.opened_at,
+              closed_at: at,
+              close_reason: reason
+            }
+
+            %{state | unidentified: Enum.take([record | state.unidentified], @max_unidentified)}
+
+          id ->
+            instance = Lifecycle.connection_closed(state.instances[id], at, reason)
+
+            if Lifecycle.current_attempt(instance) do
+              Logger.warning(
+                "relay: connection for #{id} closed (#{inspect(reason)}) while attempt #{Lifecycle.current_attempt(instance).number} is last known playing; no mission.stopped observed"
+              )
+            end
+
+            put_in(state.instances[id], instance)
+        end
+    end
+  end
+
+  defp log_note(id, {:gap, expected, got}),
+    do: Logger.warning("relay: sequence gap for #{id}: expected #{expected}, got #{got}")
+
+  defp log_note(id, {:superseded, old, new}),
+    do:
+      Logger.warning(
+        "relay: #{id}: attempt #{old} superseded by attempt #{new}; its stop was not observed"
+      )
+
+  defp log_note(id, {:unmatched_stop, sequence}),
+    do: Logger.warning("relay: #{id}: mission.stopped ##{sequence} with no open attempt")
+
+  defp log_note(id, {:fall_scene_differs, number, rise, fall}),
+    do:
+      Logger.warning(
+        "relay: #{id}: attempt #{number} rose on #{inspect(rise)} and fell on #{inspect(fall)}"
+      )
+
+  defp notify(state, message) do
+    for pid <- state.subscribers, do: send(pid, message)
   end
 end
