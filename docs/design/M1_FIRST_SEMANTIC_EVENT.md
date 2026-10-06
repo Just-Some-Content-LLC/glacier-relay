@@ -303,3 +303,96 @@ Evidence (local only): `%TEMP%\glacier-m0\hitmen\relay-run1\` (relay log SHA-256
 ### Status
 
 Stage 1 is empirically validated: `Glacier observation → semantic state → edge → versioned event → IRelaySink → log`. Stage 2 (TCP loopback sink, BEAM listener in WSL2, explicit Windows → WSL2 loopback verification) is **not** started and needs its own authorization. The game installation is in its M0 file state.
+
+---
+
+## 14. Stage 2 implementation record (2026-10-06)
+
+Stage 1 was accepted as the validated baseline. Stage 2 starts at `IRelaySink`; the predicate, edge, payload, schema version, instance id and sequence semantics are unchanged (the engine-independent sources above the sink were not modified except for the log-directory override in `RelayLog`).
+
+**Built and integration-tested without the game. `GlacierRelay.dll` has not been deployed since the Stage 1 run.** The M1 final runtime experiment needs its own authorization.
+
+### BEAM environment
+
+| Item | Value |
+|---|---|
+| Host | WSL2 2.0.14.0, Ubuntu 20.04.6 LTS, kernel 5.15.133.1, default NAT networking (no `.wslconfig`, no `/etc/wsl.conf`), eth0 `172.23.229.225/20` |
+| Erlang/OTP | 28.4.2 (erts 16.3.1), precompiled from `builds.hex.pm`, installed with `./Install -minimal` to `~/.local/opt/otp-28.4.2` (no root; checksum verified) |
+| Elixir | 1.19.6 compiled for OTP 28, precompiled from `builds.hex.pm` to `~/.local/opt/elixir-1.19.6` |
+| PATH | `~/.local/opt/beam-env.sh`, sourced from `~/.zshrc` |
+| Dependencies | none (OTP 28's built-in `JSON` module) |
+
+### Windows → WSL2 connectivity (measured, not assumed)
+
+| Question | Observed |
+|---|---|
+| Bind address | `127.0.0.1:4747` inside WSL2 (`:gen_tcp.listen` with `ip: {127,0,0,1}`) |
+| Destination from Windows | `127.0.0.1:4747` (also `localhost`); connect took 2 to 6 ms |
+| Mechanism | WSL2 localhost forwarding: `wslrelay.exe` opens `127.0.0.1:4747` on the Windows side the moment the WSL2 listener binds (`netstat -ano` shows it LISTENING), and relays. Inside WSL2 the peer appears as `127.0.0.1:<port>`. |
+| LAN exposure | None. The WSL2 eth0 address refused the connection (the listener is bound to loopback only), and the Windows-side forwarder is bound to `127.0.0.1`. |
+| Firewall | No prompt and no rule needed (outbound loopback on Windows; the forwarder is a loopback listener). |
+| Listener down | Windows gets "actively refused" immediately; the forwarder's Windows listener disappears. |
+| Listener restart | Reachable again at once; the forwarder re-registers. |
+| Forwarder lag | After the BEAM process is killed, the Windows forwarder accepted connections for about 1 s and then closed them. The native sink logged three connect/"peer closed" pairs in that second before backing off. Benign, but a connection "succeeding" at the forwarder does not prove BEAM is up. |
+
+### BEAM application (`relay/`, commits `ff56c38`, `716621e`, `4138d6b`)
+
+```
+GlacierRelay.Application                    one_for_one
+  GlacierRelay.MissionSession               GenServer: per instance id {last_sequence, playing?, last_event, received, gaps}; logs each event; notifies subscribers
+  GlacierRelay.Wire.ConnectionSupervisor    DynamicSupervisor, one Wire.Connection per accepted socket
+  GlacierRelay.Wire.Listener                GenServer owning the listen socket (127.0.0.1:4747, backlog 8); a linked acceptor loops accept/start_child/controlling_process
+GlacierRelay.Wire.Connection                per socket, active: :once; Framing -> Envelope.decode -> MissionSession.handle_event
+GlacierRelay.Wire.Framing                   pure NDJSON splitter with max_line_bytes (64 KiB; 4 KiB in tests)
+GlacierRelay.Wire.Envelope, GlacierRelay.Events   envelope v1 and mission.playing v1 validation
+```
+
+TCP ownership: the Listener process owns the listen socket; each accepted socket is transferred to its Connection process (`controlling_process`) and dies with it. A Listener crash rebinds the port; accepted connections keep running; a connection still in the backlog at that instant is lost and the native client reconnects.
+
+Validation: `protocol_version` must be 1; `adapter_instance_id`, `timestamp`, `event_type` non-empty strings; `sequence`, `schema_version` positive integers; `payload` an object; then per event type: `mission.playing` v1 requires `scene_resource` (non-empty), `scene_type`, `codename_hint` (strings) and accepts an optional string `game_session_id`; unknown payload keys are ignored; unknown event types and schema versions are rejected. Failure policy: an invalid line is logged and dropped, the connection continues; a line over the limit closes the connection; nothing is ever written to the socket.
+
+Gaps: `MissionSession` records `{expected, got}` when a sequence is not `last + 1` and logs a warning; the first event from an instance is never a gap. A new instance id is a new game process.
+
+### Native TCP sink (`relay/m1`, commits `3713468d`, `a28840e6`)
+
+`TcpRelaySink : IRelaySink`. Native is the outbound client to `127.0.0.1:<port>`; the host is not configurable, the port is (`Retail\mods\glacierrelay.ini`, `[relay] port = 4747`, `sink = tcp|log`, default `tcp`).
+
+- `Publish()` (frame thread) appends to a bounded queue (256) and returns; measured under 20 ms in tests, typically microseconds. It never touches the socket.
+- One sender thread: non-blocking `connect` with a 2 s timeout; backoff 1, 2, 4, 8, 16, 30 s while the backend is absent, logging the first failure and each doubling; `send` with a 2 s timeout; a 500 ms wake to notice a closed peer.
+- While disconnected, `Publish` drops the envelope immediately with a warning. A disconnect discards whatever is queued. No retransmission.
+- No inbound protocol: whatever the peer sends is `recv`'d and discarded, counted, and logged once. `ws2_32` imports are client calls only; there is no `listen`, `accept` or `bind` in the source.
+- Failure with BEAM absent: the mod initializes normally, the game thread is never blocked, log lines are the only effect.
+- Known limit: if the peer closes within the 500 ms detection window, an envelope sent in that window is counted as sent but lost. Best-effort, as specified.
+
+### Tests and results
+
+| Layer | Tests | Result |
+|---|---|---|
+| Elixir framing | split across chunks, multiple lines per chunk, CRLF, empty lines, limit on terminated and unterminated lines | 5 pass |
+| Elixir envelope | the three real Stage 1 envelopes decode; optional/mistyped session id; malformed JSON, non-objects; every missing and mistyped field; other protocol versions; unknown event; unknown schema version; missing payload fields; unknown payload keys ignored | 7 pass |
+| Elixir listener | loopback bind; in-order delivery of the Stage 1 envelopes; arbitrary chunking; malformed line between valid ones; line over limit closes; gap recording; reconnect with a new instance id; listener never writes; listener restart with a live connection | 9 pass (21 total, run 5× to check for flakiness) |
+| Native unit (`GlacierRelayTests`) | backend absent: Publish under 20 ms, 3 drops, bounded attempts; backend appears later: connects, 2 lines in order; inbound bytes discarded and counted, connection still works; backend disappears: detected, drop counted; backend returns: reconnect, delivery; prompt destruction | all pass, plus the Stage 1 tests |
+| Integration A (Windows probe → WSL2 BEAM) | `GlacierRelayWireProbe 4747 sleep:1000,stage1` | BEAM logged `mission.playing #1, #2, #3` from instance `8c26a3f2…` at the probe's timestamps; native log shows `sent #1..#3`; disconnected "after 3 line(s), 0 rejected" |
+| Integration B (BEAM absent → starts → killed → restarts) | `publish,sleep:6000,publish,sleep:10000,publish,sleep:12000,publish` | #1 dropped (not connected); connected 1 s after BEAM started; #2 delivered; peer-closed detected; backoff 1, 2, 4 s; #3 dropped; reconnected after restart; #4 delivered. BEAM: first instance saw #2, second saw #4. |
+| Malformed BEAM input cannot affect native | by construction (no parser; `recv` discards) and by the inbound-bytes test | pass |
+
+Evidence (local): `%TEMP%\glacier-m0\hitmen\wire-probe\` (probe logs, BEAM logs) and `relaytest\testlogs\`.
+
+### Clean native build
+
+Deleted build tree, configured, built `GlacierRelay`, `GlacierRelayTests`, `GlacierRelayWireProbe`, ran the tests: pass, no warnings from relay sources. `GlacierRelay.dll` SHA-256 `5ab6e64ca40f835e1cf233e2e8aec86d39c5bd7bd72217eee1c89597f1160f25`. Imports: `ZHMModSDK.dll`, `KERNEL32`, `USER32`, `SHELL32`, `IMM32` and now `WS2_32` (14 client-side functions). Still no hooks, no engine writes, no UI, SDK core unchanged, Hitmen untouched.
+
+### Commit sequence
+
+glacier-relay `main`: `ff56c38` bootstrap, `716621e` framing/envelope/events, `4138d6b` listener/connection/session. ZHMModSDK `relay/m1`: `3713468d` R6 TcpRelaySink, `a28840e6` R7 wire probe and sent-sequence logging.
+
+### Proposed M1 final runtime experiment (awaiting authorization)
+
+Same discipline as the Stage 1 run, with the Stage 2 DLL and BEAM up:
+
+1. In WSL2: `cd relay && mix run --no-halt`, output captured to a file; confirm `relay: listening on 127.0.0.1:4747` and the Windows-side forwarder (`netstat -ano | findstr :4747`).
+2. Pre-flight as before (game version, M0 hashes, no relay/Hitmen files, backups). Install `GlacierRelay.dll` (SHA above) to `Retail\mods\` and add `[glacierrelay]` to `mods.ini`. No `glacierrelay.ini` is needed (defaults: `tcp`, 4747).
+3. Launch via Steam → menu. Check the native log for `tcp sink: connected` and the BEAM log for `accepted`. Then attach VS, Paris → walk → restart → menu → Sapienza → menu → quit.
+4. Pass: BEAM logs `mission.playing #1` (Paris), `#2` (restart), `#3` (Sapienza) with the native log's instance id, sequence numbers, timestamps, scene resources and session ids matching line for line; `MissionSession` state shows that instance with `last_sequence: 3`, `gaps: []`; nothing at the menu; the native log shows `sent #1..#3` and no drops; no `ERROR`/`FAULT`; game stable; exit code 0; BEAM logs the disconnect when the process ends.
+5. Optionally, while in Sapienza: stop and restart BEAM once to see the reconnect in the game (no event is expected during that window). Only if approved.
+6. Rollback and verify by hash. Stop BEAM.
