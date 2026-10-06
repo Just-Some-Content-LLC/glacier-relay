@@ -28,12 +28,12 @@ Git operations on both repositories are performed from WSL git only.
 | Component | Version |
 |---|---|
 | Windows | Windows 11 Home 23H2, build `22631.5909` (registry `ProductName` reports "Windows 10 Home"; known Windows 11 quirk) |
-| Visual Studio | Visual Studio Community 2022 `17.14.37628.2` |
+| Visual Studio | Visual Studio Community 2022 `17.14.37710.0` (was `17.14.37628.2` at survey; updated by the Installer when the game workload was added on 2026-10-06) |
 | MSVC | `14.44.35207` (only toolset installed; default) |
 | Windows SDK | `10.0.26100.0` |
 | CMake | `3.31.6-msvc6` (bundled with VS; no standalone CMake on `PATH`) |
 | Ninja | `1.12.1` (bundled with VS) |
-| Rust | **Not installed** (no `rustup`/`cargo` on Windows) |
+| Rust | rustup `1.29.1` (via winget `Rustlang.Rustup`, 2026-10-06). Build toolchain: `nightly-x86_64-pc-windows-msvc`, rustc `1.101.0-nightly (ea137335b 2026-10-05)`, cargo `1.101.0-nightly (f3865b2a4 2026-09-29)`, LLVM `23.1.3`, with `rust-src`. Stable is also installed and is the rustup default; Corrosion selects `nightly` explicitly. |
 | Git (Windows) | Not installed; WSL git is canonical |
 | WSL | WSL `2.0.14.0`, kernel `5.15.133.1-1`, Ubuntu 20.04.6 LTS |
 
@@ -44,7 +44,7 @@ Git operations on both repositories are performed from WSL git only.
 | Desktop development with C++ (`Workload.NativeDesktop`) | Yes |
 | MSVC x64/x86 build tools (`VC.Tools.x86.x64`) | Yes |
 | C++ CMake tools (`VC.CMake.Project`) | Yes |
-| Game development with C++ (`Workload.NativeGame`) | **No** |
+| Game development with C++ (`Workload.NativeGame`) | Yes (added 2026-10-06; missing at initial survey) |
 
 ## HITMAN WOA
 
@@ -84,15 +84,45 @@ cmake --install _build/x64-Debug
 - `x64-Release` is `RelWithDebInfo` with the static `/MT` runtime; `x64-Debug` uses `/MTd`.
 - The IDE flow (wiki) copies `CMakeUserPresets.json-steam_sample` to `CMakeUserPresets.json` and builds `x64-Debug-Install`. That build **installs directly into the game directory** through `GAME_INSTALL_PATH`.
 - Both `CMakeUserPresets.json` and `.vs/launch.vs.json` are local files copied from upstream samples and are ignored by upstream `.gitignore`. They are not source modifications.
-- Upstream `.gitignore` does **not** ignore the preset output directories `_build/` and `_install/`, so a build makes the working tree show untracked files. Proposed handling: list them in the local-only `.git/info/exclude` instead of changing upstream `.gitignore`.
+- Upstream `.gitignore` does **not** ignore the preset output directories `_build/` and `_install/`, so a build makes the working tree show untracked files. Handling: `/_build/` and `/_install/` were added to the local-only `.git/info/exclude` on 2026-10-06. Upstream `.gitignore` is unchanged.
 
 ## Baseline Build
 
-**Status:** Not attempted. Blocked on prerequisites: Rust nightly is not installed, and the VS "Game development with C++" workload is missing.
+**Status:** Attempt 1 failed at configure (environment prerequisite, not source). No source changes made.
+
+Procedure: plain `x64-Debug` preset (installs to `ZHMModSDK/_install/x64-Debug`, **not** into the game directory), run from a Windows `cmd` environment initialised with `VsDevCmd.bat -arch=x64 -host_arch=x64`, with `%USERPROFILE%\.cargo\bin` prepended to `PATH`. No `CMakeUserPresets.json` was created for this step.
 
 ### Configure
 
-TBD
+#### Attempt 1: FAILED (2026-10-06 17:25:39Z to 17:38:36Z, about 13 min)
+
+Command: `cmake --preset x64-Debug .`
+
+Tools resolved inside the dev environment: `cl.exe` MSVC `14.44.35207` Hostx64/x64, VS-bundled `cmake` `3.31.6-msvc6` and `ninja`, `cargo`/`rustup` from `%USERPROFILE%\.cargo\bin`. The VS Developer Command Prompt reports itself as `v17.14.41`.
+
+Progress before failure:
+
+- vcpkg manifest dependencies built and installed successfully for triplet `x64-windows-zhm` (including `directx-dxc`, `abseil`, `zlib 1.3.2`, `simdjson`, `semver`, `sentry`, `imgui`, `imguizmo`, `imgui-node-editor`, `implot`, `directxtex`).
+- Compiler checks passed; OpenMP 2.0 found.
+
+Failure:
+
+```
+-- CPM: Adding package ZHMTools@4.0.0 (v4.0.0)
+CMake Error at .../Modules/ExternalProject/shared_internal_commands.cmake:943 (message):
+  error: could not find git for clone of zhmtools-populate
+...
+  _build/x64-Debug/cmake/CPM_0.42.0.cmake:1208 (FetchContent_MakeAvailable)
+  _build/x64-Debug/cmake/CPM_0.42.0.cmake:989 (cpm_fetch_package)
+  CMakeLists.txt:29 (CPMAddPackage)
+-- Configuring incomplete, errors occurred!
+```
+
+Cause: top-level `CMakeLists.txt:29` runs `CPMAddPackage("gh:OrfeasZ/ZHMTools@4.0.0")` (CPM `0.42.0`), which clones via git at configure time. No Windows `git.exe` is on `PATH`: Git for Windows is not installed, and `VsDevCmd.bat` does not add VS's bundled git (`Common7\IDE\CommonExtensions\Microsoft\TeamFoundation\Team Explorer\Git\cmd\git.exe`, present) to `PATH`. The upstream wiki lists git as a prerequisite; WSL git cannot satisfy it for a Windows-hosted CMake.
+
+Classification: missing **documented** environment prerequisite. Not a source or toolchain incompatibility. After the failure, the ZHMModSDK working tree and all submodules were verified clean.
+
+Additional undocumented build-time dependency found: **ZHMTools `4.0.0`** (`OrfeasZ/ZHMTools`), fetched by CPM at configure time.
 
 ### Build
 
