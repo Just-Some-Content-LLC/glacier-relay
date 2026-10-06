@@ -351,3 +351,175 @@ Final head `e748cdde`: `Hitmen.dll` SHA-256 `4a2176be9089889ab665ba1ec107a848c0b
 ## Artifacts (local only, not committed)
 
 `%TEMP%\glacier-m0\hitmen\`: `build-hitmen-clean.cmd`, `build-hitmen-incr.cmd`, `clean1.log` (gate build at `b8c66ead`), `clean2.log` (gate build at `e748cdde`), `logtest\` (standalone logger test and its output log).
+
+---
+
+# Experiment 4: first controlled runtime load
+
+Date: 2026-10-06 (20:13Z to 20:40Z)
+
+Authorized explicitly for this run. Objective: determine whether the dormant probe coexists with the current game and SDK and can observe `module load → initialization → hooks → scene lifecycle → local player → registry → transform read → mission restart → shutdown`, with no mutation, networking, synchronization or spawning. Procedure: `HITMEN_RUNTIME_PROBE.md`. Nothing in Hitmen was changed during or after the run.
+
+**Result: R1, R2, R3 and R4 all passed. 686 log lines, 0 `ERROR`, 0 `FAULT`, exit code 0. The game directory was restored to its pre-run state and verified.**
+
+## Setup
+
+| Item | Value |
+|---|---|
+| Game | `3.280.0.0`, Steam build `24833614` (unchanged since M0), launched through Steam by the operator |
+| Probe | `Hitmen.dll` from `e748cdde`, SHA-256 `4a2176be…d0a669`, copied to `Retail\mods\` |
+| Mods enabled | M0 set (Editor, FreeCam, SkipIntro, NoPause) plus Hitmen. Hitmen was the only variable. |
+| Pre-flight | Game not running; all 26 M0 file hashes matched; `Retail` listing identical to M0's post-run listing; no Hitmen files anywhere under the game root; no file in `Runtime` newer than the game update (no SMF deployment) |
+| Game-directory changes | Exactly two: `Retail\mods\Hitmen.dll` added; `[hitmen]` appended to `Retail\mods.ini` |
+| Debugger | Visual Studio attached by the operator after R1; stayed attached through exit |
+| Evidence (local only) | `%TEMP%\glacier-m0\hitmen\probe-run1\`: the durable log (SHA-256 `f2d14b5d…c99595`), the SDK log, `mods.ini` before/after, `Retail` listings and hashes |
+
+## Observed lifecycle (UTC, complete for scene events)
+
+Every line in the log carries the same thread id: mod loading, both detours and the frame update all ran on one thread.
+
+| Time | Event |
+|---|---|
+| 20:21:19.381 | Module attached (discovery load) |
+| 20:21:19.382 | Module detaching: FreeLibrary |
+| 20:21:19.506 | Module attached (real load); plugin constructed |
+| 20:21:19.509 | `Init`: detours registered |
+| 20:21:28.821 | `OnLoadScene`: `Frontend/MainMenu.entity`, type empty, start game true |
+| 20:21:29.269 | `OnEngineInitialized`: null transport, frame update registered |
+| 20:21:29.275 | First frame: scene loaded true, stage 5; local player not resolved |
+| 20:21:29.412 | Stage 6 |
+| 20:21:29.535 | **Local player resolved in the main menu**; 5 bricks; registry dump 1; first transform read |
+| 20:21:29.571 – .575 | Stages 7, 8 |
+| *(12.8 minutes at the menu while the debugger was attached; a transform sample every 5 s)* | |
+| 20:34:20.002 | Scene loaded true → false |
+| 20:34:20.031 | Stage 0 |
+| 20:34:20.071 | `OnClearScene`, flag **false** |
+| 20:34:20.251 | Stage 2 |
+| 20:34:20.293 | `OnLoadScene`: `Missions/Paris/_Scene_FashionShowHit_01.entity`, type `mission`, codename hint `Peacock`, 0 additional bricks |
+| 20:34:26.647 – 34.386 | Stages 5, 6, 7 |
+| 20:34:34.787 | Stage 8, scene loaded true, local player resolved **in the same frame**; 23 bricks; registry dump 2 |
+| 20:34:34.796 onward | Transform reads while the operator walked |
+| 20:36:41.114 | *(mission restart)* Scene loaded true → false |
+| 20:36:41.123 | Stage 0 |
+| 20:36:41.582 | `OnClearScene`, flag **true** |
+| 20:36:46.811 – 52.116 | Stages 5, 6, 7. **No `OnLoadScene`.** |
+| 20:36:52.473 | Stage 8, loaded true, local player resolved in the same frame; registry dump 3 |
+| 20:39:03.489 | *(exit to menu)* Scene loaded true → false |
+| 20:39:03.872 | `OnClearScene`, flag **false** (stage still 8) |
+| 20:39:06.548 | Stage 2 |
+| 20:39:06.591 | `OnLoadScene`: `Frontend/MainMenu.entity` |
+| 20:39:06.764 – 07.337 | Stages 5, 6, 7 |
+| 20:39:07.416 | Stage 8, loaded true; local player resolved 1 ms later; registry dump 4 |
+| 20:39:32.441 | Last line (a transform read). Process gone by 20:39:43. Debugger: "exited with code 0 (0x0)". |
+
+Totals: 2 module attaches, 1 detach (the discovery unload), 1 construction, 3 `OnLoadScene`, 3 `OnClearScene`, 4 resolutions, 4 registry dumps, 213 transform reads, 4 `WARN` (one per registry dump, below). No callback fired twice for one event.
+
+## Stage results
+
+| Stage | Result | Basis |
+|---|---|---|
+| R1 process and module initialization | ✅ | Load, construct, `Init`, `OnEngineInitialized` as designed; SDK log: "Mod hitmen successfully loaded"; stable at the menu for 12.8 minutes |
+| R2 first mission load | ✅ | Clear/load pair, monotonic stages, same-frame resolution, complete dump, transform reads tracking movement |
+| R3 mission restart | ✅ | One clear, coherent reload, state reacquired, dump sane, reads resumed, nothing duplicated |
+| R4 shutdown | ✅ | Normal quit, exit code 0. No Hitmen shutdown line exists to observe (below). |
+
+Before R2 the registry finding below was put to the operator as a possible abort ("obviously invalid player/registry pointers"); the decision was to proceed, because every pointer the probe used was valid and the anomaly is in the SDK's model.
+
+## Findings
+
+### F1. The SDK's `TArray` model of `ZPlayerRegistry` at `0x390` is wrong on this build
+
+All four dumps show the same three words at `0x390`:
+
+| Offset | Value | As `TArray` (current SDK) |
+|---|---|---|
+| `0x390` | `0x14313db10` = registry + `0x50` = `&m_aPlayerData[0]` | begin |
+| `0x398` | `0x0` | end |
+| `0x3A0` | `0x4000000000000101` | allocation end |
+
+As a `TArray` this has a null end and a non-pointer allocation end, and `size()` evaluates to 88,686,269,559,082,738. The probe's plausibility check caught it, logged a `WARN`, and did not walk it.
+
+The values fit the two older readings instead: a pointer to the local player's slot (2023, `m_pLocalPlayer`), or a two-entry pointer array whose second entry is null (2024, `m_pPlayerData[2]`), followed by a non-pointer word. **This reverses the direction of experiment 3's H7 note**, which treated the `TArray` as the current truth and the older fields as earlier guesses at it. On `3.280.0.0` the older readings describe the memory better. What `0x3A0` holds is unknown.
+
+Consequence outside Hitmen: `ModSDK::GetLocalPlayer` loops `i < m_PlayerData.size()`. It returns correctly here only because entry 0 has no `m_pNetPlayer`, so the loop stops on its first iteration. With a net player in slot 0 it would walk far past the registry. This is upstream SDK code, present in the M0 baseline; it was not changed.
+
+### F2. A mission restart does not go through `LoadScene`
+
+Restart produced `OnClearScene` and then stages 5 → 8 with no `OnLoadScene`. Anything keyed only on the load hook misses restarts. The 2023 design (reset in `OnClearScene`, poll readiness per frame) is the one that works; the reliable "scene is playing" signal is the stage reaching 8 together with `m_bSceneLoaded`.
+
+### F3. The `ClearScene` flag behaves like "for reload", not "fully unload"
+
+`true` on restart in place; `false` when changing scenes (menu → Paris and Paris → menu). One sample of each, so this is a hypothesis, but it matches the parameter's 2023 name `forReload` (`3e2ee83c`) better than its current name `bFullyUnloadScene` (`13ae7b83`).
+
+### F4. `m_LoadingStage` at `0x178` is real
+
+It only ever took values in `0..8` and moved in enum order on all four loads. Observed sequences at frame granularity: scene change `8 → 0 → 2 → 5 → 6 → 7 → 8`; restart `8 → 0 → 5 → 6 → 7 → 8`; exit to menu `8 → 2 → 5 → 6 → 7 → 8`. Stages 1, 3 and 4 were never seen, which may only mean no frame update ran during them. The "unverified offset" label in the log text is now out of date.
+
+### F5. A local player exists in the main menu
+
+`SDK()->GetLocalPlayer()` resolved in `MainMenu.entity` (5 bricks), at a fixed position, and slot 0's `hitman entity` matched it. "Local player resolved" therefore does not mean "in a mission". The menu's Hitman had the same addresses before and after the Paris session.
+
+### F6. Resolution timing
+
+In Paris (both loads) and on return to the menu, the local player was available on the first frame the scene reported loaded. Only at boot did it lag (260 ms), and there the probe's first frame already saw `m_bSceneLoaded` true at stage 5, unlike every later load where it turned true only at stage 8. Hypothesis: at boot the flag was left set by the boot scene that SkipIntro replaces.
+
+### F7. Player registry contents (single player)
+
+- The registry is a fixed object (`0x14313dac0`, inside the executable's image range) for the whole session.
+- Slot 0: player id 0, `is local player` true, no RakNet replica, no net player, `connected` false, character id all zeros. In a mission, `outfit id` is set (`874C4C48-0A8B-49E9-883E-49FC5F1FB051`) and the session id string is `<decimal>-<guid>`. `hitman entity` always equals the SDK's local player entity.
+- Slots 1 to 3: player id -1, `flags 0xA0` = `FFFFFFFF`, no entity, empty strings. Their `is local player` byte is also **true**, so that annotation does not distinguish the local player.
+- All slots: `flags 0x18` = `40000000`, `flags 0x40` = 5, `flags 0x44` = 1 (the last two match upstream's "always 5", "always 1").
+- **Across restart:** 104 of 105 dump lines identical. Only slot 0's session id changed, so it identifies a mission attempt. The Hitman pointers were the same values before and after; whether it is the same object or a reused address is not known.
+- **Back at the menu:** slot 0 kept the mission's outfit id and last session id; only the entity pointers reverted.
+
+### F8. Transform reads
+
+213 reads, no faults. In Paris the position moved 10 to 12 units per 5 s in x/y with z steady near -1.53 while the operator ran, and stayed constant while standing still. The first two samples after the restart equalled the first two of the first load exactly, so the mission start is deterministic. The vertical axis is z. Gaps longer than 5 s occur only across scene transitions, where the observer does not run.
+
+### F9. Shutdown is not observable from inside the DLL
+
+No `OnClearScene`, no destructor line and no `module detaching: process is terminating` line at quit; the last line is an ordinary transform read. `ExitProcess` would have delivered `DLL_PROCESS_DETACH`, so the game ends by terminating its own process without loader teardown, with exit code 0. This explains M0's F3 (the SDK destructor never runs). Any state a native adapter must hand off at exit has to be flushed continuously or on an earlier signal.
+
+### F10. Nothing unexpected was written or opened
+
+- `mods.ini` was not modified by the run. `Retail` gained and changed nothing beyond the two installed changes. The game root's `ZHMModLoader.log` was rewritten, as on every launch.
+- `hitmen.brick` was never loaded (4 checks), so no second Hitman existed. `NullHitmenTransport` was never called (no "Networking is disabled" line).
+- The SDK log again stopped at exactly 24,576 bytes, confirming M0's F3 on a second run.
+
+## Predicted versus observed
+
+| Prediction (experiment 3 / probe doc) | Observed |
+|---|---|
+| Two module attaches with an unload between | ✅ |
+| Detours are pass-through; first `OnLoadScene` proves the hook is live | ✅ SDK log also shows both hooks installed |
+| `OnEngineInitialized` precedes scene callbacks | ❌ The first `OnLoadScene` came 448 ms **before** it. The SDK treats the engine as initialized once a scene resource is set. |
+| `m_PlayerData` is a `TArray`; open question whether it views the inline slots | ❌ Not a `TArray` on this build (F1) |
+| Mission restart: `OnClearScene`, then a new `OnLoadScene` | ❌ No `OnLoadScene` (F2) |
+| `m_LoadingStage` offset unverified | ✅ Holds (F4) |
+| Local player resolves some time after the scene loads, in missions | Partly: same frame in missions; also resolves in the menu (F5, F6) |
+| Shutdown lines may be missing | ✅ None appear (F9) |
+| Upstream registry annotations may not hold | Mixed (F7) |
+
+## Cleanup and restoration
+
+Performed after the process exited and the logs were copied out.
+
+- `Retail\mods\Hitmen.dll` deleted; `Retail\mods.ini` restored from the pre-flight backup.
+- Verified: all 107 files under `Retail` match their pre-flight SHA-256 hashes; the listing is identical to pre-flight (and so to M0's post-run listing); `mods.ini` hash `b90b4c5e…` as before; no Hitmen file anywhere under the game root; nothing new in `Runtime`.
+- One difference from the pre-run state, outside `Retail`: `ZHMModLoader.log` in the game root now holds this run's SDK log instead of M0's. It is rewritten on every launch; M0's copy is preserved in `glacier-m0\run1\`.
+- The game has not been launched since, so "M0 behavior" is restored as a file state, not re-demonstrated by a run.
+
+## Debugger notes
+
+The operator attached Visual Studio after R1 and reported the exit line `The program '[77076] HITMAN3.exe' has exited with code 0 (0x0).` Attaching to a running game therefore works on Visual Studio 17.14, and the game ran for about 5 minutes of gameplay with a native debugger attached. Not yet reported: whether any breakpoint or first-chance exception stopped the debugger, whether `Hitmen.dll` symbols loaded, and whether any step differed from the written procedure. `HitmenLog::LogFault` cannot have been reached, since the log has no `FAULT` line.
+
+## Hypotheses raised by the run
+
+1. `0x390` in `ZPlayerRegistry` is a pointer to the local player's slot (or the first of two player pointers), not an array header. Testable by reading it in a state with two players, which is out of scope for now.
+2. The `ClearScene` flag means "reloading the same scene" (F3). Testable with more transitions: restart from a save, changing missions without visiting the menu.
+3. "Mission playing" is best defined as stage 8 with `m_bSceneLoaded`, plus scene type `mission` from the last `OnLoadScene`. That would be the first semantic event for M1, and it must survive restarts that never call `LoadScene`.
+4. Slot 0's session id is a per-attempt identifier and could key a mission-attempt event.
+5. Stages 1, 3 and 4 happen while no frame update runs. Testable only by observing from somewhere other than the frame update.
+6. The game always exits by self-termination (F9). Testable by quitting from inside a mission and via Alt+F4.
+
+None of these is acted on. No second Hitman, state mutation, transport or further runtime experiment follows from this document without a new decision.
