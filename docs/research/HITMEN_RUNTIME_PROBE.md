@@ -4,7 +4,7 @@ Date: 2026-10-06
 
 **Status: first runtime load executed 2026-10-06 and passed (R1 to R4).** Results, findings and the predicted-versus-observed comparison are in `HITMEN_COMPILE_ARCHAEOLOGY.md`, experiment 4. The game directory was restored afterwards. **No further runtime experiment is authorized**; the next step is a decision made from that evidence.
 
-The text below is the plan as written before the run and is kept unchanged as the record of what was approved. Where the run contradicted it, experiment 4 says so. In particular: `OnEngineInitialized` came after the first `OnLoadScene`, a mission restart did not call `LoadScene`, `m_PlayerData` is not a `TArray` on this build, the loading-stage offset is real, and no shutdown line is ever written because the game terminates its own process.
+The text below is the plan as written before the run and is kept unchanged as the record of what was approved. Where the run contradicted it, experiment 4 says so. The attach workflow was confirmed on Visual Studio 17.14 (symbols loaded for `Hitmen.dll`, log lines visible in the Output window, no stops); launching under the debugger and crash capture remain unexercised. In particular: `OnEngineInitialized` came after the first `OnLoadScene`, a mission restart did not call `LoadScene`, `m_PlayerData` is not a `TArray` on this build, the loading-stage offset is real, and no shutdown line is ever written because the game terminates its own process.
 
 Artifact this document describes:
 

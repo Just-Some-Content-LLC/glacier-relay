@@ -511,7 +511,23 @@ Performed after the process exited and the logs were copied out.
 
 ## Debugger notes
 
-The operator attached Visual Studio after R1 and reported the exit line `The program '[77076] HITMAN3.exe' has exited with code 0 (0x0).` Attaching to a running game therefore works on Visual Studio 17.14, and the game ran for about 5 minutes of gameplay with a native debugger attached. Not yet reported: whether any breakpoint or first-chance exception stopped the debugger, whether `Hitmen.dll` symbols loaded, and whether any step differed from the written procedure. `HitmenLog::LogFault` cannot have been reached, since the log has no `FAULT` line.
+From the operator's Visual Studio Output window (supplied in full after the run) and their report that nothing broke.
+
+- **Attach works on Visual Studio 17.14.** The debugger was attached at about 20:28:55Z (the first `[Hitmen]` line in the Output window is 20:28:56), 5.5 minutes before the Paris load, and stayed attached through the Paris load, the restart, the return to the menu and exit. Attaching did not disturb the game.
+- **Symbols:** `Hitmen.dll` (from `Retail\mods\`) reported "Symbols loaded", as did `ZHMModSDK.dll`, `dinput8.dll`, `ResourceLib_HM3.dll` and the four M0 mods. Almost every other module reported "Symbol loading disabled by Include/Exclude setting", which is a Visual Studio symbol-filter setting on this machine, not a failure.
+- **Debugger channel:** every durable-log line also appeared in the Output window with the `[Hitmen]` prefix, in step with the file.
+- **No stops:** no breakpoint was hit and the Output window contains no "Exception thrown" line, so there was no first-chance exception anywhere in the process while attached. `HitmenLog::LogFault` and the two `NullHitmenTransport` tripwires were never reached.
+- **Exit:** about 135 thread-exit lines with code 0, then `The program '[77076] HITMAN3.exe' has exited with code 0 (0x0).` No module unload lines precede it, consistent with F9.
+- **As predicted, the discovery load and unload were not visible**, because the debugger was attached after startup. Only the durable log shows them.
+
+Other things the Output window shows, none of them from Hitmen:
+
+- **The engine announces scene transitions itself.** A line `HandleTransition: <scene resource>` appears about one second before each transition, including the mission restart (`HandleTransition: …/Paris/_Scene_FashionShowHit_01.entity` at about 20:36:40), which never reached `LoadScene`. The string does not occur in the SDK or any mod, so it comes from the game.
+- **FreeCam** logs "Creating free camera." after every clear, restart included.
+- **Network-related modules are loaded by the process** (`ws2_32`, `winhttp`, `mswsock`, `dnsapi`, `schannel`) and there are threads named `sentry-http`, `sentry-logs` and `sentry-metrics`. These belong to the game, Steam, the Editor mod's WebSocket server and the SDK's Sentry client (`crash_reporting = true` in `mods.ini`), all present in the M0 baseline. `Hitmen.dll` imports none of them and its transport was never called. The run therefore gives no evidence of network activity by Hitmen, but it cannot by itself prove a negative for the process as a whole.
+- A Windows network-location component (`nlansp_c.dll`) logs "No such service is known" roughly once a minute. It predates the Paris load and continues unchanged; unrelated.
+
+Not done in this run: launching under the debugger (only attach was used), stepping, and dump capture (nothing to capture).
 
 ## Hypotheses raised by the run
 
@@ -521,5 +537,6 @@ The operator attached Visual Studio after R1 and reported the exit line `The pro
 4. Slot 0's session id is a per-attempt identifier and could key a mission-attempt event.
 5. Stages 1, 3 and 4 happen while no frame update runs. Testable only by observing from somewhere other than the frame update.
 6. The game always exits by self-termination (F9). Testable by quitting from inside a mission and via Alt+F4.
+7. Whatever emits the engine's `HandleTransition` debug line sees every transition, restarts included. If it can be located, it may be a better lifecycle signal than `LoadScene`. Untested; it would need a new hook, which is outside this probe.
 
 None of these is acted on. No second Hitman, state mutation, transport or further runtime experiment follows from this document without a new decision.
