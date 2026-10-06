@@ -271,3 +271,35 @@ Same discipline as the probe run (`research/HITMEN_RUNTIME_PROBE.md`), with `Gla
 5. Rollback and verify by hash, as before.
 
 Stage 2 (TCP sink, BEAM listener in WSL2, explicit loopback connectivity check) is not started.
+
+---
+
+## 13. Stage 1 runtime result (2026-10-06, 21:55Z to 22:05Z)
+
+Authorized explicitly, with Sapienza as the second mission. `GlacierRelay.dll` from `relay/m1` `0640cc89` (SHA-256 `01adc658…1548d`) was the single variable against the M0 mod set. Two game-directory changes (the DLL and a `[glacierrelay]` section); both reverted afterwards and all 107 `Retail` files verified against pre-flight hashes. Operator attached Visual Studio after the main menu.
+
+**Result: pass.** 51 log lines, 0 `ERROR`, 0 `WARN`, 0 `FAULT`, one thread throughout, process stable, normal exit. `ZHMModLoader.log`: "Mod glacierrelay successfully loaded."
+
+| Expectation | Observed |
+|---|---|
+| No event at the main menu (boot, after Paris, after Sapienza) | None. Menu reached stage 8 loaded three times with type empty. |
+| `#1` on Paris load | 22:01:05.881, same frame as stage 8 + loaded |
+| `#2` on Paris restart, without `LoadScene` | 22:02:18.755, after the 8 → 0 → 5 → 6 → 7 → 8 restart sequence |
+| `#3` on Sapienza load | 22:03:39.406 (`CoastalTown/Mission01.entity`, hint `Octopus`) |
+| Sequence numbers contiguous, one instance id | 1, 2, 3; `9c8f3a75-7054-457c-919d-ee87e77f57d9` |
+| Each envelope valid JSON, schema version 1, expected keys | Yes, all three |
+| Predicate transitions coherent | false → true three times, true → false three times, each pair bracketing one mission entry |
+
+Evidence (local only): `%TEMP%\glacier-m0\hitmen\relay-run1\` (relay log SHA-256 `4f23707a…ce7f9`, SDK log, `mods.ini` before/after, `Retail` listings and hashes).
+
+### Findings
+
+1. **The predicate's two conditions are both necessary.** On the Sapienza load the loaded flag went true at stage 7, 164 ms before stage 8; on both Paris loads it went true only at stage 8. A predicate on the loaded flag alone would have fired early in Sapienza; one on stage 8 alone would have fired before the flag in Paris. Requiring both gave the same semantics on all three entries.
+2. **Scene type is readable from the context on restart.** `m_SceneInitParameters.m_Type` stayed `"mission"` through the restart, so the predicate needed no hook. This closes the restart gap identified in experiment 4 (F2).
+3. **Game session id changed on every mission entry**, including the restart, and the three values were distinct (`2516109767498002969-…`, `2516109766730159341-…`, `2516109765960127603-…`). The leading decimal part decreases over time by roughly the elapsed ticks, which is the shape of a "max ticks minus now" reverse timestamp; the suffix is a GUID. Observation only; nothing keys on it.
+4. **The engine-independent layers ran unchanged from their tests.** The three in-game envelopes have exactly the shape the unit tests and the standalone replay produced.
+5. As in experiment 4, there was no destructor or detach line at quit; the last line is the menu reaching stage 8.
+
+### Status
+
+Stage 1 is empirically validated: `Glacier observation → semantic state → edge → versioned event → IRelaySink → log`. Stage 2 (TCP loopback sink, BEAM listener in WSL2, explicit Windows → WSL2 loopback verification) is **not** started and needs its own authorization. The game installation is in its M0 file state.
