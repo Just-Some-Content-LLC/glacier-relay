@@ -371,12 +371,12 @@ Promoted to documented fact for this build: **the registry value Stage A called 
 |---|---|---|
 | Bounded by | scene predicate rise/fall (state, rank 2) | `ContractStart` / `ContractFailed` or `ContractEnd` (stream, rank 1) and the backend's `SegmentClosing` |
 | Identity | `(adapter instance, attempt number)` | `ContractSessionId` |
-| Observed relationship (Stage A + B0) | restart: the registry already held the *next* session id at the fall frame; `ContractFailed("…OnRestartLevel")` came 0.3 s **before** the fall; `ContractStart` of the new session came in the same frame as the next rise | exit to menu: `ContractFailed("…exit to Main menu")` in the **same frame** as the fall; the registry kept the old id |
+| Observed relationship (Stage A + B0) | restart: the registry already held the *next* session id at the fall frame; `ContractFailed("…OnRestartLevel")` came ~1.9 s **before** the fall (originally written here as 0.3 s; corrected from the B0 log timestamps in section 26, finding 2); `ContractStart` of the new session came in the same frame as the next rise | exit to menu: `ContractFailed("…exit to Main menu")` in the **same frame** as the fall; the registry kept the old id |
 | Quit from inside a mission | attempt stays "last known playing; observation lost" | nothing sent; the backend resolves `OrphanedSession` on the next launch |
 
 So: one attempt ↔ one contract session in every case seen, but the boundaries differ by up to a few hundred milliseconds and in a different direction per path, and the session id changes before the scene does on restart. They must not be merged. What can now be stated **directly from engine evidence**: that a contract session started (`ContractStart`, with loadout, location, difficulty, type); that it ended, and whether by restart or by exit to menu (`ContractFailed` reason); which session an actor outcome belongs to (`ContractSessionId` on every event). What remains **correlation**: the attempt ↔ session pairing itself, done by BEAM by order within the adapter stream (a `ContractStart` observed between an attempt's `mission.playing` and `mission.stopped` is that attempt's session), and never by the session id.
 
-Proposal: do **not** introduce public `contract.started` / `contract.failed` Relay events in the first stage. Normalize `ContractStart` and `ContractFailed` into **attempt enrichment**: a `mission.contract` observation (Relay event, schema v1, carrying `contract_session_id`, `contract_id`, `location_id`, `contract_type`, `difficulty`, `loadout` summary) and a `mission.contract_ended` observation (`reason` as the engine string plus a mapped `kind: restart | exit_to_menu | other`). BEAM attaches them to the open attempt; the summary gains "ended by restart / by exit / not observed" from engine evidence; `Attempt.mission` stays `:playing | :stopped | :superseded`, bounded by the predicate. Whether these later become public lifecycle events is decided when a consumer needs them.
+Proposal (**superseded by section 27.6 after the B1 runtime evidence**; kept as the pre-runtime position): do **not** introduce public `contract.started` / `contract.failed` Relay events in the first stage. Normalize `ContractStart` and `ContractFailed` into **attempt enrichment**: a `mission.contract` observation (Relay event, schema v1, carrying `contract_session_id`, `contract_id`, `location_id`, `contract_type`, `difficulty`, `loadout` summary) and a `mission.contract_ended` observation (`reason` as the engine string plus a mapped `kind: restart | exit_to_menu | other`). BEAM attaches them to the open attempt; the summary gains "ended by restart / by exit / not observed" from engine evidence; `Attempt.mission` stays `:playing | :stopped | :superseded`, bounded by the predicate. Whether these later become public lifecycle events is decided when a consumer needs them.
 
 ## 20. Revised actor-outcome model
 
@@ -535,7 +535,7 @@ The plugin's per-frame sequence now lives in the engine-independent `RelayFrame:
 | Boundary | SDK headers only in `GlacierRelay.cpp`, `SceneObservation.cpp`, `TelemetryIntake.cpp`; `GlacierRelayTests` builds every other source without the SDK include path |
 | BEAM absent | unchanged sink behaviour (drop while disconnected, backoff); telemetry is normalized and dropped by the sink like any other envelope; no new failure mode |
 
-### Proposed B1 controlled runtime experiment (NOT executed; requires explicit authorization)
+### Proposed B1 controlled runtime experiment (executed 2026-10-07 — see section 26)
 
 Setup as Stage A: BEAM up first (`relay@…`, output captured), pre-flight hashes, install `GlacierRelay.dll` `f2d72a84…506b` + `[glacierrelay]`, no `glacierrelay.ini` (defaults: tcp, 4747, `telemetry_log = names`), M0 mod set, VS attached after the menu connection, rollback by hash. Script: the B0 script, so the results are comparable with a known corpus:
 
@@ -551,3 +551,330 @@ Pass: every `Kill`/`Pacify` the native log shows as `captured` appears exactly o
 Expected but not safety-relevant (clarified before the run): `outside attempt = 0` and `malformed = 0` are what the B0 evidence predicts for this script. If a supported occurrence arrives outside the mission predicate, it is recorded, counted and left unattributed; no association is fabricated and nothing is fixed forward. If a live supported event fails B1 validation, the native warning names the field, the raw diagnostic evidence (the `telemetry seen` lines and the probe-style corpus if `telemetry_log` is raised) is preserved, validation is not loosened during the run, and the run continues; this is a semantic discrepancy to analyse, not a reason to terminate HITMAN. Abort conditions stay: native fault, unexpected debugger break, game instability, severe performance impact, unsafe memory behaviour, hook install failure or other safety-relevant behaviour.
 
 Record as findings: anything `unsupported` that the taxonomy did not list; any `truncated`; the intake's per-event cost if measurable; any outside-attempt or malformed occurrence with its surrounding lines.
+
+---
+
+## 26. B1 controlled runtime experiment (2026-10-07, 03:50Z to 04:27Z) — PASS; B1 accepted
+
+Authorized explicitly as "M2 B1 Runtime Experiment" against the pre-runtime gate of section 25: ZHMModSDK `relay/m2` `f6190fb5`, clean-built `GlacierRelay.dll` SHA-256 `9bb7d4c38f3783234e81587f8240e2767da106dbb4bfed0ba7a123c7bccb90d9` (byte-identical copy verified after install), glacier-relay `aa8d9f7`. No implementation change before, during or after the run. Objective: validate the first production use of Glacier's engine-authored telemetry inside `GlacierRelay` — `OnEventSent → owned TelemetryObservation → bounded queue → frame-thread drain → TelemetryNormalizer → actor.died / actor.pacified → RelayAdapter → TCP → BEAM → current attempt → event-derived summary` — for B1 actor outcomes and the normalization boundary. It does not validate the rest of the S1 stream as Relay telemetry.
+
+**Outcome: accepted.** B1 is a validated M2 stage; `actor.died` v1 and `actor.pacified` v1 are validated M2 semantic vocabulary.
+
+### Setup and pre-flight
+
+Game `3.280.0.0`, Steam build `24833614`; all 26 M0 hashes OK; the 107-file `Retail` listing and hashes identical to both the B0 post-cleanup and the Stage A pre-flight baselines; no Hitmen, probe or Relay artifact under the game root; `mods.ini` = M0 (`b90b4c5e…`); both repositories clean at the authorized commits; OTP 28.4.2 / Elixir 1.19.6; port 4747 free on both sides before the listener started. BEAM first: `elixir --sname relay -S mix run --no-halt` with a live subscriber script, output captured, state read over RPC. Two game-directory changes, verified by a full-tree hash diff to be the only two: `Retail\mods\GlacierRelay.dll` and `mods.ini` with `[glacierrelay]` (byte-identical to the Stage A relay variant). No `glacierrelay.ini` (defaults `tcp`, 4747, `telemetry_log = names`). No actor probe, no Hitmen, no other instrumentation. Operator attached Visual Studio after the menu gate.
+
+### R1 — menu gate
+
+Pass. Loader: `Successfully installed detour for hook 'ZAchievementManagerSimple_OnEventSent' at address 0x140b6fd50`, `Mod glacierrelay successfully loaded`. Native: `plugin constructed … SDK 4.1.1 (ABI 1)`, `Init: one detour registered (…, read-only); lifecycle is polled`, adapter instance `c307a12d-55e9-4085-ba47-b626d71f2bf2`, `TcpRelaySink`, protocol 1, telemetry queue 256, `telemetry_log names`, `tcp sink: connected to 127.0.0.1:4747` at 03:57:07.150Z; BEAM `accepted` 16 ms later, connection unidentified. Menu scene 5 → 6 → 7 → 8, no event, no sequence consumed. **Zero Glacier telemetry at the frontend** (the engine emitted nothing on this bus before the mission loaded). 0 `WARN`/`ERROR`/`FAULT`. The debugger attach changed nothing (log still 13 lines afterwards).
+
+### Complete Relay semantic sequence
+
+One adapter instance, one TCP connection for the whole process, sequences 1 to 16 contiguous, BEAM `gaps []`, 16 lines received, 0 rejected.
+
+| # | Event | Actor (engine fields, normalized) | Native timestamp | BEAM Δ | Attempt |
+|---|---|---|---|---|---|
+| 1 | `mission.playing` Paris / Peacock | — | 04:00:55.310Z | +48 ms (first decode) | 1 opens |
+| 2 | `actor.pacified` | Jacqueline Ducloitre, civilian, non-target, `pacify`/`murder`, melee/unarmed, `[Subdue]`, id 195054661 | 04:03:43.445Z | +17 ms | 1 |
+| 3 | `actor.died` | Ducloitre (same repository id and `engine_actor_id`), `kill`/`murder`, melee/unarmed, `[CoupDeGrace]` | 04:07:25.660Z | +2 ms | 1 |
+| 4 | `actor.died` | Mark Parker, civilian, `bloody_kill`/`murder`, ballistic/pistol, `[Shoot]`, item `e70adb5b…` | 04:09:04.573Z | +2 ms | 1 |
+| 5 | `actor.pacified` | Ad?le Rousseau, civilian, `pacify`/`murder`, `[Subdue]`, id 3951956299 | 04:09:24.690Z | +2 ms | 1 |
+| 6 | `actor.died` | Rousseau (same ids as #5), `bloody_kill`/`murder`, pistol, `[Shoot]` | 04:12:54.744Z | +1 ms | 1 |
+| 7 | `actor.died` | F?licien Bourque, civilian, `bloody_kill`/`murder`, pistol | 04:18:24.622Z | +2 ms | 1 |
+| 8 | `actor.died` | Philippe Quiron, **guard**, `bloody_kill`/`murder`, pistol | 04:18:26.594Z | +2 ms | 1 |
+| 9 | `actor.died` | Satordi Roux, civilian, `bloody_kill`/`murder`, pistol | 04:18:28.137Z | +2 ms | 1 |
+| 10 | `actor.died` | Andr? Furchard, civilian, `kill`/**`accident`**, `accident: true`, explosion/accident/`accident_explosion`, `[Shoot]`, item `a8a0c154…` | 04:19:25.139Z | +2 ms | 1 |
+| 11 | `actor.died` | **Viktor Novikov, `is_target: true`, `actor_type: civilian`**, `kill`/`accident`, explosion | 04:19:25.613Z | +2 ms | 1 |
+| 12 | `actor.died` | Samantha Renard, civilian, `kill`/`accident`, explosion | 04:19:26.633Z | +2 ms | 1 |
+| 13 | `actor.died` | Mathias Labelle, civilian, `kill`/`accident`, explosion | 04:19:26.887Z | +2 ms | 1 |
+| 14 | `mission.stopped` (restart fall: loaded false, stage 8, Paris) | — | 04:22:49.397Z | +2 ms | 1 closes, 1314.1 s |
+| 15 | `mission.playing` Paris / Peacock | — | 04:23:00.563Z | +2 ms | 2 opens |
+| 16 | `mission.stopped` (exit-to-menu fall) | — | 04:25:00.876Z | +2 ms | 2 closes, 120.3 s |
+| — | menu: no event; normal quit; TCP `:peer_closed` | | 04:25:26.714Z | | observation lost after #16 |
+
+The controlled script was followed with two deviations that are themselves evidence: the operator's pistol kill of Parker (#4) was witnessed and the witness was subdued (#5), later shot (#6); and the Novikov kill was an explosion that took three bystanders (#10, #12, #13), which supplied the optional accident context without a separate action. The unplanned events were handled identically to the planned ones.
+
+### Raw S1 occurrences versus normalized Relay occurrences
+
+159 `OnEventSent` deliveries over the process (`telemetry seen` lines; counters at the second attempt end: `seen 158`, one `ContractFailed` arrived after that line). **12 captured** (10 `Kill`, 2 `Pacify`) → **12 normalized → 12 published** (#2 to #13), exactly one Relay event per engine occurrence. 124 unsupported across 40 names, never leaving the intake. 23 `ChallengeCompleted`, all `_DONTSEND` → counted, not normalized. 0 unreadable, 0 truncated. Full tally in `s1-names.txt` (evidence directory).
+
+### Native ↔ BEAM comparison
+
+Programmatic, over the Relay wire schema only (`compare.py` → `native-beam-compare.txt`): the 16 native `published` envelopes against BEAM's final `Lifecycle` state reconstructed as events (`beam-events.ndjson`). **16/16 present, 0 field mismatches** on event type, sequence, timestamp and every payload field: `repository_id`, `actor_name`, `engine_actor_id`, `actor_type`, `is_target`, `death_type`, `death_context`, `accident`, `kill_class`, `method_broad`, `method_strict`, `damage_events`, `item_repository_id` (present on #4, #6 to #13; absent and `nil` on #2, #3, #5), `contract_session_id` (attempt 1's value on #2 to #13), `engine_timestamp_s`, `source: "engine_telemetry"`; and the three scene fields plus `game_session_id` on #1, #14 to #16. Protocol 1 / schema 1 on all. Raw Glacier field names were not compared; the normalizer is the boundary.
+
+### Pacify → died, same actor
+
+Two instances, both preserved as two ordered semantic occurrences with no collapse and no dedup: Ducloitre #2 → #3 (same `repository_id` `5dc7ede5-bb9d-4f93-a892-cb7fb2791b19`, same `engine_actor_id` 195054661, `pacify [Subdue]` → `kill [CoupDeGrace]`, both `murder`, 222 s apart) and Rousseau #5 → #6 (`28aaef75…`, 3951956299, `pacify [Subdue]` → `bloody_kill [Shoot]`, 78 s apart). The Ducloitre pair has the same `ActorId`, `ActorType 0`, `KillType 3 → 4`, `KillContext 4` as in B0 — consistent across two game processes.
+
+### Conscious civilian, target, accident
+
+- #4 Parker: one `actor.died`, the engine's `bloody_kill` preserved (a silenced pistol kill is not `kill` on this build), method and item carried.
+- #11 Novikov: one outcome, `is_target: true`. **`actor_type` is `civilian`: target status and actor type are orthogonal engine facts and must never be derived from one another.** `ObjectiveCompleted` (index 134) was seen and ignored as unsupported; no mission outcome was inferred.
+- #10 to #13: `death_context: accident`, `accident: true`, `kill_class: explosion`, `method_broad: accident`, `method_strict: accident_explosion`, `damage_events: [Shoot]`, item `a8a0c154-c36f-413e-8f29-b83a1b7a22f0` — the engine's classification carried unchanged.
+
+### Attempt association
+
+#1 to #14 → attempt 1; #15, #16 → attempt 2; `unattributed_outcomes: []`; attempt 2 "actor outcomes: none observed". Association was by stream order only. `contract_session_id` crossed the wire as payload on every actor outcome (it equalled the `game_session_id` of #1) and was used for nothing.
+
+### Counters
+
+| Edge | Counters line |
+|---|---|
+| attempt 1 ended (#14) | `seen 145, captured 12, unsupported 110, dont_send 23, unreadable 0, truncated 0; queue pushed 12, dropped 0; normalized 12, malformed 0, outside attempt 0` |
+| attempt 2 ended (#16) | `seen 158, captured 12, unsupported 123, dont_send 23, unreadable 0, truncated 0; queue pushed 12, dropped 0; normalized 12, malformed 0, outside attempt 0` |
+
+All three expected zeros held. No malformed or outside-attempt observation occurred.
+
+### BEAM summary (`summary_text/0`, after the process exit)
+
+```
+adapter c307a12d-55e9-4085-ba47-b626d71f2bf2: 16 event(s), last sequence 16, gaps [], observation lost
+  connection 127.0.0.1:46480: opened 03:57:07.166541Z, identified 04:00:55.344435Z, closed 04:25:26.714699Z (:peer_closed)
+  attempt 1: Peacock (…/Paris/_Scene_FashionShowHit_01.entity): playing 04:00:55.310Z (#1), stopped 04:22:49.397Z (#14), duration 1314.1 s
+    actor outcomes (engine telemetry): 10 died (1 target, 9 non-target; 9 civilian, 1 guard; context accident 4, murder 6);
+                                        2 pacified (0 target, 2 non-target; 2 civilian; context murder 2)
+    #2 pacified Jacqueline Ducloitre (civilian, non-target): pacify/murder melee unarmed [Subdue] @168.43s (engine_telemetry)
+    … one line per outcome #3 to #13 …
+  attempt 2: Peacock (…): playing 04:23:00.563Z (#15), stopped 04:25:00.876Z (#16), duration 120.3 s
+    actor outcomes (engine telemetry): none observed
+```
+
+The counts match the operator's actions. The summary claims no unique-actor count, no attribution to Agent 47, no Silent Assassin, no score, no mission success, failure or outcome. Compared with Stage A's lifecycle-only summary (two bounded attempts with durations), the B1 summary says what happened inside each attempt while refusing every claim it has no evidence for: materially more useful.
+
+### Performance
+
+No perceptible performance degradation was observed by the operator during B1; no numeric FPS measurement was collected. (B0's ~115 FPS figure is not carried over; it was a different binary doing different work.) Native publish-to-BEAM latency was 1 to 2 ms after the first event, as in Stage A.
+
+### Warnings, errors, faults, debugger
+
+Native log: 245 lines, two threads (frame thread, sender thread), **0 `WARN`, 0 `ERROR`, 0 `FAULT`**. BEAM: 0 warnings, 0 rejected lines. No debugger break; normal exit; process gone at 04:25:27Z. The SDK log's `EOSSDK-Win64-Shipping.dll` hook line (error 126) is present in the M0 baseline log too and is unrelated.
+
+### Cleanup and hash verification
+
+BEAM stopped (`:init.stop/0` over RPC) after the final state was captured; `GlacierRelay.dll` removed; `mods.ini` restored from the pre-flight copy (`b90b4c5e…`); all 107 `Retail` hashes and the listing identical to this run's pre-flight; 26/26 M0 hashes OK; no relay, Hitmen or probe artifact under the game root; `Runtime` untouched; port 4747 free on both sides. Evidence in `%TEMP%\glacier-m0\hitmen\b1-run1\`: native log `relay-20261007-035647-91292.log` (SHA-256 `3ff9a9ab7d33783baebba4a5c388fcfff12d61037198616958d1b673078f0d8f`), `beam.log` (`bdbc743a…9b91`), `beam-final-state.txt` (`summary_text/0`, `summary/0`, `state/0`), `beam-events.ndjson`, `native-beam-compare.txt`, `s1-names.txt`, both `ZHMModLoader` logs, `mods.ini` before/relay/after, `Retail` listings and hashes before/installed/after, and the scripts used (`live_watch.exs`, `final_state.exs`, `compare.py`, `watch-b1.sh`).
+
+### Findings (evidence; nothing acted on)
+
+1. **Engine event indices skip.** The `eventIndex` argument reached the detour with 9 of 154 values missing by attempt 1's end (5, 20, 21, 106, 119, 130, 131, 143, 144; index 5 was also absent in B0). The intake's `seen` counter equals the number of indices actually delivered (154 − 9 = 145), so nothing was lost by the hook: **the engine advances its index on paths that never call `OnEventSent`.** Consequence, stated as policy: **`eventIndex` is not a Relay continuity or loss signal.** The hook reconciled every event delivered to it; Relay's own envelope `sequence` remains the continuity mechanism for normalized Relay events, and BEAM's `gaps` is computed from it alone.
+2. **`ContractFailed` ordering depends on the transition path.** Restart: `ContractFailed` at 04:22:47.554Z, predicate fall (`mission.stopped #14`) at 04:22:49.397Z — **1.84 s before** the fall, inside the attempt. Exit to menu: predicate fall at 04:25:00.876Z, `ContractFailed` at 04:25:00.877Z — **after** the fall, logged after the counters line of the same frame. B0 shows the same shape (restart: 1.93 s before, frames 146010 → 146326; exit: same frame 158948, logged after the fall). This corrects section 19's "0.3 s before": the B0 figure measured from log timestamps is 1.9 s. Both `ContractFailed` events were unsupported in B1 and therefore consumed nothing; had they been supported, the B1 rule "publish only while `Playing()`" would have placed the restart one inside the attempt and the exit one outside it. This is the central input to B2 (section 27).
+3. **`ContractStart` ordering also depends on the path.** Fresh load: `HeroSpawn_Location` 04:00:54.773Z → `ContractStart` 04:00:55.016Z → rise 04:00:55.310Z (before the rise). Restart: `HeroSpawn_Location` 04:23:00.111Z → rise 04:23:00.563Z → `ContractStart` 04:23:00.564Z (same frame, after the rise). B0: fresh load frames 39043 → 39047; restart both at frame 146568 with `ContractStart` logged after the rise.
+4. **The frame-order contract was not exercised by a supported event.** No `Kill`/`Pacify` was captured in the frame of, or immediately before, either fall; the contract's test coverage remains the `RelayFrameTests` of B1-R4.
+5. **Non-ASCII actor names arrive as `?`.** `Ad?le Rousseau`, `F?licien Bourque`, `Andr? Furchard` carry a literal `0x3F` where the display name has an accented character. The bytes are identical in B0's raw dump of the same actors, so the substitution happens at or before the engine's `ZString`; it is not a normalizer defect. Recorded as a known limitation of `actor_name` on this build.
+6. **Engine emission time ≠ engine occurrence time.** The four explosion outcomes (#10 to #13) carry `engine_timestamp_s` 668.413, 668.438, 668.452, 668.465 — a span of about 50 ms of Glacier time — while their `OnEventSent` deliveries were observed at 04:19:25.124Z, 25.602Z, 26.624Z, 26.876Z, about 1.7 s of wall time, interleaved with `OpportunityEvents` and `AccidentBodyFound`. Relay preserved both: **`engine_timestamp_s` is Glacier's occurrence-time evidence (seconds since contract start); the envelope `timestamp` is Relay's observation/publication time.** No global timeline-sorting policy is established yet; consumers that need occurrence order within an attempt have the engine value, consumers that need the order Relay saw have the sequence. Both stay on the wire.
+7. **Four names not in the B0 taxonomy**: `EvidenceHidden`, `BodyHidden`, `AllBodiesHidden`, `AllPacifiedHidden` (body-handling notifications after the operator hid bodies). Added to the taxonomy as B1-only observations (`research/B0_EVENT_TAXONOMY.md`).
+8. Fall-edge `game_session_id`: on the restart fall (#14) the slot held the upcoming attempt's id (the value #15 then carried); on the exit fall (#16) it held the stopped attempt's own id — the two Stage A data points reproduced. Still not keyed on.
+9. The first engine telemetry of the process arrived only with the mission load (`HeroSpawn_Location`, index 1); the frontend emitted nothing. One `_DONTSEND` event per challenge notification, as in B0.
+
+### Architectural conclusion
+
+**Engine-authored Glacier telemetry is a viable primary semantic occurrence source for M2 when Relay has an explicit normalizer entry for that occurrence.** The production boundary — `OnEventSent → owned observation → bounded queue → TelemetryNormalizer → Relay-owned semantic event → wire → BEAM` — is validated at runtime: no engine object crossed the detour, the detour did no serialization, logging of bodies or network work, the queue never filled, every supported occurrence became exactly one Relay event with Relay-owned names and types, and BEAM validated and modelled it without knowing Glacier's field names. **This does not mean arbitrary Glacier events may be forwarded.** 124 unsupported deliveries and 23 `_DONTSEND` deliveries were counted and discarded at the intake; only explicitly supported and validated normalization entries become Relay events, and adding a name is a normalizer-table decision with a schema, tests and a controlled run, not a configuration change.
+
+### Actor-outcome conclusion
+
+12 supported Glacier actor outcomes → 12 normalized Relay events, exactly one per controlled occurrence, zero native deduplication required, zero malformed, zero drops, zero outside-attempt outcomes, field-for-field native/BEAM agreement, correct attempt association by stream order. **`actor.died` v1 and `actor.pacified` v1 are accepted as validated M2 semantic vocabulary.** Their fields are the engine's classification, not Relay's inference; in particular `is_target` and `actor_type` are independent (Novikov: target, civilian) and neither is derived from the other.
+
+### Pass criteria of section 25
+
+All met: every `captured` `Kill`/`Pacify` appears exactly once in BEAM as the mapped event with values equal to the native `published` line, attached to the attempt open at the time; summary counts match the operator's actions; no gaps; `dropped = 0`; no `ERROR`/`FAULT`; no perceptible frame-rate effect reported; `dont_send` (23) equals the number of client-only challenge notifications seen; rollback verified by hash. Answers to the review questions: (A) the normalization boundary behaved exactly as designed; (B) every controlled engine-authored actor outcome became exactly one appropriate Relay semantic event; (C) BEAM associated them with the correct attempt without using `ContractSessionId` as identity; (D) the event-derived summary is materially more useful than Stage A's.
+
+B2 was not started after the run. The B1 implementation is frozen as validated; section 27 is design only.
+
+---
+
+## 27. B2 design — contract lifecycle (design only; not authorized for implementation)
+
+Status: **analysis for review. No native or BEAM production code changed; nothing deployed.** Inputs: the B0 raw corpus (full payloads), the B1 production run (names, ordering, timing), Stage A (process-exit behaviour), section 19 (now partly superseded by runtime evidence, as marked below).
+
+### 27.1 Raw contract-event corpus
+
+Everything Glacier emitted on `OnEventSent` that concerns the contract session, across B0 (two sessions, payloads) and B1 (two sessions, names). User and platform identifiers omitted. `Timestamp` is seconds on the contract clock.
+
+| Glacier name | Direction | Count B0 / B1 | Payload (B0) | Position in a session |
+|---|---|---|---|---|
+| `HeroSpawn_Location` | sent | 2 / 2 | `{RepositoryId}`; `Timestamp 0.0` | first event of every session |
+| `ContractStart` | sent | 2 / 2 | `{Loadout: [{RepositoryId, InstanceId, OnlineTraits[], Category: null}], Disguise: <outfit repository id>, LocationId: "LOCATION_PARIS", GameChangers: [], ContractType: "mission", DifficultyLevel: 2.0, IsVR: false, IsHitmanSuit: true, SelectedCharacterId: <null guid>}`; envelope `ContractSessionId`, `ContractId` (`…0200` for Paris), `Timestamp 0.0`; also `XboxGameMode 3.0`, `XboxDifficulty 0.0` | second event; then `Level_Setup_Events` ×3–4, `StartingSuit`, `IntroCutEnd` (`Timestamp` 2.3–13.0) |
+| `ShotsFired`, `ShotsHit` | sent | 1+1 / 1+1 | `{Split: {<instance id>: n}, Total}` | once, immediately before `ContractFailed` on the restart path (B1 indices 152, 153 → 154); not seen on the exit path in B1 |
+| `ContractFailed` | sent | 2 / 2 | `Value` is a **string**: `"Contract ended manually: OnRestartLevel"` (`Timestamp 907.95`), `"Contract ended manually: User pressed exit to Main menu"` (`Timestamp 105.09`); envelope `ContractSessionId` of the ending session | last event of the session |
+| `ContractEnd` | sent | 0 / 0 | **never observed** (no completed mission has been run) | — |
+| `ContractSessionMarker` | received (backend) | 2 / n.a. | `{Currency: {ContractPaymentAllowed: true, ContractPayment: null}}`, `ContractId` null-guid, `ContractSessionId` of the **new** session, `Origin: null` | arrives 3.5–6 s before `ContractStart` (`CreatedAt` during loading): the backend has already created the session |
+| `SegmentClosing` | received (backend) | 3 / n.a. | `{SegmentIndex: 0, LastEventName, LastEventTime, CloseType: "GameRestart" \| "GameExit" \| "ContractFailed:OrphanedSession"}`, `ContractSessionId` of the **closed** session, `Origin: "ContractSessionService"` | 3–9 s after the client's `ContractFailed` (restart 9.2 s, exit 2.9 s); at the next launch for the orphan |
+| `ContractFailed` | received (backend) | 1 / n.a. | `{FailType: "OrphanedSession"}`, `Origin: "ContractSessionService"`, `ContractSessionId` = Stage A's Sapienza session (the one quit from inside), `Timestamp 10.25` | first thing received at the next launch, 1 h 43 min after the quit |
+
+`GlacierRelay` hooks `OnEventSent` only; the received rows are B0 evidence from the probe's `OnEventReceived` hook and are **not available to Relay** without a second detour, which B2 does not propose.
+
+### 27.2 What Glacier states directly
+
+| Fact | Evidence | Direct or inferred |
+|---|---|---|
+| A contract session began, identified by `ContractSessionId`, for contract `ContractId`, at location `LocationId`, of type `ContractType`, at `DifficultyLevel`, with this loadout (repository ids + online traits), this starting disguise (repository id) and whether it is the hitman suit | `ContractStart` | **direct** |
+| A contract session ended by a manual action, and which action | `ContractFailed` string: `OnRestartLevel` / `User pressed exit to Main menu` | **direct** (the string is engine-authored; the prefix `Contract ended manually: ` is constant in both cases) |
+| How long the contract ran on Glacier's clock | `ContractFailed.Timestamp` (907.95 s; 105.09 s) | direct |
+| Which contract session an actor outcome belongs to | `ContractSessionId` on every `Kill`/`Pacify` | direct |
+| Where 47 spawned | `HeroSpawn_Location.RepositoryId` | direct (resolution to a name is not) |
+| The session was *failed* in the scoring sense | the name `ContractFailed` | **not stated**: Glacier uses `ContractFailed` for a manual restart; the backend closes the same session as `GameRestart`. "Failed" is the engine's event name, not a verdict about the attempt |
+| A contract session completed | `ContractEnd` | **unobserved**; shape unknown |
+| The player died | `Hero_Dead` or a `ContractFailed` reason | unobserved |
+| Restart ≠ exit to menu | two distinct reason strings | direct, for these two strings; other strings are unknown |
+| Difficulty name (Casual/Professional/Master) for `DifficultyLevel 2.0` | — | not stated; not to be mapped until the enum is evidenced |
+| The old session is closed when a new one begins | ordering only | inferred |
+
+### 27.3 Ordering relative to `mission.playing` / `mission.stopped`
+
+Four sessions, two runs, two transition paths each, all consistent:
+
+| Transition | Glacier order | Native log timing | Relay predicate |
+|---|---|---|---|
+| Fresh load (menu → mission) | `HeroSpawn_Location` → `ContractStart` → … | B1: 04:00:54.773 → 04:00:55.016 → rise 04:00:55.310. B0: frames 39041 → 39043 → rise 39047 | **`ContractStart` 0.15–0.3 s before the rise** |
+| Restart (in mission) | `ShotsFired`/`ShotsHit` → `ContractFailed(OnRestartLevel)` → [scene unload/reload, stage 0 → 5 → 6 → 7 → 8] → `HeroSpawn_Location` → `ContractStart`(new) | B1: `ContractFailed` 04:22:47.554, **fall 04:22:49.397** (1.84 s later); `HeroSpawn` 04:23:00.111, **rise 04:23:00.563**, `ContractStart` 04:23:00.564 (same frame, after the rise). B0: 1.93 s; same-frame after the rise (frame 146568) | **`ContractFailed` ~1.9 s before the fall, inside the attempt; `ContractStart` same frame as the rise, after it** |
+| Exit to menu | `ContractFailed(exit to Main menu)` | B1: **fall 04:25:00.876**, `ContractFailed` 04:25:00.877 (same frame, logged after the fall's counters line). B0: same frame 158948, logged after the fall | **`ContractFailed` after the fall, outside the attempt** |
+| Quit to desktop from inside a mission | nothing sent before termination (Stage A: no hook; inferred from the backend's `OrphanedSession` — see 27.9) | — | no fall, no `mission.stopped` (Stage A outcome B) |
+
+Registry slot (`game_session_id` on the predicate edges): on the restart fall it already holds the **new** session's id (the slot rotated between the old `ContractFailed` and the fall); on the exit fall it holds the stopped session's id; on every rise it holds the session that `ContractStart` names (B1: #1's `game_session_id` equals the `contract_session_id` on #2–#13; Stage A/B0 ids match the same way).
+
+Correction to section 19: the restart `ContractFailed` precedes the fall by about 1.9 s, not 0.3 s.
+
+Consequence for the B1 rule "publish supported telemetry only while `MissionObserver::Playing()`": applied to contract telemetry it would publish the restart `ContractFailed` and silently count the exit `ContractFailed` as *outside attempt*, and would publish the restart `ContractStart` but count the fresh-load `ContractStart` as outside attempt. **A valid contract semantic occurrence exists outside an open Relay attempt on both edges**, so the rule cannot be applied to contract lifecycle telemetry.
+
+### 27.4 Contract session versus Relay attempt
+
+| | Relay mission attempt | Glacier contract session |
+|---|---|---|
+| Bounded by | scene predicate rise/fall (observed runtime state) | `ContractStart` → `ContractFailed` / `ContractEnd` (engine-authored stream), closed server-side by `SegmentClosing` |
+| Identity | `(adapter instance, attempt number)` — Relay's | `ContractSessionId` — Glacier's |
+| Cardinality observed | 1 ↔ 1 in all 4 sessions (and in Stage A's 3 attempts by registry id) | |
+| Boundary offset | session starts 0.3 s before / same frame as the rise; session ends 1.9 s before / 1 frame after the fall | |
+| Lifetime beyond the process | ends with observation | continues on the backend; resolved as orphaned at the next launch |
+
+`ContractSessionId` is Glacier's identity for Glacier's object. It is legitimate to use it **within the contract domain** (to say that a `ContractFailed` ends the session a `ContractStart` began) and as **consistency evidence** (the rise's `game_session_id` should equal the paired session's id). It is **not** Relay attempt identity, and attempt ↔ session pairing is a correlation that BEAM establishes from stream order and records as such, with the id equality as a check whose failure is a logged discrepancy, never a re-pairing. The one-to-one cardinality is an observation of two Paris scripts, not a rule: a session with no attempt (load aborted before the predicate rose) and an attempt with no session (telemetry not emitted, e.g. offline — section 24) must both be representable.
+
+### 27.5 Semantic scope: two gating classes, no framework
+
+Distinguish, per normalizer table entry, how the native plugin gates publication:
+
+| Class | Members | Native rule | BEAM rule |
+|---|---|---|---|
+| **attempt-gated** | `Kill` → `actor.died`, `Pacify` → `actor.pacified` (validated in B1) | publish only while `Playing()`; otherwise count *outside attempt*, log, do not publish (unchanged) | attach to the open attempt; otherwise `unattributed_outcomes` (unchanged) |
+| **ungated** | `ContractStart` → `contract.started`, `ContractFailed` → `contract.ended` | publish whenever captured and valid; the frame-order contract still applies (drained before this frame's edge), so the exit `ContractFailed` publishes after `mission.stopped` and the fresh-load `ContractStart` before `mission.playing` | contract-session model on the instance; correlated to attempts by the rules in 27.7 |
+
+This is one enum field on an existing table row and two branches in `RelayFrame::Process`, not a scope framework: no `scope` field on the wire (the event type implies it), no generic "scoped event" abstraction in BEAM, no time windows. The native *outside attempt* counter keeps its B1 meaning for the attempt-gated class. Revisit only if a third class appears; `StartingSuit` (B3) arrives at `Timestamp 0.0` on the fresh-load path and will face the same question, which argues for deciding it per entry then rather than generalizing now.
+
+Rejected: widening the native attempt window by a grace period (a heuristic that would hide the real ordering), and attaching contract events to attempts natively (the plugin would have to guess on both edges).
+
+### 27.6 Public `contract.*` events versus internal enrichment
+
+Section 19 proposed Model B (`mission.contract` / `mission.contract_ended` as attempt enrichment, attached to the open attempt). The runtime evidence changes the assessment:
+
+| Criterion | Model A — public `contract.started` / `contract.ended` | Model B — internal enrichment (`mission.contract*` attached to attempts) |
+|---|---|---|
+| Fidelity to observed ordering | states what Glacier said, when; both edges occur outside attempts and the events still mean something | the exit `ContractFailed` and the fresh-load `ContractStart` have no open attempt to enrich; either the plugin guesses or BEAM applies an adjacency heuristic |
+| Composability | lifecycle (`mission.*`, observed state) and contract (`contract.*`, engine-authored) are two independent evidence streams any consumer can correlate the same way BEAM does | the correlation is baked into the event names; a consumer that disagrees with the pairing cannot undo it |
+| Recorder (M4) | records engine-authored session boundaries verbatim, including sessions with no attempt | records only what BEAM paired |
+| Dashboard (M3) | can show "contract ended by restart" the moment the event arrives, before/after the scene edge | same information, but mislabelled as a mission attribute on the exit path |
+| Cross-scene correlation | natural: a session is an instance-level object | awkward: enrichment needs an attempt |
+| Protocol clarity | two namespaces with documented meanings; requires the doc to say that `contract.ended` is **not** mission outcome and that `mission.stopped` is **not** contract end | one namespace that would have to carry two kinds of boundary |
+| Reason semantics | first-class: `reason` and `reason_kind` are the only engine-authored restart/exit evidence Relay will have | second-class, inside an enrichment payload |
+| Cost | two event types, two schemas, BEAM model + summary | the same two schemas under other names, plus the pairing heuristic |
+
+Every event crosses the wire in both models; the difference is whether the names promise an attachment the evidence cannot always honour. **Recommendation: Model A.** Section 19's "do not introduce public `contract.*` events" is withdrawn on the evidence of 27.3. The names are `contract.*`, not `mission.*`, precisely so that nobody reads them as attempt lifecycle.
+
+### 27.7 Proposed normalized events
+
+Naming: Glacier's `ContractFailed` ends a session on a manual restart as well as on an exit, and the backend names the same closures `GameRestart`/`GameExit`; the engine's own vocabulary is not a verdict. Relay therefore names the Relay event by what it is in Relay's model — a contract session ended — and preserves the engine's event name as provenance. When `ContractEnd` is eventually observed it maps to the same Relay event with `engine_event: "ContractEnd"` (new schema version if its shape differs). Alternative considered: `contract.failed` mirroring Glacier; rejected because every consumer would have to learn that "failed" includes restarts.
+
+**`contract.started` v1** (from `ContractStart`; ungated)
+
+| Field | Source | Required | Type |
+|---|---|---|---|
+| `source` | — | yes | `"engine_telemetry"` |
+| `engine_event` | `Name` | yes | `"ContractStart"` |
+| `contract_session_id` | envelope `ContractSessionId` | **yes, non-empty** (it is the subject) | string |
+| `contract_id` | envelope `ContractId` | yes | string |
+| `location_id` | `LocationId` | yes | string (`LOCATION_PARIS`) |
+| `contract_type` | `ContractType` | yes | string (`mission`; open-ended) |
+| `difficulty_level` | `DifficultyLevel` | yes | integer (engine float with integral value; **not** mapped to a name) |
+| `starting_disguise_repository_id` | `Disguise` | yes | string |
+| `is_hitman_suit` | `IsHitmanSuit` | yes | bool |
+| `loadout` | `Loadout[]` | yes | list of `{repository_id: string, online_traits: [string]}` (`InstanceId`, `Category` dropped) |
+| `game_changers` | `GameChangers[]` | yes | list of strings (observed empty) |
+| `engine_timestamp_s` | envelope `Timestamp` | optional | number (observed 0.0) |
+
+Dropped: `IsVR`, `SelectedCharacterId`, `XboxGameMode`, `XboxDifficulty`, user/platform ids.
+
+**`contract.ended` v1** (from `ContractFailed`; ungated)
+
+| Field | Source | Required | Type |
+|---|---|---|---|
+| `source` | — | yes | `"engine_telemetry"` |
+| `engine_event` | `Name` | yes | `"ContractFailed"` |
+| `contract_session_id` | envelope | **yes, non-empty** | string |
+| `contract_id` | envelope | yes | string |
+| `reason` | `Value` (string) | yes, non-empty | verbatim engine string |
+| `reason_kind` | mapped from `reason` | yes | `restart` (`…OnRestartLevel`), `exit_to_menu` (`…User pressed exit to Main menu`), `other` (anything else; the verbatim string is still in `reason`) |
+| `engine_timestamp_s` | envelope `Timestamp` | optional | number (the session's duration on the contract clock) |
+
+Malformed (not published, sequence not advanced, counted per name): `Value` not a string / not an object as expected, any required field missing or mistyped, `DifficultyLevel` non-integral, a loadout item without `RepositoryId`.
+
+**`HeroSpawn_Location`** is not normalized in B2 (one repository id, no consumer yet). `ContractSessionMarker`, `SegmentClosing`, backend `ContractFailed` are not reachable and not proposed.
+
+### 27.8 BEAM model
+
+`Lifecycle` gains a contract-session object on the instance and a correlation to attempts; attempt identity and `Attempt.mission` are untouched.
+
+```
+ContractSession { contract_session_id, contract_id, location_id, contract_type, difficulty_level,
+                  starting_disguise_repository_id, is_hitman_suit, loadout, game_changers,
+                  started: Observation | nil, ended: Observation | nil, reason, reason_kind,
+                  attempt_number: integer | nil, paired_by: :open_attempt | :next_rise | nil }
+Instance.contract_sessions  — in stream order
+Instance.pending_contract   — the most recent started session not yet paired (at most one)
+Attempt.contract_session_id — nil until paired
+Attempt.disposition         — :not_observed | :restarted | :exited_to_menu | {:ended, reason}
+```
+
+Correlation rules, all ordinal:
+
+1. `contract.started` → new `ContractSession` (if a session with that id already exists, note "second `contract.started` for session" and update). If an attempt is open and has no session → pair it (`:open_attempt`; the restart path). Otherwise (no attempt open, or the open attempt already has a session — which would be the case if a restart's new `ContractStart` ever arrived before the old attempt's fall) it becomes `pending_contract`, replacing any previous pending one (noted as "contract session … superseded before any attempt opened").
+2. `mission.playing` → opens the attempt as today; if `pending_contract` exists → pair it (`:next_rise`; the fresh-load path). Consistency check: the rise's `game_session_id`, when present, should equal the paired session's id; a mismatch is logged as a note on both objects and **the pairing stands** (it was made by order).
+3. `contract.ended` → find the session by `contract_session_id` (Glacier identity within the contract domain). Found → record `ended`, `reason`, `reason_kind`; if the session is paired, set the attempt's `disposition` from `reason_kind` (`restart` → `:restarted`, `exit_to_menu` → `:exited_to_menu`, `other` → `{:ended, reason}`). Not found → `Instance.unmatched_contract_ends`, note logged, never attached by adjacency. Ordering is not consulted here because the id is sufficient and ordering would have to tolerate the exit path's "after the fall" case; the ordering evidence is still recorded (`ended.sequence` versus the attempt's `stopped.sequence`).
+4. `mission.stopped`, connection close: unchanged. A closed attempt whose session has no `ended` keeps `disposition: :not_observed`; the summary says so.
+5. Nothing is derived from `mission.stopped` alone, from the registry id rotation, or from TCP close.
+
+`Events.validate` gains both types (Relay names only). `MissionSession` routes them to `Lifecycle` and notifies subscribers like any event.
+
+### 27.9 Process exit
+
+Stage A established `mission.playing → TCP close` with no `mission.stopped` on a quit from inside a mission; B0 showed the backend resolving that same session as `OrphanedSession` at the next launch. Does Glacier emit any contract evidence locally before termination? **Unknown — Stage A had no `OnEventSent` hook, and neither B0 nor B1 quit from inside a mission.** The backend's `OrphanedSession` (rather than `GameExit`) is strong but inferential evidence that the client sent no `ContractFailed`. B2 therefore assumes **no** local evidence: an attempt whose process ends in-mission stays "last known playing; observation lost" with `disposition: :not_observed`, and `tcp_closed` never becomes `contract.ended` or `mission.stopped`. The B2 controlled run should include one quit from inside a mission with the hook installed, to turn this unknown into evidence either way.
+
+### 27.10 Summary changes
+
+Per attempt, from engine evidence only:
+
+```
+attempt 1: Peacock (…): playing … (#1), stopped … (#14), duration 1314.1 s
+  contract (engine telemetry): session 2516109551602439084-990fb6fe…, LOCATION_PARIS, mission, difficulty 2,
+    started @0.0s (#k, paired by next rise); ended by restart ("Contract ended manually: OnRestartLevel")
+    @907.95s on the contract clock (#m) — disposition: restarted
+  actor outcomes (engine telemetry): …
+attempt 2: … ended by exit to menu (…) — disposition: exited_to_menu
+attempt 3: … stop not observed; last known playing; contract end not observed — disposition: not observed
+```
+
+Instance level: contract sessions paired to no attempt, unmatched contract ends, id-mismatch notes. Wording rules: never "failed" for a restart or an exit; never "completed"; "disposition" only when `ended` was observed; the contract clock duration is labelled as the engine's, distinct from the attempt's wall-clock duration.
+
+### 27.11 Required tests
+
+Native (`GlacierRelayTests`): the four B0 payloads normalize to the proposed shapes (exact JSON for both `ContractFailed` strings); `reason_kind` mapping including an unknown string → `other`; malformed variants (non-string `Value`, missing `LocationId`, non-integral difficulty, loadout item without id, empty `ContractSessionId`); ungated entries publish while not playing and do **not** increment *outside attempt*; attempt-gated entries unchanged (the B1 tests still pass); `RelayFrameTests`: `ContractFailed` captured after a processed fall publishes as `contract.ended` #N+1 after `mission.stopped` #N; `ContractStart` captured before the rise publishes before `mission.playing`; `ContractStart` captured in the rise frame publishes after it (drain-before-edge is the existing contract; the test pins the sequence numbers).
+
+Elixir: validation of both types; `Lifecycle` on the four scripts (fresh load, restart, exit to menu, quit without stop) with the B1 ordering reproduced from the fixture, asserting `paired_by`, `disposition`, no fabricated end; second `contract.started` before any rise; `contract.ended` with no session → unmatched; id mismatch → note, pairing unchanged; `Summary` wording (the words failed/completed absent for restart/exit); listener end-to-end with the native envelopes.
+
+Standalone wire: probe step `b2` replaying `ContractStart`/`ContractFailed` around the real observer timeline in B1's order; the native `published` lines become the committed fixture.
+
+### 27.12 Is another runtime probe needed before implementation?
+
+**No.** The two payload shapes are in the B0 corpus at full fidelity, and the ordering on both transition paths is replicated across two runs. What is *not* evidenced (`ContractEnd` shape, player-death reason strings, process-exit emission, offline emission) does not block B2's two entries; each is a documented gap with a planned observation. Note that `GlacierRelay` cannot capture a new shape (`telemetry_log` is `off | names`; the `raw` setting of section 17 was not implemented in B1), so a completion run would need either the B0 probe branch or `raw` logging; that is a separate decision.
+
+### 27.13 Smallest B2 implementation plan (not authorized)
+
+Native (`relay/m2`, from `f6190fb5`, one root cause per commit): **B2-R1** normalizer table gains the gating class and the two entries, `ContractStartedEvent`/`ContractEndedEvent`, serialization, adapter overloads, tests from the B0 payloads; **B2-R2** `RelayFrame::Process` publishes ungated events regardless of `Playing()` (gated path unchanged), frame-order tests; **B2-R3** wire probe `b2`. BEAM: **B2-R4** `Events` validation; **B2-R5** `Lifecycle.ContractSession`, pairing rules, `Attempt.disposition`, `Summary`, tests, fixture. Then clean build, inertness table (still one detour, no new imports), standalone wire run, and a controlled run under its own authorization: menu → Paris → restart → exit to menu → Paris → quit from inside (27.9). Pass: both `contract.*` events per session, ordering as 27.3 with Relay sequences contiguous, pairing `:next_rise` then `:open_attempt`, dispositions `restarted` and `exited_to_menu` from engine evidence only, attempt 3 `not_observed`, no fabricated end, B1 counters unchanged.
+
+Stop here for architectural review.

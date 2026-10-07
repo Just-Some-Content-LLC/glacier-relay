@@ -1,4 +1,6 @@
-# B0 Event Taxonomy — the `OnEventSent` corpus, classified
+# Event Taxonomy — the `OnEventSent` corpus, classified (B0 payloads, B1 names)
+
+**This taxonomy is not exhaustive.** It lists what two Paris sessions on one build happened to emit. Section "Observed in B1" records which names recurred in the B1 production run (names only; B1 logs no payloads), which were new, and which B0 names did not recur. Any name absent here is simply unobserved, and any name present here may have shapes not yet seen.
 
 Date: 2026-10-07. Dataset: the B0 native log (`%TEMP%\glacier-m0\hitmen\b0-run1\relay-20261007-014849-93996.log`, SHA-256 `85aaba91…5059`): 204 sent events, 43 names, one Paris session with a restart (`ACTOR_OUTCOME_ARCHAEOLOGY.md` section 15). Shapes below are what the client emitted on `3.280.0.0`; user and platform session identifiers are omitted. "Suitable" means *a plausible candidate for Relay normalization*, not a decision. Confidence is about the shape and meaning on this build; "needs evidence" lists what another run would have to show before the event is normalized.
 
@@ -90,6 +92,26 @@ Not observed but expected on the stream per prior art: `ContractEnd`, `ContractL
 | Name | Count | `Value` shape | Suitable | M2 relevance | Confidence | Needs evidence |
 |---|---|---|---|---|---|---|
 | `setpieces` | 4 | `{RepositoryId, name_metricvalue, setpieceHelper_metricvalue, setpieceType_metricvalue (Enter_Closet/Exit_Closet/…), toolUsed_metricvalue, Item_triggered_metricvalue, Position}`; `Position` is an `SVector3` the engine's own `ToString` cannot render | later | low–medium | medium | a proper reader for `SVector3` if the position is wanted |
+
+## Observed in B1 (2026-10-07 production run, `telemetry_log = names`)
+
+Dataset: the B1 native log (`%TEMP%\glacier-m0\hitmen\b1-run1\relay-20261007-035647-91292.log`, SHA-256 `3ff9a9ab…0d8f`, `M2_TELEMETRY.md` section 26): 159 `OnEventSent` deliveries, 42 names, one Paris session with a restart and an exit to menu. B1 recorded names and the intake decision only; payload shapes come from B0.
+
+| | Names |
+|---|---|
+| Seen in both B0 and B1 (38) | `AccidentBodyFound`, `AmbientChanged`, `BodyBagged`, `BodyFound`, `BrokenDisguiseCleared`, `ChallengeCompleted` (`_DONTSEND`, 22 → 23), `ContractFailed` (2 → 2), `ContractStart` (2 → 2), `DeadBodySeen`, `Disguise`, `DisguiseBlown`, `FirstMissedShot`, `HeroSpawn_Location`, `HoldingIllegalWeapon`, `IntroCutEnd`, `Investigate_Curious`, `ItemPickedUp`, `ItemRemovedFromInventory`, `ItemThrown`, `Kill` (10 → 10), `Level_Setup_Events`, `MurderedBodySeen`, `NoticedKill`, `ObjectiveCompleted`, `OpportunityEvents`, `OpportunityStageEvent`, `Pacify` (6 → 2), `SecuritySystemRecorder`, `setpieces`, `ShotsFired`, `ShotsHit`, `SituationContained`, `Spotted`, `StartingSuit`, `Trespassing`, `Unnoticed_Kill`, `Unnoticed_Pacified`, `Witnesses` |
+| **New in B1 (4)** | `EvidenceHidden` (2), `BodyHidden` (2), `AllBodiesHidden` (2), `AllPacifiedHidden` (1) — body-handling notifications emitted when the operator hid bodies (a `BodyHidden`/`EvidenceHidden` pair per hidden body, then `AllBodiesHidden`/`AllPacifiedHidden` when no unhidden body of that kind remained). Payload shape unknown (names only). Category: detection / witness / body. Suitability: later, with the other body events. |
+| Seen in B0 only (5) | `Agility_Start`, `FirstNonHeadshot`, `Guard_FoundItem`, `ItemStashed`, `Noticed_Pacified` — absent from B1 because the actions that trigger them were not performed; not evidence of removal. |
+
+B1 intake decisions: 12 captured (`Kill`, `Pacify`), 124 unsupported, 23 `dont_send` (all `ChallengeCompleted`), 0 unreadable, 0 truncated. Nothing with `_DONTSEND` appeared on any other name.
+
+### Observation: `eventIndex` is not contiguous
+
+The `eventIndex` argument of `OnEventSent` skipped 9 values in B1's first attempt (5, 20, 21, 106, 119, 130, 131, 143, 144 of 1..154) and value 5 in B0; the intake's `seen` counter equals the number of indices actually delivered (154 − 9 = 145), so the hook lost nothing: the engine advances its index on paths that never call `OnEventSent`. **`eventIndex` is not a Relay continuity or loss signal.** It is kept on the raw observation for log correlation only. Relay's own envelope `sequence` is the continuity mechanism for normalized Relay events, and BEAM's gap detection is computed from it alone.
+
+### Observation: emission time versus occurrence time
+
+Four explosion `Kill` events in B1 carried `Timestamp` values spanning about 50 ms while their `OnEventSent` deliveries spanned about 1.7 s of wall time (`M2_TELEMETRY.md` section 26, finding 6). `Timestamp` is Glacier's occurrence-time evidence on the contract clock; the time the hook sees an event is emission time. Both are preserved on the wire (`engine_timestamp_s`, envelope `timestamp`); no ordering policy is derived yet.
 
 ## Internal / client-only
 
