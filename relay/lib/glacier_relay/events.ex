@@ -21,6 +21,17 @@ defmodule GlacierRelay.Events do
   Relay-owned names; nothing here says who caused it. `engine_actor_id` and `repository_id` are
   observations, not identities (B0: the former is not stable across event kinds, the latter is
   shared by generic NPCs). BEAM never sees Glacier field names.
+
+  Contract lifecycle (M2 B2, design section 27), normalized from Glacier's own telemetry:
+
+  - `contract.started` v1: Glacier recorded the start of a contract session.
+  - `contract.ended` v1: Glacier recorded the end of one, with the engine's reason string verbatim
+    and Relay's reading of it (`reason_kind`: `restart`, `exit_to_menu` or `other`). The engine
+    raises the same source event for a manual restart and for an exit to the menu, so neither
+    this event nor its name says "failed", "completed" or anything about the player.
+
+  `contract_session_id` is Glacier's identity for Glacier's session. It is not a Relay mission
+  attempt identity; `Lifecycle` correlates the two from stream order and says how.
   """
 
   alias GlacierRelay.Wire.Envelope
@@ -29,14 +40,22 @@ defmodule GlacierRelay.Events do
   @mission_stopped "mission.stopped"
   @actor_died "actor.died"
   @actor_pacified "actor.pacified"
+  @contract_started "contract.started"
+  @contract_ended "contract.ended"
+  @reason_kinds ["restart", "exit_to_menu", "other"]
 
   def mission_playing, do: @mission_playing
   def mission_stopped, do: @mission_stopped
   def actor_died, do: @actor_died
   def actor_pacified, do: @actor_pacified
+  def contract_started, do: @contract_started
+  def contract_ended, do: @contract_ended
 
   @doc "Event types that are actor outcomes."
   def actor_outcome?(type), do: type in [@actor_died, @actor_pacified]
+
+  @doc "Event types that are contract lifecycle."
+  def contract_event?(type), do: type in [@contract_started, @contract_ended]
 
   @spec validate(String.t(), pos_integer(), map()) :: {:ok, map()} | {:error, term()}
   def validate(@mission_playing, 1, payload),
@@ -47,8 +66,18 @@ defmodule GlacierRelay.Events do
   def validate(type, 1, payload) when type in [@actor_died, @actor_pacified],
     do: actor_outcome_payload(payload)
 
+  def validate(@contract_started, 1, payload), do: contract_started_payload(payload)
+  def validate(@contract_ended, 1, payload), do: contract_ended_payload(payload)
+
   def validate(type, version, _payload)
-      when type in [@mission_playing, @mission_stopped, @actor_died, @actor_pacified],
+      when type in [
+             @mission_playing,
+             @mission_stopped,
+             @actor_died,
+             @actor_pacified,
+             @contract_started,
+             @contract_ended
+           ],
       do: {:error, {:unsupported_schema_version, type, version}}
 
   def validate(event_type, _version, _payload), do: {:error, {:unknown_event_type, event_type}}
@@ -111,6 +140,57 @@ defmodule GlacierRelay.Events do
          damage_events: damage_events,
          item_repository_id: item_repository_id,
          contract_session_id: contract_session_id,
+         engine_timestamp_s: engine_timestamp_s
+       }}
+    end
+  end
+
+  defp contract_started_payload(payload) do
+    with {:ok, source} <- Envelope.field(payload, "source", &Envelope.non_empty_string?/1),
+         {:ok, engine_event} <- Envelope.field(payload, "engine_event", &Envelope.non_empty_string?/1),
+         {:ok, contract_session_id} <-
+           Envelope.field(payload, "contract_session_id", &Envelope.non_empty_string?/1),
+         {:ok, contract_id} <- Envelope.field(payload, "contract_id", &is_binary/1),
+         {:ok, location_id} <- Envelope.field(payload, "location_id", &is_binary/1),
+         {:ok, contract_type} <- Envelope.field(payload, "contract_type", &is_binary/1),
+         {:ok, difficulty_level} <- Envelope.field(payload, "difficulty_level", &is_integer/1),
+         {:ok, starting_disguise_repository_id} <-
+           Envelope.field(payload, "starting_disguise_repository_id", &is_binary/1),
+         {:ok, is_hitman_suit} <- Envelope.field(payload, "is_hitman_suit", &is_boolean/1),
+         {:ok, engine_timestamp_s} <- optional(payload, "engine_timestamp_s", &is_number/1) do
+      {:ok,
+       %{
+         source: source,
+         engine_event: engine_event,
+         contract_session_id: contract_session_id,
+         contract_id: contract_id,
+         location_id: location_id,
+         contract_type: contract_type,
+         difficulty_level: difficulty_level,
+         starting_disguise_repository_id: starting_disguise_repository_id,
+         is_hitman_suit: is_hitman_suit,
+         engine_timestamp_s: engine_timestamp_s
+       }}
+    end
+  end
+
+  defp contract_ended_payload(payload) do
+    with {:ok, source} <- Envelope.field(payload, "source", &Envelope.non_empty_string?/1),
+         {:ok, engine_event} <- Envelope.field(payload, "engine_event", &Envelope.non_empty_string?/1),
+         {:ok, contract_session_id} <-
+           Envelope.field(payload, "contract_session_id", &Envelope.non_empty_string?/1),
+         {:ok, contract_id} <- Envelope.field(payload, "contract_id", &is_binary/1),
+         {:ok, reason} <- Envelope.field(payload, "reason", &Envelope.non_empty_string?/1),
+         {:ok, reason_kind} <- Envelope.field(payload, "reason_kind", &(&1 in @reason_kinds)),
+         {:ok, engine_timestamp_s} <- optional(payload, "engine_timestamp_s", &is_number/1) do
+      {:ok,
+       %{
+         source: source,
+         engine_event: engine_event,
+         contract_session_id: contract_session_id,
+         contract_id: contract_id,
+         reason: reason,
+         reason_kind: reason_kind,
          engine_timestamp_s: engine_timestamp_s
        }}
     end
