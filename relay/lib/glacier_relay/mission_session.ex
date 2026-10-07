@@ -193,6 +193,12 @@ defmodule GlacierRelay.MissionSession do
   defp log_note(id, {:unmatched_stop, sequence}),
     do: Logger.warning("relay: #{id}: mission.stopped ##{sequence} with no open attempt")
 
+  defp log_note(id, {:unattributed_outcome, sequence}),
+    do:
+      Logger.warning(
+        "relay: #{id}: actor outcome ##{sequence} arrived with no open attempt; kept as unattributed"
+      )
+
   defp log_note(id, {:fall_scene_differs, number, rise, fall}),
     do:
       Logger.warning(

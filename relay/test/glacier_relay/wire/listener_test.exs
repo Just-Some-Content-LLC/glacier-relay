@@ -360,6 +360,45 @@ defmodule GlacierRelay.Wire.ListenerTest do
              "attempt 2: T (assembly:/sapienza.entity): playing 2026-10-06T22:47:20.571Z (#3), stop not observed; last known playing; observation lost"
   end
 
+  # -- B1: actor outcomes over the wire ----------------------------------------------------
+
+  @b1 File.read!("test/b1_probe_envelopes.ndjson") |> String.split("\n", trim: true)
+
+  test "the B1 native envelopes arrive in order and the outcomes land on the attempt" do
+    socket = connect()
+    :ok = :gen_tcp.send(socket, Enum.join(@b1, "\n") <> "\n")
+    assert_receive {:relay_event, %{sequence: 18, event_type: "mission.stopped"}}, 1_000
+
+    instance = MissionSession.state()["bf3be44e-a36d-4ac6-9508-d94330fb855e"]
+    assert instance.gaps == []
+    assert [%Attempt{mission: :stopped, outcomes: outcomes}] = instance.attempts
+    assert length(outcomes) == 16
+    assert Enum.count(outcomes, &(&1.kind == :died)) == 10
+    assert %DateTime{} = hd(outcomes).received_at
+    assert MissionSession.summary_text() =~ "10 died (1 target, 9 non-target"
+    :gen_tcp.close(socket)
+  end
+
+  test "an actor outcome sent with no open attempt is unattributed" do
+    [_playing | rest] = @b1
+
+    first_outcome =
+      hd(rest) |> String.replace("bf3be44e-a36d-4ac6-9508-d94330fb855e", "orphan-outcome")
+
+    socket = connect()
+    :ok = :gen_tcp.send(socket, first_outcome <> "\n")
+
+    assert_receive {:relay_event,
+                    %{adapter_instance_id: "orphan-outcome", event_type: "actor.pacified"}},
+                   1_000
+
+    instance = MissionSession.state()["orphan-outcome"]
+    assert instance.attempts == []
+    assert [%{kind: :pacified}] = instance.unattributed_outcomes
+    assert MissionSession.summary_text() =~ "with no open attempt"
+    :gen_tcp.close(socket)
+  end
+
   defp wait_until(fun, attempts \\ 50) do
     cond do
       fun.() -> :ok

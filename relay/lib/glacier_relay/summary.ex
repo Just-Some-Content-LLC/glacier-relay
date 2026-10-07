@@ -6,7 +6,7 @@ defmodule GlacierRelay.Summary do
   """
 
   alias GlacierRelay.Lifecycle
-  alias GlacierRelay.Lifecycle.{Attempt, Connection, Instance}
+  alias GlacierRelay.Lifecycle.{Attempt, Connection, Instance, Outcome}
 
   @doc "Summary data, one map per instance, oldest attempt first."
   @spec build(%{String.t() => Instance.t()}) :: [map()]
@@ -57,7 +57,8 @@ defmodule GlacierRelay.Summary do
             timestamp: stray.observation.timestamp,
             scene_resource: stray.payload.scene_resource
           }
-        end)
+        end),
+      unattributed_outcomes: Enum.map(instance.unattributed_outcomes, &outcome/1)
     }
   end
 
@@ -81,8 +82,53 @@ defmodule GlacierRelay.Summary do
         playing: attempt.playing.game_session_id,
         stopped: attempt.stopped && attempt.stopped.game_session_id
       },
-      stopped_scene: attempt.stopped_scene
+      stopped_scene: attempt.stopped_scene,
+      outcomes: Enum.map(attempt.outcomes, &outcome/1),
+      outcome_counts: outcome_counts(attempt.outcomes)
     }
+  end
+
+  defp outcome(%Outcome{} = o) do
+    p = o.payload
+
+    %{
+      kind: o.kind,
+      sequence: o.sequence,
+      timestamp: o.timestamp,
+      source: p.source,
+      actor_name: p.actor_name,
+      repository_id: p.repository_id,
+      engine_actor_id: p.engine_actor_id,
+      actor_type: p.actor_type,
+      is_target: p.is_target,
+      death_type: p.death_type,
+      death_context: p.death_context,
+      accident: p.accident,
+      kill_class: p.kill_class,
+      method_broad: p.method_broad,
+      method_strict: p.method_strict,
+      damage_events: p.damage_events,
+      item_repository_id: p.item_repository_id,
+      engine_timestamp_s: p.engine_timestamp_s
+    }
+  end
+
+  # Conservative counts of what the engine recorded. Each outcome is counted once; a pacified
+  # then died actor contributes to both kinds. No unique-actor count, no score, no attribution.
+  defp outcome_counts(outcomes) do
+    for kind <- [:died, :pacified], into: %{} do
+      of_kind = Enum.filter(outcomes, &(&1.kind == kind))
+
+      {kind,
+       %{
+         total: length(of_kind),
+         target: Enum.count(of_kind, & &1.payload.is_target),
+         non_target: Enum.count(of_kind, &(not &1.payload.is_target)),
+         by_actor_type: Enum.frequencies_by(of_kind, & &1.payload.actor_type),
+         by_death_context: Enum.frequencies_by(of_kind, & &1.payload.death_context),
+         accidents: Enum.count(of_kind, & &1.payload.accident)
+       }}
+    end
   end
 
   defp connection(%Connection{} = c) do
@@ -114,7 +160,7 @@ defmodule GlacierRelay.Summary do
     attempts =
       case s.attempts do
         [] -> ["  no mission attempt observed"]
-        list -> Enum.map(list, &render_attempt/1)
+        list -> Enum.flat_map(list, &render_attempt/1)
       end
 
     strays =
@@ -122,7 +168,12 @@ defmodule GlacierRelay.Summary do
         "  mission.stopped ##{stray.sequence} at #{stray.timestamp} with no open attempt (#{stray.scene_resource})"
       end)
 
-    [header] ++ connections ++ attempts ++ strays
+    unattributed =
+      Enum.map(s.unattributed_outcomes, fn o ->
+        "  #{render_outcome(o)} with no open attempt"
+      end)
+
+    [header] ++ connections ++ attempts ++ strays ++ unattributed
   end
 
   defp render_attempt(a) do
@@ -153,7 +204,41 @@ defmodule GlacierRelay.Summary do
             Enum.map_join(list, ", ", fn i -> "#{fmt(i.at)} (#{inspect(i.reason)})" end)
       end
 
-    "  attempt #{a.number}: #{name}: playing #{a.playing_at} (##{a.playing_sequence}), #{ending}#{interrupted}"
+    line =
+      "  attempt #{a.number}: #{name}: playing #{a.playing_at} (##{a.playing_sequence}), #{ending}#{interrupted}"
+
+    case a.outcomes do
+      [] ->
+        [line, "    actor outcomes (engine telemetry): none observed"]
+
+      outcomes ->
+        [line, "    actor outcomes (engine telemetry): " <> render_counts(a.outcome_counts)] ++
+          Enum.map(outcomes, &("    " <> render_outcome(&1)))
+    end
+  end
+
+  defp render_counts(counts) do
+    Enum.map_join([:died, :pacified], "; ", fn kind ->
+      c = counts[kind]
+      types = Enum.map_join(Enum.sort(c.by_actor_type), ", ", fn {t, n} -> "#{n} #{t}" end)
+      contexts = Enum.map_join(Enum.sort(c.by_death_context), ", ", fn {t, n} -> "#{t} #{n}" end)
+
+      "#{c.total} #{kind}" <>
+        if(c.total > 0,
+          do: " (#{c.target} target, #{c.non_target} non-target; #{types}; context #{contexts})",
+          else: ""
+        )
+    end)
+  end
+
+  defp render_outcome(o) do
+    target = if o.is_target, do: "target", else: "non-target"
+    item = if o.item_repository_id, do: " item #{o.item_repository_id}", else: ""
+    at = if o.engine_timestamp_s, do: " @#{o.engine_timestamp_s}s", else: ""
+
+    "##{o.sequence} #{o.kind} #{o.actor_name} (#{o.actor_type}, #{target}): #{o.death_type}/#{o.death_context} " <>
+      "#{o.kill_class} #{o.method_broad}#{if o.method_strict != "", do: "/" <> o.method_strict, else: ""} " <>
+      "[#{Enum.join(o.damage_events, ",")}]#{item}#{at} (#{o.source})"
   end
 
   defp first_seen(%Instance{attempts: [first | _]}), do: first.playing.timestamp

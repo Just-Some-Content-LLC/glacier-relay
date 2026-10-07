@@ -25,6 +25,10 @@ defmodule GlacierRelay.Lifecycle do
   - `mission.stopped` after `mission.playing` for the same scene says the predicate fell. It does
     not say completed, failed, restarted, exited or quit. A later `mission.playing` for the same
     scene is a new attempt, not labelled a restart.
+  - Actor outcomes (`actor.died`, `actor.pacified`, M2 B1) are attached to the attempt that is
+    open when they arrive, by stream order only. With no open attempt they are kept as
+    unattributed evidence; they are never attached to a previous or future attempt. A pacified
+    then died actor is two outcomes. Nothing is deduplicated and no actor identity is derived.
   """
 
   alias GlacierRelay.Wire.Envelope
@@ -32,6 +36,14 @@ defmodule GlacierRelay.Lifecycle do
   defmodule Observation do
     @moduledoc "One semantic event as evidence: where it sat in the stream and what it carried."
     defstruct [:sequence, :timestamp, :received_at, :game_session_id]
+  end
+
+  defmodule Outcome do
+    @moduledoc """
+    One actor outcome as the engine recorded it (via the native normalizer). `kind` is
+    `:died` or `:pacified`; everything else is the normalized payload plus stream position.
+    """
+    defstruct [:kind, :sequence, :timestamp, :received_at, :payload]
   end
 
   defmodule Attempt do
@@ -55,7 +67,9 @@ defmodule GlacierRelay.Lifecycle do
       :stopped_scene,
       mission: :playing,
       superseded_by: nil,
-      interruptions: []
+      interruptions: [],
+      # Actor outcomes in stream order (M2 B1).
+      outcomes: []
     ]
   end
 
@@ -73,6 +87,7 @@ defmodule GlacierRelay.Lifecycle do
               last_event: nil,
               attempts: [],
               unmatched_stops: [],
+              unattributed_outcomes: [],
               connections: []
   end
 
@@ -97,6 +112,9 @@ defmodule GlacierRelay.Lifecycle do
 
         envelope.event_type == GlacierRelay.Events.mission_stopped() ->
           close_attempt(instance, envelope.payload, observation)
+
+        GlacierRelay.Events.actor_outcome?(envelope.event_type) ->
+          record_outcome(instance, envelope, received_at)
       end
 
     {%{instance | last_event: envelope}, notes ++ more}
@@ -226,6 +244,30 @@ defmodule GlacierRelay.Lifecycle do
             else: [{:fall_scene_differs, open.number, open.scene_resource, scene.scene_resource}]
 
         {%{instance | attempts: replace_last(instance.attempts, closed)}, notes}
+    end
+  end
+
+  defp record_outcome(instance, envelope, received_at) do
+    outcome = %Outcome{
+      kind:
+        if(envelope.event_type == GlacierRelay.Events.actor_died(), do: :died, else: :pacified),
+      sequence: envelope.sequence,
+      timestamp: envelope.timestamp,
+      received_at: received_at,
+      payload: envelope.payload
+    }
+
+    case current_attempt(instance) do
+      nil ->
+        {%{instance | unattributed_outcomes: instance.unattributed_outcomes ++ [outcome]},
+         [{:unattributed_outcome, envelope.sequence}]}
+
+      open ->
+        {%{
+           instance
+           | attempts:
+               replace_last(instance.attempts, %{open | outcomes: open.outcomes ++ [outcome]})
+         }, []}
     end
   end
 
