@@ -304,3 +304,145 @@ BEAM stopped (`:init.stop/0` over RPC); `GlacierRelay.dll` removed; `mods.ini` r
 - If a future stage wants an end time for that attempt, it has to come from new evidence (an engine signal that precedes termination, or a BEAM-side policy that is explicitly labelled as inference), never from the socket close.
 - Restart versus exit-to-menu remains underivable from Stage A events alone (finding 2); the session-id behaviour (finding 3) is suggestive but is not to be used.
 - Stage A is validated. **M2 is not complete**: lifecycle is the first of the roadmap's vocabularies. Stage B and the other vocabularies need their own decisions.
+
+---
+
+# Part B — M2 telemetry architecture after B0 (2026-10-07)
+
+Status: **proposal for review; nothing implemented.** Inputs: ADR 0006, `research/ACTOR_OUTCOME_ARCHAEOLOGY.md` sections 12 to 15, `research/B0_EVENT_TAXONOMY.md`. The question is no longer how to detect kills; it is how Relay consumes the semantic telemetry Glacier already produces without becoming coupled to Glacier's backend protocol.
+
+## 16. Evidence hierarchy
+
+As decided in ADR 0006: (1) engine-authored semantic occurrence from `OnEventSent` for *what Glacier recorded*; (2) engine state observation for *what state the runtime is in* and for facts the stream lacks; (3) pins for archaeology and ordering only. The scene predicate from M1/Stage A is rank 2 evidence and remains the thing that bounds a Relay mission attempt (section 20).
+
+## 17. Normalization boundary
+
+```
+Glacier  ZAchievementManagerSimple::OnEventSent(th, index, ZDynamicObject)     engine memory
+   │  detour, log-and-continue, inside the fault guard; frame thread
+   ▼
+Raw observation      GlacierEvent { name, contract_session_id, contract_id, timestamp_s,
+                                    value (engine-independent tree), has_dontsend, event_index }
+   │  TelemetryObservation.cpp (Glacier-facing: walks the ZDynamicObject, copies plain values;
+   │  never hands the ZDynamicObject upward)
+   ▼
+Normalization / policy   TelemetryNormalizer (engine-independent, unit-tested against the B0 corpus)
+   │  - recognizes supported names (a bounded table), ignores the rest with a counter
+   │  - applies the _DONTSEND and duplicate-emitter policies
+   │  - validates required fields and types per (name, expected shape)
+   │  - maps to a Relay-owned event + schema version, choosing fields deliberately
+   │  - attaches provenance
+   ▼
+Relay semantic event     e.g. actor.killed v1, actor.pacified v1, (later) disguise.changed v1 …
+   │  RelayAdapter: instance id, one monotonic sequence, timestamp, envelope v1 (unchanged)
+   ▼
+IRelaySink  →  TcpRelaySink  →  BEAM: Wire.Envelope → Events.validate(name, version) → Lifecycle / Summary
+```
+
+Responsibilities of the normalizer, stated so the adapter cannot drift into a proxy:
+
+| Responsibility | Rule |
+|---|---|
+| Recognize | A static table of supported Glacier event names, each with the Relay event it maps to and the schema version. Unknown names are counted and (in the durable log only) named; they never cross the sink. |
+| Validate | Required `Value` fields and their types, per name, written from the captured corpus. A recognized event that fails validation is logged with the failing field and dropped; the sequence does not advance. |
+| Map | Field by field into Relay-owned names and types. Numbers that are engine enums (`KillType`, `KillContext`, `ActorType`) are mapped to Relay strings (`pacify`/`kill`/`bloody_kill`; `accident`/`murder`/`hidden`/`not_hero`/`undefined`; `civilian`/`guard`/`hitman`) with an `unknown(<n>)` fallback that preserves the number. Floats that are integers in meaning are emitted as integers. |
+| Provenance | Every normalized event carries `source: {surface: "glacier.telemetry", name: "<Glacier Name>", contract_session_id, timestamp_s}`. BEAM can always say which engine event produced a Relay event. |
+| Unsupported | Not forwarded. Counted per name; counts appear in the native log at attempt end so the corpus can grow deliberately. |
+| Raw retention | Fields that are useful as *observation* but carry no Relay semantics yet (e.g. `ActorId`, `RoomId`, positions) are either omitted or placed under an explicit `observed` sub-object, never promoted to identity or keys. Positions are omitted until a use exists. |
+| Client-only | Events with `_DONTSEND` are not normalized (section 18). |
+| Duplicate emitters | Names known to be emitted twice per occurrence (`Spotted`) are paired by `(Name, Timestamp, Value)` before mapping, documented per name; nothing else is deduplicated. |
+| Engine independence | Nothing below the raw observation sees a `ZDynamicObject`, a `ZString`, a pointer or an offset. The normalizer and its tests compile without SDK headers, like the rest of the engine-independent set. |
+| Identifiers | `UserId`, platform `SessionId`, `XboxGameMode`, `XboxDifficulty` are dropped at the raw-observation step. `ContractSessionId` is kept as observational provenance (section 20). |
+| Evidence log | The adapter's existing `published` line remains the native record of what crossed the sink. The complete raw event is logged only when a diagnostic setting is on (`[relay] telemetry_log = raw`), so the stream's shape can be re-captured on a new build without redeploying a probe. |
+
+What the boundary refuses: a generic `glacier.event` carrying arbitrary `Value` JSON; forwarding by name without a schema; letting BEAM parse Glacier field names; making the Relay protocol version depend on IOI's event schema.
+
+## 18. `_DONTSEND` policy
+
+Evidence (B0): the marker is a **top-level key in the event object itself** (`"_DONTSEND": true`), present on all 22 `ChallengeCompleted` events and on nothing else; those events lack `ContractSessionId` and `ContractId` while keeping `Timestamp`, `Origin: "gameclient"` and an `Id`. The hook sees them because `OnEventSent` is the event manager's intake for every event the client raises, before the transmission path; the transmission path evidently honours the flag, since the backend later delivered its own authoritative `ChallengeCompleted` for **all ten** distinct challenge ids the client had raised locally. The string does not occur in the SDK source or history; Peacock treats `ChallengeCompleted` as a server-emitted event. Conclusion for this build: `_DONTSEND` marks client-local notifications of facts the backend owns and will restate.
+
+Policy: **do not normalize events marked `_DONTSEND` unless Relay has a specific, documented reason to observe the client-local fact.** Record them in the raw diagnostic log and count them. If a future vocabulary wants challenge completions, the decision is taken per name, in the normalizer table, with the reason written next to it (for example: "client-side challenge notification; useful offline where no backend restates it"). The policy is narrow on purpose: it is keyed on the flag, not on the event name, so a `_DONTSEND` on a new name is handled the same way.
+
+## 19. Contract session versus Relay mission attempt
+
+Promoted to documented fact for this build: **the registry value Stage A called `game_session_id` is the backend's `ContractSessionId`.** Three independent matches: the Stage A Sapienza value equals the `ContractSessionId` the backend later resolved as `OrphanedSession`; the Stage A Paris values have the same `<decimal>-<guid>` form and monotonic leading number as B0's `ContractSessionId`s; both are read from player slot 0 where the contract session lives. Documentation should use the name `contract_session_id` from here on, with "observational" still attached: it identifies a *Glacier contract session*, not a Relay attempt.
+
+| | Relay mission attempt | Glacier contract session |
+|---|---|---|
+| Bounded by | scene predicate rise/fall (state, rank 2) | `ContractStart` / `ContractFailed` or `ContractEnd` (stream, rank 1) and the backend's `SegmentClosing` |
+| Identity | `(adapter instance, attempt number)` | `ContractSessionId` |
+| Observed relationship (Stage A + B0) | restart: the registry already held the *next* session id at the fall frame; `ContractFailed("…OnRestartLevel")` came 0.3 s **before** the fall; `ContractStart` of the new session came in the same frame as the next rise | exit to menu: `ContractFailed("…exit to Main menu")` in the **same frame** as the fall; the registry kept the old id |
+| Quit from inside a mission | attempt stays "last known playing; observation lost" | nothing sent; the backend resolves `OrphanedSession` on the next launch |
+
+So: one attempt ↔ one contract session in every case seen, but the boundaries differ by up to a few hundred milliseconds and in a different direction per path, and the session id changes before the scene does on restart. They must not be merged. What can now be stated **directly from engine evidence**: that a contract session started (`ContractStart`, with loadout, location, difficulty, type); that it ended, and whether by restart or by exit to menu (`ContractFailed` reason); which session an actor outcome belongs to (`ContractSessionId` on every event). What remains **correlation**: the attempt ↔ session pairing itself, done by BEAM by order within the adapter stream (a `ContractStart` observed between an attempt's `mission.playing` and `mission.stopped` is that attempt's session), and never by the session id.
+
+Proposal: do **not** introduce public `contract.started` / `contract.failed` Relay events in the first stage. Normalize `ContractStart` and `ContractFailed` into **attempt enrichment**: a `mission.contract` observation (Relay event, schema v1, carrying `contract_session_id`, `contract_id`, `location_id`, `contract_type`, `difficulty`, `loadout` summary) and a `mission.contract_ended` observation (`reason` as the engine string plus a mapped `kind: restart | exit_to_menu | other`). BEAM attaches them to the open attempt; the summary gains "ended by restart / by exit / not observed" from engine evidence; `Attempt.mission` stays `:playing | :stopped | :superseded`, bounded by the predicate. Whether these later become public lifecycle events is decided when a consumer needs them.
+
+## 20. Revised actor-outcome model
+
+| Point | Before B0 | After B0 |
+|---|---|---|
+| Primary surface | undecided between S1 and S2 | S1 `Kill` / `Pacify` |
+| Relay events | `actor.died` / `actor.pacified` hedged on evidence | **`actor.killed` v1** and **`actor.pacified` v1** — the engine's own words, now known to be the engine's own classification (`EDeathType` 4/5 and 3) rather than a Relay inference. "killed" here means *Glacier recorded a Kill*; attribution to the player is still only what `context` says |
+| Fields | proposal in archaeology §8 | `actor: {repository_id, name, type}`, `is_target`, `outcome: {kind: kill\|bloody_kill\|pacify, context: murder\|accident\|…, class, method_broad, method_strict, damage_events[], accident, silenced, headshot, projectile, explosive, through_wall}`, `item: {repository_id, category}` when present, `history_count`, `source` provenance. Omitted: positions, `RoomId`, `PlayerId`, `ActorId` (not identity), outfit fields (disguise domain), `EvergreenRarity`, `IsReplicated`. |
+| Identity | undecided | `repository_id` + `name` from the event. Unique for the 16 named NPCs seen; 30 of 338 Paris actors share a repository id (generics), so two same-character outcomes are distinguishable only with S2 correlation, which the first stage does not do. Documented limitation. |
+| Pacify → Kill | "two legitimate events?" | Yes: two events, same actor, in order; BEAM keeps both on the attempt's actor timeline; counting rules (a pacified-then-killed actor counts once as killed) live in the summary, not in the adapter |
+| Dedup | native dedup by key proposed | **none.** Exactly one `Kill`/`Pacify` per occurrence was observed; any suppression would be invention. Multiplicity policy exists only for named duplicate-emitter events (`Spotted`). |
+| Recovery | hypothetical | real (one case) and invisible on S1. Not in the first stage; when wanted it is an S2 requirement (`IsPacified` fall for a known pacified actor), justified on its own. |
+| Classification | S1 only | confirmed: `ActorType` (guard/civilian), `IsTarget` |
+| Causality | S1 only | confirmed and richer than expected: `KillContext`, `Accident`, method, item, `History` |
+| `IsDead()` | candidate death signal | "down"; not used for death |
+
+## 21. S2 and S3 in production
+
+**S2** is a *state / correlation / gap-fill* surface, not a fallback semantic detector. Legitimate future requirements, each to be justified separately: actor recovery after pacification; current state of a specific actor; resolving a telemetry `repository_id` to a specific live entity when repository ids are shared; re-validating a new game build; facts absent from the stream. No continuous actor scan ships in `GlacierRelay` because the probe ran one. The existing per-frame scene predicate stays (it is cheap, hook-free, and bounds attempts).
+
+**S3**: B0 gave ordering and one bit (`PacifiedData`) from logic entities, nothing identifying and nothing a Relay consumer needs. Leave the pin hook in the probe branch as archaeology tooling; do not add it to `GlacierRelay`.
+
+## 22. Organizing M2 around the stream
+
+Yes. The roadmap's vocabularies map onto stream events that already exist (taxonomy): lifecycle (`ContractStart/Failed`), kills/pacifications (`Kill/Pacify`), disguises (`Disguise`, `DisguiseBlown`, `BrokenDisguiseCleared`, `StartingSuit`), items (`ItemPickedUp/RemovedFromInventory/Thrown[/Dropped]`), objectives (`ObjectiveCompleted`), player state (`Trespassing`, `HoldingIllegalWeapon`, `Hero_Health`/`Hero_Dead` unobserved). Each later stage is therefore mostly a normalizer table entry, a Relay schema, BEAM validation and summary lines, and a short controlled run — not an archaeology project.
+
+Proposed sequence, chosen from what B0 showed to be well-formed and what the summary needs first:
+
+| Stage | Content | Why here |
+|---|---|---|
+| **B1** | Normalization infrastructure: the `OnEventSent` detour in `GlacierRelay`, `TelemetryObservation` (Glacier-facing), `TelemetryNormalizer` (engine-independent, table-driven), provenance, `_DONTSEND`/duplicate policies, unknown-name counters, raw diagnostic log setting; **first vocabulary: actor outcomes** (`actor.killed`, `actor.pacified`) because they are the best-evidenced payloads, the probe's controlled case, and the roadmap's named next item | one hook, one table, the hardest schema; proves the boundary |
+| B2 | Contract lifecycle as attempt enrichment (`mission.contract`, `mission.contract_ended`) | settles restart vs exit on the summary from engine evidence; needs a completed-mission run to see `ContractEnd` |
+| B3 | Disguise (`Disguise`, `DisguiseBlown`, `BrokenDisguiseCleared`, `StartingSuit`) | string payloads, trivially validated; outfit-name resolution via the repository is the only work |
+| B4 | Items (`ItemPickedUp`, `ItemRemovedFromInventory`, `ItemThrown`, `ItemDropped`) | one shared item shape |
+| B5 | Objectives (`ObjectiveCompleted`; plus whatever a completed mission emits) | needs the completion run |
+| B6 | Player state (`Trespassing`, `HoldingIllegalWeapon`, `Hero_Health`, `Hero_Dead`) | needs a run where 47 is hurt and dies |
+| B7 | Event-derived mission summary v2 across all of the above; decision on M2 completion | the roadmap exit |
+
+Detection/body/witness events, `AmbientChanged`, `SecuritySystemRecorder` and combat totals are candidates after B7 or when a rating-style summary is wanted; `Level_Setup_Events`, `Investigate_Curious`, `setpieces` are not planned.
+
+## 23. Exact smallest next implementation stage (B1) — not authorized
+
+Native (`relay/m2`, from `bf8908ce`, one root cause per commit):
+
+1. `TelemetryObservation.{h,cpp}` (Glacier-facing): detour on `ZAchievementManagerSimple_OnEventSent`, log-and-continue, in the fault guard; converts the `ZDynamicObject` into `GlacierEvent` (plain tree of strings/numbers/bools/lists/maps) via the SDK's dynamic-object accessors (not via `ToString` + parse); drops user/platform identifiers; detects `_DONTSEND`.
+2. `TelemetryNormalizer.{h,cpp}` (engine-independent): the supported-name table with two entries (`Kill` → `actor.killed` v1, `Pacify` → `actor.pacified` v1), field validation and mapping, enum mapping with `unknown(n)` fallback, provenance, counters for unknown and `_DONTSEND` names; unit tests replay the 16 B0 payloads (committed as a fixture, identifiers redacted) and malformed variants.
+3. `RelayEvent.h` gains `ActorOutcomeEvent`; `RelayAdapter` gains the overload; `RelaySerialization` the payload; the plugin wires detour → observation → normalizer → adapter, and publishes only while the mission predicate is true (otherwise logs "outside attempt" and counts).
+4. Setting `[relay] telemetry_log = off | names | raw` (default `names`).
+
+BEAM (`relay/`):
+
+5. `Events.validate("actor.killed", 1, …)` / `("actor.pacified", 1, …)` with the mapped shape; `Lifecycle.Attempt` gains an ordered `outcomes` list; `Summary` gains per-attempt counts by kind × target × type × context, each line stating provenance (`glacier.telemetry`); tests from the fixture.
+
+Standalone validation: the wire probe gains a `b0` step that replays the fixture through the real normalizer and adapter into BEAM; field-by-field comparison as in Stage A.
+
+Controlled run (separate authorization): the B0 script again with `GlacierRelay` instead of the probe; pass = every `Kill`/`Pacify` in the native raw log appears exactly once in BEAM as the mapped event with the same values, attached to the right attempt, and the summary counts match the operator's actions; unknown-name counters list everything else.
+
+## 24. Runtime questions still open — none block B1
+
+| Question | Blocks B1? | Why not / when |
+|---|---|---|
+| Does `OnEventSent` fire with the backend unreachable? | no | B1 publishes only what the hook delivers; if it does not fire offline, BEAM sees no actor events and the summary says so. Worth one deliberate offline run before B2, since lifecycle enrichment would otherwise silently depend on connectivity. |
+| What are the 7 unseen event indices? | no | counters in B1 will show whether anything relevant is missing; archaeology item |
+| NPC-caused / scripted / crowd deaths | no | B1's normalizer maps whatever `KillContext` says; a later run that provokes them extends the fixture |
+| `Hero_Health`, `Hero_Dead`, `ContractEnd` shapes | no (B5/B6/B2) | need a completion run and a death run |
+| Shared repository ids (generic NPCs) | no | documented limitation of B1 identity; S2 correlation is a later, separately justified requirement |
+| `ActorId` derivation | no | not used |
+
+The only runtime work B1 itself needs is its own controlled validation run after it is built and tested offline.
