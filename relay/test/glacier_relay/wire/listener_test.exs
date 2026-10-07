@@ -399,6 +399,44 @@ defmodule GlacierRelay.Wire.ListenerTest do
     :gen_tcp.close(socket)
   end
 
+  # -- B2: contract lifecycle over the wire --------------------------------------------------
+
+  @b2 File.read!("test/b2_probe_envelopes.ndjson") |> String.split("\n", trim: true)
+
+  test "the B2 native envelopes arrive in order; contract sessions pair by order and dispositions derive from contract evidence" do
+    socket = connect()
+    :ok = :gen_tcp.send(socket, Enum.join(@b2, "\n") <> "\n")
+    assert_receive {:relay_event, %{sequence: 9, event_type: "contract.ended"}}, 1_000
+
+    instance = MissionSession.state()["a5092b81-2103-4ec1-81a3-8103db3db375"]
+    assert instance.gaps == []
+
+    assert [
+             %Attempt{mission: :stopped, contract_paired_by: :next_rise, disposition: :restarted},
+             %Attempt{mission: :stopped, contract_paired_by: :open_attempt, disposition: :exited_to_menu}
+           ] = instance.attempts
+
+    assert length(instance.contract_sessions) == 2
+    assert instance.anomalies == [] and instance.unmatched_contract_ends == []
+    text = MissionSession.summary_text()
+    assert text =~ "disposition (BEAM-derived, session paired by next_rise): restarted"
+    assert text =~ "disposition (BEAM-derived, session paired by open_attempt): exited to menu"
+    :gen_tcp.close(socket)
+  end
+
+  test "a contract.ended for an unknown session over the wire stays unmatched" do
+    orphan = List.last(@b2) |> String.replace("a5092b81-2103-4ec1-81a3-8103db3db375", "orphan-contract")
+    socket = connect()
+    :ok = :gen_tcp.send(socket, orphan <> "\n")
+    assert_receive {:relay_event, %{adapter_instance_id: "orphan-contract", event_type: "contract.ended"}}, 1_000
+
+    instance = MissionSession.state()["orphan-contract"]
+    assert instance.attempts == [] and instance.contract_sessions == []
+    assert [%{payload: %{reason_kind: "exit_to_menu"}}] = instance.unmatched_contract_ends
+    assert MissionSession.summary_text() =~ "with no open contract session"
+    :gen_tcp.close(socket)
+  end
+
   defp wait_until(fun, attempts \\ 50) do
     cond do
       fun.() -> :ok

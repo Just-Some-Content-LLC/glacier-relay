@@ -29,6 +29,23 @@ defmodule GlacierRelay.Lifecycle do
     open when they arrive, by stream order only. With no open attempt they are kept as
     unattributed evidence; they are never attached to a previous or future attempt. A pacified
     then died actor is two outcomes. Nothing is deduplicated and no actor identity is derived.
+  - Contract lifecycle (`contract.started`, `contract.ended`, M2 B2) is Glacier's own account of
+    its contract sessions, kept as first-class evidence on the instance (`contract_sessions`,
+    with the full payloads) whether or not it is correlated to an attempt. The attempt ↔ session
+    relationship is **a BEAM-derived temporal correlation based on observed event ordering, not
+    an identity equivalence guaranteed by Glacier**: a `contract.started` arriving while an
+    attempt without a session is open pairs with it (`:open_attempt`); one arriving with no such
+    attempt waits, and pairs with the next `mission.playing` only if it is the single candidate
+    (`:next_rise`). Several waiting sessions at a rise are ambiguous: none is chosen, all are
+    recorded as candidates on the attempt and as unpaired sessions. A `contract.ended` closes the
+    session with its id (Glacier's identity, used only within Glacier's domain); with no such
+    open session it is kept as an unmatched end, never attached by adjacency. The rise's
+    `game_session_id` is compared with the paired session's id as a consistency check: a
+    mismatch is an anomaly that is recorded and left visible, and the pairing made by order
+    stands. Relay attempt identity is never rewritten by any of this.
+  - `Attempt.disposition` is derived only from a paired session's `contract.ended`:
+    `:restarted`, `:exited_to_menu` or `{:ended, reason}`; otherwise `:not_observed`. Never from
+    `mission.stopped`, the registry id, the transport, the scene or timing.
   """
 
   alias GlacierRelay.Wire.Envelope
@@ -46,6 +63,27 @@ defmodule GlacierRelay.Lifecycle do
     defstruct [:kind, :sequence, :timestamp, :received_at, :payload]
   end
 
+  defmodule ContractSession do
+    @moduledoc """
+    One Glacier contract session as the engine reported it (M2 B2). `started` and `ended` are the
+    stream positions of `contract.started` / `contract.ended`; `started_payload` and
+    `ended_payload` are those events' validated payloads, kept whole so derived state can be
+    re-derived. `attempt_number` and `paired_by` (`:open_attempt` | `:next_rise`) record the
+    BEAM-derived correlation to a Relay attempt, or nil when none was made. `ended_relative`
+    records where the end sat relative to its paired attempt: `:during`, `:after_stop` or nil.
+    """
+    defstruct [
+      :contract_session_id,
+      :started,
+      :started_payload,
+      :ended,
+      :ended_payload,
+      attempt_number: nil,
+      paired_by: nil,
+      ended_relative: nil
+    ]
+  end
+
   defmodule Attempt do
     @moduledoc """
     One mission attempt, bounded by game lifecycle evidence only.
@@ -54,6 +92,11 @@ defmodule GlacierRelay.Lifecycle do
     `:superseded` (another `mission.playing` arrived while this was open; its end was not observed).
     `interruptions` lists the times the instance's connection closed while this attempt was open;
     they are transport evidence and leave `mission` untouched.
+
+    `contract_session_id` / `contract_paired_by` record the BEAM-derived correlation to a Glacier
+    contract session (M2 B2); `contract_candidates` lists the session ids that were waiting when
+    this attempt opened if there was more than one (ambiguous: none paired). `disposition` comes
+    only from the paired session's `contract.ended`.
     """
     defstruct [
       :number,
@@ -69,7 +112,12 @@ defmodule GlacierRelay.Lifecycle do
       superseded_by: nil,
       interruptions: [],
       # Actor outcomes in stream order (M2 B1).
-      outcomes: []
+      outcomes: [],
+      # Contract correlation (M2 B2).
+      contract_session_id: nil,
+      contract_paired_by: nil,
+      contract_candidates: [],
+      disposition: :not_observed
     ]
   end
 
@@ -88,7 +136,15 @@ defmodule GlacierRelay.Lifecycle do
               attempts: [],
               unmatched_stops: [],
               unattributed_outcomes: [],
-              connections: []
+              connections: [],
+              # Contract lifecycle evidence (M2 B2), in stream order, paired or not.
+              contract_sessions: [],
+              # Started sessions not yet correlated to an attempt (ids, in stream order).
+              pending_contracts: [],
+              # contract.ended with no open session of that id: kept, never attached by adjacency.
+              unmatched_contract_ends: [],
+              # Observable discrepancies in the correlated evidence (id mismatch, ambiguity, ...).
+              anomalies: []
   end
 
   def new(id), do: %Instance{id: id}
@@ -115,6 +171,12 @@ defmodule GlacierRelay.Lifecycle do
 
         GlacierRelay.Events.actor_outcome?(envelope.event_type) ->
           record_outcome(instance, envelope, received_at)
+
+        envelope.event_type == GlacierRelay.Events.contract_started() ->
+          contract_started(instance, envelope.payload, observation)
+
+        envelope.event_type == GlacierRelay.Events.contract_ended() ->
+          contract_ended(instance, envelope.payload, observation)
       end
 
     {%{instance | last_event: envelope}, notes ++ more}
@@ -223,8 +285,189 @@ defmodule GlacierRelay.Lifecycle do
       playing: observation
     }
 
-    {%{instance | attempts: attempts ++ [attempt]}, notes}
+    instance = %{instance | attempts: attempts ++ [attempt]}
+    {instance, more} = pair_pending_contract(instance, attempt)
+    {instance, notes ++ more}
   end
+
+  # -- contract lifecycle (M2 B2) ------------------------------------------------------------
+
+  defp contract_started(instance, payload, observation) do
+    id = payload.contract_session_id
+
+    session = %ContractSession{
+      contract_session_id: id,
+      started: observation,
+      started_payload: payload
+    }
+
+    notes =
+      if Enum.any?(instance.contract_sessions, &(&1.contract_session_id == id)),
+        do: [{:contract_started_again, id, observation.sequence}],
+        else: []
+
+    instance = %{instance | contract_sessions: instance.contract_sessions ++ [session]}
+
+    case current_attempt(instance) do
+      %Attempt{contract_session_id: nil, contract_candidates: []} = open ->
+        # The restart path: the new session's start is emitted after the rise.
+        {pair(instance, open, session, :open_attempt), notes}
+
+      _ ->
+        # The fresh-load path (no attempt open yet), or an open attempt that already has its
+        # session or was left ambiguous: wait for the next rise. More than one waiting session is
+        # ambiguity to be reported at that rise, not resolved here.
+        pending = instance.pending_contracts ++ [id]
+
+        notes =
+          if length(pending) > 1,
+            do: notes ++ [{:contract_pending_multiple, pending}],
+            else: notes
+
+        {%{instance | pending_contracts: pending}, notes}
+    end
+  end
+
+  defp pair_pending_contract(instance, attempt) do
+    case instance.pending_contracts do
+      [] ->
+        {instance, []}
+
+      [id] ->
+        session = find_session(instance, id, :open)
+        instance = %{instance | pending_contracts: []}
+        {pair(instance, attempt, session, :next_rise), []}
+
+      ids ->
+        # Ambiguous: no session is declared authoritative. The candidates stay visible on the
+        # attempt and the sessions stay unpaired evidence.
+        attempt = %{attempt | contract_candidates: ids}
+        anomaly = %{kind: :contract_pairing_ambiguous, attempt: attempt.number, candidates: ids}
+
+        {%{
+           instance
+           | attempts: replace_last(instance.attempts, attempt),
+             pending_contracts: [],
+             anomalies: instance.anomalies ++ [anomaly]
+         }, [{:contract_pairing_ambiguous, attempt.number, ids}]}
+    end
+  end
+
+  # Records the correlation on both sides and runs the consistency check. The pairing is made by
+  # order; a differing registry id on the rise is recorded as an anomaly and changes nothing.
+  defp pair(instance, %Attempt{} = attempt, %ContractSession{} = session, how) do
+    attempt = %{
+      attempt
+      | contract_session_id: session.contract_session_id,
+        contract_paired_by: how
+    }
+
+    session = %{session | attempt_number: attempt.number, paired_by: how}
+    session_id = session.contract_session_id
+
+    anomalies =
+      case attempt.playing.game_session_id do
+        nil ->
+          []
+
+        ^session_id ->
+          []
+
+        other ->
+          [
+            %{
+              kind: :contract_session_id_mismatch,
+              attempt: attempt.number,
+              rise_game_session_id: other,
+              contract_session_id: session.contract_session_id,
+              paired_by: how
+            }
+          ]
+      end
+
+    %{
+      instance
+      | attempts: List.replace_at(instance.attempts, attempt.number - 1, attempt),
+        contract_sessions: replace_session(instance.contract_sessions, session),
+        anomalies: instance.anomalies ++ anomalies
+    }
+  end
+
+  defp contract_ended(instance, payload, observation) do
+    id = payload.contract_session_id
+
+    open_sessions =
+      Enum.filter(instance.contract_sessions, &(&1.contract_session_id == id and is_nil(&1.ended)))
+
+    case open_sessions do
+      [session] ->
+        session = %{session | ended: observation, ended_payload: payload}
+
+        {session, attempts, notes} =
+          case session.attempt_number do
+            nil ->
+              {session, instance.attempts, []}
+
+            number ->
+              attempt = Enum.at(instance.attempts, number - 1)
+
+              relative =
+                cond do
+                  attempt.stopped == nil -> :during
+                  observation.sequence > attempt.stopped.sequence -> :after_stop
+                  true -> :during
+                end
+
+              disposition = disposition_from(payload)
+              attempt = %{attempt | disposition: disposition}
+
+              {%{session | ended_relative: relative},
+               List.replace_at(instance.attempts, number - 1, attempt),
+               [{:attempt_disposition, number, disposition, relative}]}
+          end
+
+        {%{
+           instance
+           | contract_sessions: replace_session(instance.contract_sessions, session),
+             attempts: attempts
+         }, notes}
+
+      [] ->
+        stray = %{observation: observation, payload: payload}
+
+        {%{instance | unmatched_contract_ends: instance.unmatched_contract_ends ++ [stray]},
+         [{:unmatched_contract_end, observation.sequence, id}]}
+
+      several ->
+        # Two open sessions with the same Glacier id: which one ended is not decidable from
+        # evidence. Keep the end unmatched and say so.
+        stray = %{observation: observation, payload: payload}
+
+        anomaly = %{
+          kind: :contract_end_ambiguous,
+          contract_session_id: id,
+          sequence: observation.sequence,
+          open_sessions: Enum.map(several, & &1.started.sequence)
+        }
+
+        {%{
+           instance
+           | unmatched_contract_ends: instance.unmatched_contract_ends ++ [stray],
+             anomalies: instance.anomalies ++ [anomaly]
+         }, [{:contract_end_ambiguous, observation.sequence, id}]}
+    end
+  end
+
+  defp disposition_from(%{reason_kind: "restart"}), do: :restarted
+  defp disposition_from(%{reason_kind: "exit_to_menu"}), do: :exited_to_menu
+  defp disposition_from(%{reason: reason}), do: {:ended, reason}
+
+  defp find_session(instance, id, :open),
+    do: Enum.find(instance.contract_sessions, &(&1.contract_session_id == id and is_nil(&1.ended)))
+
+  # Sessions are identified for replacement by their start position, which is unique per stream.
+  defp replace_session(sessions, %ContractSession{started: %{sequence: seq}} = session),
+    do: Enum.map(sessions, fn s -> if s.started.sequence == seq, do: session, else: s end)
 
   defp close_attempt(instance, payload, observation) do
     case current_attempt(instance) do

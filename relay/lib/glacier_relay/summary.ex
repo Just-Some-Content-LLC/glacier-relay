@@ -6,7 +6,7 @@ defmodule GlacierRelay.Summary do
   """
 
   alias GlacierRelay.Lifecycle
-  alias GlacierRelay.Lifecycle.{Attempt, Connection, Instance, Outcome}
+  alias GlacierRelay.Lifecycle.{Attempt, Connection, ContractSession, Instance, Outcome}
 
   @doc "Summary data, one map per instance, oldest attempt first."
   @spec build(%{String.t() => Instance.t()}) :: [map()]
@@ -49,7 +49,7 @@ defmodule GlacierRelay.Summary do
       gaps: Enum.reverse(instance.gaps),
       observation: Lifecycle.observation(instance),
       connections: instance.connections |> Enum.reverse() |> Enum.map(&connection/1),
-      attempts: Enum.map(instance.attempts, &attempt/1),
+      attempts: Enum.map(instance.attempts, &attempt(&1, instance.contract_sessions)),
       unmatched_stops:
         Enum.map(instance.unmatched_stops, fn stray ->
           %{
@@ -58,11 +58,34 @@ defmodule GlacierRelay.Summary do
             scene_resource: stray.payload.scene_resource
           }
         end),
-      unattributed_outcomes: Enum.map(instance.unattributed_outcomes, &outcome/1)
+      unattributed_outcomes: Enum.map(instance.unattributed_outcomes, &outcome/1),
+      # Contract lifecycle (M2 B2): every session Glacier reported, paired or not, plus what
+      # could not be correlated and every observable discrepancy.
+      contract_sessions: Enum.map(instance.contract_sessions, &contract_session/1),
+      unpaired_contract_sessions:
+        instance.contract_sessions
+        |> Enum.filter(&is_nil(&1.attempt_number))
+        |> Enum.map(&contract_session/1),
+      unmatched_contract_ends:
+        Enum.map(instance.unmatched_contract_ends, fn stray ->
+          %{
+            sequence: stray.observation.sequence,
+            timestamp: stray.observation.timestamp,
+            contract_session_id: stray.payload.contract_session_id,
+            reason: stray.payload.reason,
+            reason_kind: stray.payload.reason_kind
+          }
+        end),
+      anomalies: instance.anomalies
     }
   end
 
-  defp attempt(%Attempt{} = attempt) do
+  defp attempt(%Attempt{} = attempt, sessions) do
+    paired =
+      Enum.find(sessions, fn c ->
+        c.attempt_number == attempt.number and c.contract_session_id == attempt.contract_session_id
+      end)
+
     %{
       number: attempt.number,
       scene_resource: attempt.scene_resource,
@@ -84,7 +107,41 @@ defmodule GlacierRelay.Summary do
       },
       stopped_scene: attempt.stopped_scene,
       outcomes: Enum.map(attempt.outcomes, &outcome/1),
-      outcome_counts: outcome_counts(attempt.outcomes)
+      outcome_counts: outcome_counts(attempt.outcomes),
+      # BEAM-derived correlation to a Glacier contract session, and the disposition derived
+      # only from that session's contract.ended (M2 B2).
+      contract_session_id: attempt.contract_session_id,
+      contract_paired_by: attempt.contract_paired_by,
+      contract_candidates: attempt.contract_candidates,
+      contract: paired && contract_session(paired),
+      disposition: attempt.disposition
+    }
+  end
+
+  defp contract_session(%ContractSession{} = c) do
+    p = c.started_payload
+    e = c.ended_payload
+
+    %{
+      contract_session_id: c.contract_session_id,
+      contract_id: p.contract_id,
+      location_id: p.location_id,
+      contract_type: p.contract_type,
+      difficulty_level: p.difficulty_level,
+      starting_disguise_repository_id: p.starting_disguise_repository_id,
+      is_hitman_suit: p.is_hitman_suit,
+      started_sequence: c.started.sequence,
+      started_at: c.started.timestamp,
+      started_engine_timestamp_s: p.engine_timestamp_s,
+      ended_sequence: c.ended && c.ended.sequence,
+      ended_at: c.ended && c.ended.timestamp,
+      ended_engine_timestamp_s: e && e.engine_timestamp_s,
+      reason: e && e.reason,
+      reason_kind: e && e.reason_kind,
+      attempt_number: c.attempt_number,
+      paired_by: c.paired_by,
+      ended_relative: c.ended_relative,
+      source: p.source
     }
   end
 
@@ -173,7 +230,20 @@ defmodule GlacierRelay.Summary do
         "  #{render_outcome(o)} with no open attempt"
       end)
 
-    [header] ++ connections ++ attempts ++ strays ++ unattributed
+    unpaired =
+      Enum.map(s.unpaired_contract_sessions, fn c ->
+        "  contract session #{c.contract_session_id} (#{render_contract_facts(c)}) not correlated to any attempt" <>
+          render_contract_end(c)
+      end)
+
+    unmatched_ends =
+      Enum.map(s.unmatched_contract_ends, fn e ->
+        "  contract.ended ##{e.sequence} for session #{e.contract_session_id} (#{render_reason(e.reason_kind, e.reason)}) with no open contract session"
+      end)
+
+    anomalies = Enum.map(s.anomalies, &("  anomaly: " <> render_anomaly(&1)))
+
+    [header] ++ connections ++ attempts ++ strays ++ unattributed ++ unpaired ++ unmatched_ends ++ anomalies
   end
 
   defp render_attempt(a) do
@@ -207,15 +277,90 @@ defmodule GlacierRelay.Summary do
     line =
       "  attempt #{a.number}: #{name}: playing #{a.playing_at} (##{a.playing_sequence}), #{ending}#{interrupted}"
 
-    case a.outcomes do
-      [] ->
-        [line, "    actor outcomes (engine telemetry): none observed"]
+    outcome_lines =
+      case a.outcomes do
+        [] ->
+          ["    actor outcomes (engine telemetry): none observed"]
 
-      outcomes ->
-        [line, "    actor outcomes (engine telemetry): " <> render_counts(a.outcome_counts)] ++
-          Enum.map(outcomes, &("    " <> render_outcome(&1)))
-    end
+        outcomes ->
+          ["    actor outcomes (engine telemetry): " <> render_counts(a.outcome_counts)] ++
+            Enum.map(outcomes, &("    " <> render_outcome(&1)))
+      end
+
+    [line] ++ render_attempt_contract(a) ++ outcome_lines
   end
+
+  # Two lines per attempt: what Glacier said about the correlated contract session (observed
+  # semantic occurrences), then what BEAM derived from it and how (correlation and disposition).
+  # The words "failed" and "completed" never appear for a restart or an exit; "not observed" is
+  # the answer whenever the evidence is missing.
+  defp render_attempt_contract(a) do
+    contract =
+      case {a.contract_session_id, a.contract_candidates} do
+        {nil, []} ->
+          "    contract (engine telemetry): not observed"
+
+        {nil, candidates} ->
+          "    contract (engine telemetry): #{length(candidates)} sessions started before this rise; " <>
+            "none correlated (ambiguous): #{Enum.join(candidates, ", ")}"
+
+        {id, _} ->
+          "    contract (engine telemetry): session #{id}" <> render_attempt_contract_detail(a)
+      end
+
+    derived =
+      case {a.contract_session_id, a.disposition} do
+        {nil, _} ->
+          "    disposition (BEAM-derived): not observed"
+
+        {_, :not_observed} ->
+          "    disposition (BEAM-derived, session paired by #{a.contract_paired_by}): not observed; contract end not seen"
+
+        {_, disposition} ->
+          "    disposition (BEAM-derived, session paired by #{a.contract_paired_by}): #{render_disposition(disposition)}"
+      end
+
+    [contract, derived]
+  end
+
+  defp render_attempt_contract_detail(%{contract: nil}), do: ""
+  defp render_attempt_contract_detail(%{contract: c}), do: ", #{render_contract_facts(c)}" <> render_contract_end(c)
+
+  defp render_contract_facts(c) do
+    "#{c.location_id}, #{c.contract_type}, difficulty #{c.difficulty_level}; started ##{c.started_sequence}" <>
+      if(c.started_engine_timestamp_s, do: " @#{c.started_engine_timestamp_s}s", else: "")
+  end
+
+  defp render_contract_end(%{ended_sequence: nil}), do: "; end not observed"
+
+  defp render_contract_end(c) do
+    "; ended ##{c.ended_sequence} by #{render_reason(c.reason_kind, c.reason)}" <>
+      if(c.ended_engine_timestamp_s,
+        do: " @#{c.ended_engine_timestamp_s}s on the contract clock",
+        else: ""
+      )
+  end
+
+  defp render_reason("restart", reason), do: "restart (#{inspect(reason)})"
+  defp render_reason("exit_to_menu", reason), do: "exit to menu (#{inspect(reason)})"
+  defp render_reason(_other, reason), do: "an unmapped reason (#{inspect(reason)})"
+
+  defp render_disposition(:restarted), do: "restarted"
+  defp render_disposition(:exited_to_menu), do: "exited to menu"
+  defp render_disposition({:ended, reason}), do: "ended, reason #{inspect(reason)}"
+
+  defp render_anomaly(%{kind: :contract_session_id_mismatch} = x),
+    do:
+      "attempt #{x.attempt} rose with game_session_id #{x.rise_game_session_id} but was paired (by #{x.paired_by}) " <>
+        "with contract session #{x.contract_session_id}; pairing kept, both ids preserved"
+
+  defp render_anomaly(%{kind: :contract_pairing_ambiguous} = x),
+    do: "attempt #{x.attempt} had #{length(x.candidates)} candidate contract sessions; none paired"
+
+  defp render_anomaly(%{kind: :contract_end_ambiguous} = x),
+    do: "contract.ended ##{x.sequence} matched #{length(x.open_sessions)} open sessions with id #{x.contract_session_id}; kept unmatched"
+
+  defp render_anomaly(other), do: inspect(other)
 
   defp render_counts(counts) do
     Enum.map_join([:died, :pacified], "; ", fn kind ->

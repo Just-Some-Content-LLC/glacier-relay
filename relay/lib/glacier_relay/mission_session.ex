@@ -199,6 +199,42 @@ defmodule GlacierRelay.MissionSession do
         "relay: #{id}: actor outcome ##{sequence} arrived with no open attempt; kept as unattributed"
       )
 
+  defp log_note(id, {:contract_started_again, session_id, sequence}),
+    do:
+      Logger.warning(
+        "relay: #{id}: contract.started ##{sequence} for session #{session_id}, which had already started"
+      )
+
+  defp log_note(id, {:contract_pending_multiple, ids}),
+    do:
+      Logger.warning(
+        "relay: #{id}: #{length(ids)} contract sessions started with no attempt to pair: #{inspect(ids)}"
+      )
+
+  defp log_note(id, {:contract_pairing_ambiguous, number, ids}),
+    do:
+      Logger.warning(
+        "relay: #{id}: attempt #{number} opened with #{length(ids)} waiting contract sessions; none paired: #{inspect(ids)}"
+      )
+
+  defp log_note(id, {:attempt_disposition, number, disposition, relative}),
+    do:
+      Logger.info(
+        "relay: #{id}: attempt #{number} disposition #{inspect(disposition)} from contract.ended (#{relative})"
+      )
+
+  defp log_note(id, {:unmatched_contract_end, sequence, session_id}),
+    do:
+      Logger.warning(
+        "relay: #{id}: contract.ended ##{sequence} for session #{session_id} with no open contract session; kept unmatched"
+      )
+
+  defp log_note(id, {:contract_end_ambiguous, sequence, session_id}),
+    do:
+      Logger.warning(
+        "relay: #{id}: contract.ended ##{sequence} matches several open sessions #{session_id}; kept unmatched"
+      )
+
   defp log_note(id, {:fall_scene_differs, number, rise, fall}),
     do:
       Logger.warning(
