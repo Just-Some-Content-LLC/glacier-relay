@@ -195,3 +195,43 @@ Actor events are published only while `MissionObserver::Playing()` is true (othe
 - **B3** — controlled run with the same script; pass = every engine occurrence appears exactly once in BEAM with the engine's own classification and nothing stronger.
 
 Later vocabularies (disguise, items, objectives, player state) all have S1 events (`Disguise*`, `ItemPickedUp/Dropped`, `ObjectiveCompleted`, `Hero_Health`), which is one more reason the probe should log the whole stream once.
+
+---
+
+## 14. B0 as authorized (2026-10-06) — probe built, not run
+
+The reviewer accepted the archaeology, reframed the question from "S1 or S2 for kills" to "**is S1 Glacier's usable semantic telemetry boundary for M2**", and authorized B0 with these changes to section 12: S1 logged raw and complete with no schema assumption, no filter, no normalization and **no dedup** (multiplicity is to be measured, not suppressed); S2 reduced to an identity census plus `IsAlive/IsDead/IsPacified` edges (no hit points, body flags or collection sizes); S3 kept, filtered, for emitter and ordering only; the script gains **pacify then kill the same unconscious actor** and drops body hiding; no Relay actor identity is created during the probe — every engine identity is captured side by side and correlated afterwards. BEAM, wire and semantic implementation are out of scope. The output is to be a correlation timeline per controlled occurrence, and the go/no-go for S1 as the preferred M2 surface is: reliable `Kill`/`Pacify` for the controlled actions; enough identity to correlate; classification matching gameplay; understandable multiplicity; works offline on this build; hook inert and cheap.
+
+### Artifact
+
+| Item | Value |
+|---|---|
+| Source | ZHMModSDK `research/actor-probe-b0` `ebaa0eb4` (from `relay/m2` `bf8908ce`); `Mods/GlacierRelayActorProbe`, registered in `MODS`; `Mods/GlacierRelay` unmodified, its `RelayLog`, `SceneObservation`, `MissionObserver` compiled in by path |
+| Binary | `_build/relay-x64-Debug/Mods/GlacierRelayActorProbe/GlacierRelayActorProbe.dll`, SHA-256 `d814c2dfb1934c14f79456d22f07e18a9a44e54df29002a948345cf93c5fe1f3` |
+| Detours | `ZAchievementManagerSimple_OnEventSent`, `ZAchievementManagerSimple_OnEventReceived`, `SignalOutputPin` — all log-and-continue, bodies inside the log-only fault guard |
+| Per frame | scene state and the M1 predicate (for alignment); `m_activatedActors` scan: new actors identified at ≤50/frame (`m_nEntityID`, closest blueprint-factory owner id, `m_nActorRuntimeId`, `m_sActorName`, `GetActorName()`, entity property `RepositoryId`, `m_bContractTarget`, `m_bCrowdCharacter`) and logged with initial state; thereafter only `IsAlive()/IsDead()/IsPacified()` changes; departures logged as "left the activated list"; census with duplicate entity ids on each predicate rise |
+| Pins watched | `Dead`, `Death`, `DeathContext`, `Pacified`, `PacifiedData`, `OnPacified`, `OnActorPacified`, `TargetKilled`, `TargetPacified`, `NonTargetKilled`, `ActorKillIActor`, `ActorPacifyIActor`, `AccidentKill`, `AllTargetsKilled` |
+| Imports | `ZHMModSDK.dll` (21 symbols, every one exported by the installed M0 SDK DLL), `KERNEL32`, `USER32`, `SHELL32`, `IMM32`; **no `WS2_32`** |
+| Exports | the three SDK plugin exports |
+| Engine calls | `IActor::IsAlive/IsDead/IsPacified`, `ZEntityImpl::GetID`, `ZActor::GetActorName` (repository lookup), `ZEntityRef::GetProperty<ZRepositoryID>`, `Functions::ZDynamicObject_ToString`; no setter, no `KillActor`/`ReviveActor`, no `SetProperty` |
+| Log | the relay's durable log (`%LOCALAPPDATA%\GlacierRelay\Relay\relay-*.log`); first line says "actor probe" |
+
+Not built from a deleted tree (incremental reconfigure of `_build/relay-x64-Debug`); a clean build is cheap to add before the run if wanted.
+
+### Proposed run (requires its own authorization)
+
+M0 mod set plus the probe only (no `GlacierRelay.dll`, no BEAM). Pre-flight, install (`Retail\mods\GlacierRelayActorProbe.dll` + `[glacierrelayactorprobe]`), VS attach after the menu, rollback and hash verification exactly as in the Stage A run. Paris.
+
+| Step | Action | What to read afterwards |
+|---|---|---|
+| 1 | load Paris; stand still ~10 s | census line: identified vs activated, duplicate entity ids, targets vs manager target list; S1 `ContractStart` and whatever else the stream sends at start; baseline S2 noise |
+| 2 | subdue one non-target guard (non-lethal melee) | S1 `Pacify` raw; S3 pins; S2 `IsPacified` edge; order and gaps between the three |
+| 3 | wait ~15 s next to the body | any further S1/S2/S3 activity for the same actor (none expected) |
+| 4 | kill that unconscious guard | S1 `Kill` raw for the same actor; whether `ActorId`/`RepositoryId` match step 2; S2 `IsDead` edge; whether `IsPacified` stays true after death |
+| 5 | kill one conscious non-target civilian with a silenced pistol | S1 `Kill` with `ActorType = Civilian`, `KillContext`, method fields; S2 edge timing; a *dying* window (IsAlive false before IsDead true?) |
+| 6 | kill Novikov by any method | `IsTarget`, `TargetKilled` pin, target-list behaviour |
+| 7 | optional: one easy accident on a non-target (skip if not cheap) | `Accident`, `KillContext = ACCIDENT` |
+| 8 | restart | `ContractStart` again?; census again; runtime-id reuse; S2 memory reset (actors leave and re-enter) |
+| 9 | exit to menu; quit | clean end; `OnEventReceived` count for the whole session |
+
+Abort: any `FAULT`/`ERROR` line, a debugger break in the probe, visible hitching, or a `Kill`/`Pacify` line that is not well-formed JSON (keep the log either way). Deliverable: a per-occurrence timeline (`player action → S1 → S3 → S2`, with offsets) plus the raw S1 corpus and the identity correlation table, written up as section 15.
