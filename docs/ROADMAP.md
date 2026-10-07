@@ -23,7 +23,7 @@ Capture a bounded useful vocabulary: mission lifecycle, player state, kills/paci
 
 Exit: mission summary generated from events rather than manual state inspection.
 
-**Status: in progress.** Stage A (bounded mission lifecycle: `mission.stopped`, attempts derived from events, connection evidence kept separate, first event-derived summary) passed its runtime experiment on 2026-10-06 (five events, two bounded attempts, one last-known-playing attempt whose process quit from inside the mission; `docs/design/M2_TELEMETRY.md` section 13). Stage A alone does not complete M2. Design and record: `docs/design/M2_TELEMETRY.md`. Code: ZHMModSDK `relay/m2`, `relay/` here.
+**Status: in progress.** Stage A (bounded mission lifecycle: `mission.stopped`, attempts derived from events, connection evidence kept separate, first event-derived summary) passed its runtime experiment on 2026-10-06 (five events, two bounded attempts, one last-known-playing attempt whose process quit from inside the mission; `docs/design/M2_TELEMETRY.md` section 13). Stage A alone does not complete M2. B0 (2026-10-07) established Glacier's own telemetry stream as the preferred M2 surface (ADR 0006); B1 (telemetry normalization + `actor.died`/`actor.pacified`) is built and validated without the game, runtime experiment pending. Design and records: `docs/design/M2_TELEMETRY.md`. Code: ZHMModSDK `relay/m2`, `relay/` here.
 
 ## M3 — Live observability
 Phoenix/LiveView dashboard for current mission state and event stream.

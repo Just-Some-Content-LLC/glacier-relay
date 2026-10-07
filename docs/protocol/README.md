@@ -1,6 +1,6 @@
 # Glacier Relay Protocol
 
-M1 (2026-10-06) fixed the **envelope** (version 1), the first event `mission.playing` (schema 1) and the wire (NDJSON over an outbound TCP client to a loopback BEAM listener); see `docs/design/M1_FIRST_SEMANTIC_EVENT.md`. M2 Stage A added `mission.stopped` (schema 1, same payload shape), the falling edge of the same predicate; see `docs/design/M2_TELEMETRY.md`, which also states what each event does and does not claim.
+M1 (2026-10-06) fixed the **envelope** (version 1), the first event `mission.playing` (schema 1) and the wire (NDJSON over an outbound TCP client to a loopback BEAM listener); see `docs/design/M1_FIRST_SEMANTIC_EVENT.md`. M2 Stage A added `mission.stopped` (schema 1, same payload shape), the falling edge of the same predicate. M2 B1 added `actor.died` and `actor.pacified` (schema 1), normalized from Glacier's engine-authored telemetry stream through a bounded, table-driven boundary (ADR 0006); the stream's own shape is never the Relay protocol. See `docs/design/M2_TELEMETRY.md` for what each event does and does not claim.
 
 ## Logical envelope
 

@@ -446,3 +446,102 @@ Controlled run (separate authorization): the B0 script again with `GlacierRelay`
 | `ActorId` derivation | no | not used |
 
 The only runtime work B1 itself needs is its own controlled validation run after it is built and tested offline.
+
+---
+
+## 25. B1 implementation record (2026-10-07) — built and validated without the game
+
+Authorized as "M2 B1 — Telemetry Normalization + Actor Outcomes" with the names `actor.died` / `actor.pacified`, ADR 0006 accepted in principle, no native dedup, no Relay actor identity, `_DONTSEND` honoured from the flag, attempt association by stream order, and a hard stop at the runtime gate. **`GlacierRelay.dll` has not been deployed since the Stage A run.**
+
+### Architecture as built
+
+```
+OnEventSent detour (frame thread, fault guard)
+  TelemetryIntake::Inspect         Glacier-facing: find Name and _DONTSEND without copying; unsupported
+                                   names counted and ignored; Kill/Pacify: copy ContractSessionId,
+                                   ContractId, Timestamp and Value into an owned TelemetryObservation
+                                   (by reflection type name; depth 6 / 512 nodes / 1 KiB strings)
+  TelemetryQueue::Push             bounded (256), mutex-guarded; full -> drop newest, count
+  return HookAction::Continue
+frame update, before the scene read
+  TelemetryQueue::Drain -> TelemetryNormalizer::Normalize (table: Kill -> actor.died, Pacify -> actor.pacified;
+  _DONTSEND first; required fields validated; enum codes -> Relay names with the code kept beside "unknown";
+  provenance) -> if MissionObserver.Playing(): RelayAdapter::Publish -> IRelaySink; else counted "outside
+  attempt", logged, not published
+```
+
+Thread model: every `OnEventSent` call in B0 (204) ran on the frame thread, as do the frame update and the lifecycle observer; the queue does not assume it. Nothing inside the detour serializes JSON, touches the socket, or formats bodies; the only per-event work there is the name/flag lookup, a bounded copy for the two supported names, and (at `telemetry_log = names`, the default) one short log line per event seen. The drain runs before the predicate update so an outcome recorded in the frame of a fall still belongs to the attempt in which it happened.
+
+Hand-off object: `TelemetryObservation { name, contract_session_id, contract_id, timestamp_s, dont_send, event_index, value: TelemetryValue }`, a plain tree (null/bool/number/string/array/object/unsupported-with-type-name). After the detour returns no Relay object holds a `ZDynamicObject`, `ZString` view, pointer, entity reference or SDK container; the normalizer and its tests compile without SDK headers.
+
+### Normalized schema (`actor.died` v1, `actor.pacified` v1; identical shape)
+
+| Field | Source field | Required | Type / values |
+|---|---|---|---|
+| `source` | — | yes | `"engine_telemetry"` |
+| `repository_id` | `RepositoryId` | yes, non-empty | string (character definition id; shared by generic NPCs) |
+| `actor_name` | `ActorName` | yes | string |
+| `engine_actor_id` | `ActorId` | yes | integer 0..2³²−1 (observational; not an identity) |
+| `actor_type` | `ActorType` (`EActorType`) | yes | `civilian` \| `guard` \| `hitman` \| `unknown` (+ `actor_type_code`) |
+| `is_target` | `IsTarget` | yes | bool |
+| `death_type` | `KillType` (`EDeathType`) | yes | `pacify` \| `kill` \| `bloody_kill` \| `unknown` (+ `death_type_code`) |
+| `death_context` | `KillContext` (`EDeathContext`) | yes | `undefined` \| `not_hero` \| `hidden` \| `accident` \| `murder` \| `unknown` (+ `death_context_code`) |
+| `accident` | `Accident` | yes | bool |
+| `kill_class`, `method_broad`, `method_strict` | `KillClass`, `KillMethodBroad`, `KillMethodStrict` | yes | open-ended engine strings, preserved |
+| `damage_events` | `DamageEvents` | yes | list of open-ended engine strings |
+| `item_repository_id` | `KillItemRepositoryId` | optional | string |
+| `contract_session_id` | envelope `ContractSessionId` | optional | string (Glacier's contract session; observational) |
+| `engine_timestamp_s` | envelope `Timestamp` | optional | number |
+
+Not carried: positions, `RoomId`, `PlayerId`, outfit fields, `BodyPartId`, `TotalDamage`, `IsMoving`, `EvergreenRarity`, `IsReplicated`, `History`, `KillItemInstanceId`, `KillItemCategory`, flags other than `Accident`. A supported event with any required field missing, mistyped, non-integral where an integer is expected, or an `ActorId` out of range is **malformed**: logged with the field, counted per name, not published, sequence not advanced. Unknown source names never leave the intake (counted; named in the log at `names`). `_DONTSEND == true` on any name: counted, not normalized, not published.
+
+Terminology: the mission payload's v1 wire key `game_session_id` is unchanged and is now documented as Glacier's `ContractSessionId`; the actor schema uses `contract_session_id`. Neither is Relay attempt identity.
+
+### BEAM
+
+`Events` validates both types (Relay names only). `Lifecycle.Attempt.outcomes` holds `%Outcome{kind, sequence, timestamp, received_at, payload}` in stream order; an outcome with no open attempt goes to `Instance.unattributed_outcomes` with a logged note and is never attached to a neighbour. Pacify then died of one actor is two outcomes. `Summary` adds, per attempt, counts of died/pacified × target/non-target × actor type × engine death context × accidents, and one line per outcome, each marked `(engine_telemetry)`; no attribution, score, rating, mission outcome or unique-actor count.
+
+### Commits
+
+ZHMModSDK `relay/m2`: `ea20f49e` B1-R1 (observation, queue, normalizer, event, serialization, adapter, tests, fixture), `53688a47` B1-R2 (detour, intake, drain, setting), `a2d2cd4e` B1-R3 (wire probe `b1`). glacier-relay `main`: `97e11d9` validation, `15c092e` model/summary/tests/fixture.
+
+### Tests
+
+| Layer | Result |
+|---|---|
+| Native `GlacierRelayTests` | all 16 B0 payloads normalize (10 died / 6 pacified, 2 targets, 2 guards, 2 accidents); Kill→died, Pacify→pacified; Ducloitre and Novikov pacify→kill as two events with the same `engine_actor_id`; classification and method fields on Quiron/Donovan/Novikov; 16 malformed variants; Value not an object; optional fields absent; unknown enum codes keep their number; unsupported names counted and bounded; `_DONTSEND` on a supported name; exact payload text for the recorded Ducloitre kill; one sequence across `mission.playing`, `actor.pacified`, `actor.died`, `mission.stopped`; no dedup; queue order, overflow (newest dropped, counted, cumulative) and cross-thread push/drain. Pass from a clean tree. |
+| Elixir | 64 tests, 3× stable: validation (required/optional/typed, rejections, unknown `actor.killed`), the 18 recorded B1 envelopes decode with every actor payload field equal to the native JSON (0 mismatches, checked programmatically), association in order, unattributed before/after/between attempts, no dedup, counts and text, listener end-to-end with the native envelopes and with an orphan outcome. |
+| Standalone wire | `GlacierRelayWireProbe 4747 sleep:1500,publish,sleep:300,b1,sleep:300,stop,sleep:800` → BEAM: 18 lines, 0 rejected, one attempt with 16 outcomes, summary counts as above; native `published` lines are the committed BEAM fixture `relay/test/b1_probe_envelopes.ndjson`. Evidence in `%TEMP%\glacier-m0\hitmen\wire-probe\b1\`. |
+
+Known flaky test, pre-existing: `TcpRelaySinkTests.cpp:195–223` (the "backend appears later" and reconnect scenarios, unchanged since M1 `3713468d`) failed in 3 of 10 direct runs on this machine today and passed in the gated clean-build run; the failure shape is a timed-out connect completing after the test listener binds. Not touched in B1; recorded as a test-timing issue to fix on its own.
+
+### Clean build and inertness
+
+`_build/relay-x64-Debug` deleted; configure, build and tests at `a2d2cd4e`: pass, 0 warnings from relay sources. **`GlacierRelay.dll` SHA-256 `f2d72a8471f9b1ea0dc610b64b846a68b46a97d9fcb02b49ebe881c14116506b`.**
+
+| Check | Result |
+|---|---|
+| Detours | exactly one `AddDetour` (`ZAchievementManagerSimple_OnEventSent`); no `SignalOutputPin`, no `ZActor_YouGotHit` |
+| S2 production scan | none (`ActorManager` / `m_activatedActors` absent from `GlacierRelay`) |
+| Engine writes | none |
+| Networking | `WS2_32` import set identical to M1 (client calls only, no `listen`/`accept`/`bind`); `TcpRelaySink.{h,cpp}` unchanged (0 lines); no socket call in the detour or intake |
+| Queue | bounded at 256; overflow drops and counts; drops logged with a rate limit |
+| Imports | `ZHMModSDK.dll` (11 symbols, all exported by the installed M0 SDK), `KERNEL32`, `USER32`, `SHELL32`, `IMM32`, `WS2_32` |
+| Exports | the three SDK plugin exports |
+| Boundary | SDK headers only in `GlacierRelay.cpp`, `SceneObservation.cpp`, `TelemetryIntake.cpp`; `GlacierRelayTests` builds every other source without the SDK include path |
+| BEAM absent | unchanged sink behaviour (drop while disconnected, backoff); telemetry is normalized and dropped by the sink like any other envelope; no new failure mode |
+
+### Proposed B1 controlled runtime experiment (NOT executed; requires explicit authorization)
+
+Setup as Stage A: BEAM up first (`relay@…`, output captured), pre-flight hashes, install `GlacierRelay.dll` `f2d72a84…506b` + `[glacierrelay]`, no `glacierrelay.ini` (defaults: tcp, 4747, `telemetry_log = names`), M0 mod set, VS attached after the menu connection, rollback by hash. Script: the B0 script, so the results are comparable with a known corpus:
+
+1. menu (gate: connected, no events; the intake should log unsupported names if the frontend emits any)
+2. Paris, stand ~10 s (expect `mission.playing #1`; intake logs `ContractStart` etc. as `unsupported`)
+3. subdue a non-target; wait ~15 s (expect `actor.pacified`)
+4. kill that unconscious actor (expect `actor.died`, same `engine_actor_id`)
+5. silenced-pistol a conscious non-target; 6. kill Novikov; 7. optional accident
+8. restart (expect `mission.stopped`, counters line, `mission.playing`); 9. exit to menu; 10. quit normally.
+
+Pass: every `Kill`/`Pacify` the native log shows as `captured` appears exactly once in BEAM as `actor.died`/`actor.pacified` with values equal to the native `published` line, attached to the attempt open at the time; counts in `summary_text/0` match the operator's actions; `malformed = 0`, `outside attempt = 0` (or each occurrence explained), queue `dropped = 0`; no gaps; no `ERROR`/`FAULT`; frame rate unaffected; the `_DONTSEND` counter equals the number of client-only challenge notifications seen; rollback verified.
+
+Record as findings: anything `unsupported` that the taxonomy did not list; any `truncated`; the intake's per-event cost if measurable; whether any supported event arrived outside an attempt (it would be the first evidence for or against the "log and drop" policy).
