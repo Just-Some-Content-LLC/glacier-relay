@@ -235,3 +235,123 @@ M0 mod set plus the probe only (no `GlacierRelay.dll`, no BEAM). Pre-flight, ins
 | 9 | exit to menu; quit | clean end; `OnEventReceived` count for the whole session |
 
 Abort: any `FAULT`/`ERROR` line, a debugger break in the probe, visible hitching, or a `Kill`/`Pacify` line that is not well-formed JSON (keep the log either way). Deliverable: a per-occurrence timeline (`player action → S1 → S3 → S2`, with offsets) plus the raw S1 corpus and the identity correlation table, written up as section 15.
+
+---
+
+## 15. B0 runtime probe (2026-10-07, 01:48Z to 02:11Z) — PASS; S1 is a semantic telemetry bus
+
+Authorized with the tightened scope of section 14 plus a clean-build gate. Objective: can `ZAchievementManagerSimple::OnEventSent` serve as Glacier Relay's preferred semantic observation surface for M2, with actor outcomes as the controlled case and S2/S3 as correlation instruments.
+
+### Artifact and health
+
+Clean configure/build from a deleted tree (`_build/probe-x64-Debug`, separate from the validated relay tree) of `research/actor-probe-b0` `ebaa0eb4`: `GlacierRelayActorProbe.dll` SHA-256 `215fa976fc0f0bda60f6047a36378ac7a4898091a2a07a4ac257bad37710e4da`; dependencies, the 21 `ZHMModSDK.dll` imports (all exported by the installed M0 SDK), exports and inertness identical to the incremental build; the one build warning is ResourceLib's. Pre-flight as in Stage A (build `24833614`, 26 M0 hashes, 107-file `Retail` baseline identical to the M2 pre-flight, `mods.ini` = M0, repos clean). Two game-directory changes, both reverted; all 107 hashes verified afterwards; no probe, relay or Hitmen file left. Evidence: `%TEMP%\glacier-m0\hitmen\b0-run1\` (native log SHA-256 `85aaba91…5059`, 1972 lines, SDK log, `mods.ini` before/probe/after, listings and hashes, the analysis script and its output).
+
+Runtime: **0 `WARN`/`ERROR`/`FAULT`**, no debugger break, process stable, normal exit. All three detours installed. Frame counter versus wall clock: **115.4 fps** through the whole first attempt (107 279 frames / 930 s) and 113.1 fps in the second, with the per-frame S2 scan of 338 activated actors and the S1 serializer running; no hitching reported by the operator. 204 `OnEventSent` lines, 0 JSON parse failures; 146 `OnEventReceived`; 172 watched pins; 61 state edges; 676 actor identifications (338 per attempt).
+
+### What was done (deviations recorded, not retried)
+
+Step 3 produced three pacified **civilians** (not one guard); step 5 killed one of them (neck snap); step 6 shot a conscious **guard** (not a civilian); step 7 "lots of stuff": seven more kills and three more pacifications including an **explosion** that killed a guard by accident, pacified a civilian and pacified Novikov, who was then shot 23 s later; step 8 therefore needed no separate accident; restart; exit to menu; quit. The deviations improved coverage: civilian and guard, pacify and kill, melee, thrown, pistol, explosion, accident and non-accident, target and non-target, pacified-then-killed twice.
+
+### S1 inventory (whole run, 43 distinct names, 204 events)
+
+`ChallengeCompleted` 22 (all `"_DONTSEND": true`, client-only), `AmbientChanged` 19, `Level_Setup_Events` 12, `ItemPickedUp` 12, `OpportunityEvents` 11, `Investigate_Curious` 11, **`Kill` 10**, `BodyFound` 10, `Spotted` 9, `Unnoticed_Kill` 7, `ItemRemovedFromInventory` 6, `ItemThrown` 6, **`Pacify` 6**, `OpportunityStageEvent` 5, `Unnoticed_Pacified` 5, `DeadBodySeen` 5, `setpieces` 4, `HoldingIllegalWeapon` 4, `Witnesses` 3, `NoticedKill` 3, and 2 each of `HeroSpawn_Location`, `ContractStart`, `StartingSuit`, `IntroCutEnd`, `Trespassing`, `Disguise`, `DisguiseBlown`, `BrokenDisguiseCleared`, `Agility_Start`, `BodyBagged`, **`ContractFailed`**, and 1 each of `SituationContained`, `SecuritySystemRecorder`, `FirstMissedShot`, `FirstNonHeadshot`, `MurderedBodySeen`, `AccidentBodyFound`, `Noticed_Pacified`, **`ObjectiveCompleted`**, `Guard_FoundItem`, `ItemStashed`, `ShotsFired`, `ShotsHit`.
+
+Every sent event (except `ChallengeCompleted`) carries `Name`, `Timestamp` (mission seconds), `ContractSessionId`, `ContractId`, `Value`, `Origin: "gameclient"`, `Id` (GUID), plus user/session ids (not reproduced here). `eventIndex` is a running counter; indices 5, 82, 91, 134, 139, 149, 201 never reached `OnEventSent` (7 of 211) — something is counted that this hook does not see; unknown what.
+
+`OnEventReceived` (server → client): `ChallengeCompleted` 118, `Progression_XPGain` 22, `SegmentClosing` 3, `ContractSessionMarker` 2, `ContractFailed` 1 — all backend acknowledgements, delivered in bursts (at the menu for the previous process's session; at restart; at exit). The backend was reachable throughout; whether `OnEventSent` fires with it unreachable remains untested, but nothing in the sent path waited on it (sent events arrived within the same or next frame as the state change).
+
+### Lifecycle on the stream
+
+- Session start: `HeroSpawn_Location` → `ContractStart` (loadout) → `Level_Setup_Events` → `AmbientChanged` → … → `StartingSuit`, `IntroCutEnd`; a new `ContractSessionId` per attempt (`…628137904204-c00b2d17…`, then `…618691980006-9666b5ad…`).
+- **Restart:** the client sent `ContractFailed` with `Value: "Contract ended manually: OnRestartLevel"` 0.3 s **before** the relay predicate fell. **Exit to menu:** `ContractFailed` with `"Contract ended manually: User pressed exit to Main menu"` in the **same frame** as the fall. The restart/exit distinction Stage A could not derive is stated by the engine, as a reason string.
+- **Quit from inside a mission** (Stage A's Sapienza): nothing sent (process terminated); on the next launch the backend returned `ContractFailed {FailType: "OrphanedSession"}` and `SegmentClosing {CloseType: "ContractFailed:OrphanedSession"}` for `ContractSessionId 2516109693561278430-4afc9528…` — **exactly the `game_session_id` Stage A carried on `mission.playing #5`.** The registry session id is the backend's `ContractSessionId`.
+- Objectives: `ObjectiveCompleted {Id, Type: "kill", Category: "primary", ExcludeFromScoring}` on the Novikov kill.
+
+### Kill / Pacify payloads versus Peacock
+
+All 16 events parsed; **the observed key set equals Peacock's 33-field schema exactly** — nothing missing, nothing extra. `KillItemRepositoryId/InstanceId/Category` and `IsReplicated` are present only on some events. Numeric fields arrive as floats (`"ActorId":195054661.000000`). Value sets observed: `KillType` ∈ {3 pacify, 4 kill, 5 bloody kill} — this is `EDeathType`, not `EKillType`; `KillContext` ∈ {3 accident, 4 murder} — `EDeathContext`; `KillClass` ∈ {melee, ballistic, explosion}; `KillMethodBroad` ∈ {unarmed, throw, pistol, melee_lethal, accident, explosive}; `KillMethodStrict` ∈ {"", accident_explosion}; `DamageEvents` ∈ {Subdue, CloseCombat, DeadlyThrow, CoupDeGrace, Shoot}; `ActorType` ∈ {0 civilian, 1 guard}; `PlayerId` ∈ {0, 4294967295}; `History` holds prior damage entries (1 on the coup de grâce, 3 on Novikov's kill after the explosion).
+
+| # | Event | Actor | Type | Target | KillType | Context | Class | Accident | DamageEvents | MethodBroad |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 34 | Pacify | Mark Parker | civ | no | 3 | 4 | melee | no | CloseCombat | melee_lethal |
+| 39 | Pacify | Adèle Rousseau | civ | no | 3 | 4 | melee | no | DeadlyThrow | throw |
+| 42 | Pacify | Jacqueline Ducloitre | civ | no | 3 | 4 | melee | no | Subdue | unarmed |
+| 55 | **Kill** | Jacqueline Ducloitre | civ | no | 4 | 4 | melee | no | CoupDeGrace | unarmed |
+| 67 | Kill | Philippe Quiron | guard | no | 5 | 4 | ballistic | no | Shoot (silenced, headshot) | pistol |
+| 93 | Kill | Satordi Roux | civ | no | 4 | 4 | ballistic | no | Shoot | pistol |
+| 99 | Kill | Félicien Bourque | civ | no | 5 | 4 | ballistic | no | Shoot | pistol |
+| 107 | Kill | Olivier Lauzier | civ | no | 5 | 4 | melee | no | CloseCombat | melee_lethal |
+| 111 | Pacify | Auguste Marcheterre | civ | no | 3 | 4 | melee | no | DeadlyThrow | throw |
+| 117 | Kill | Justin Mills | civ | no | 5 | 4 | melee | no | DeadlyThrow | throw |
+| 131 | Kill | Kurt Donovan | guard | no | 4 | **3** | explosion | **yes** | Shoot | accident / accident_explosion |
+| 132 | Pacify | André Furchard | civ | no | 3 | **3** | explosion | **yes** | Shoot | accident / accident_explosion |
+| 134 | Pacify | Viktor Novikov | civ | **yes** | 3 | 4 | explosion | no | Shoot | explosive |
+| 156 | **Kill** | Viktor Novikov | civ | **yes** | 4 | 4 | ballistic | no | Shoot | pistol |
+| 163 | Kill | Olivier Assis | civ | no | 5 | 4 | ballistic | no | Shoot | pistol |
+| 168 | Kill | Sibyla Auger | civ | no | 5 | 4 | ballistic | no | Shoot | pistol |
+
+The same explosion was classified `ACCIDENT` for the two non-targets and `MURDER`/`explosive` for the target. Recorded; not interpreted.
+
+### Timelines (S3 pin group → S2 edge → S1 event; offsets relative to S1)
+
+| Occurrence | pins | S2 edge | S2 transition |
+|---|---|---|---|
+| Pacify Parker | −134 ms | −124 ms | alive T→F, dead F→**T**, pacified F→T |
+| Pacify Rousseau | −150 | −140 | same |
+| Pacify Ducloitre | −11 | −1 | same |
+| **Kill Ducloitre (pacified)** | −9 | −2 | alive F→F, dead T→T, **pacified T→F** |
+| Kill Quiron (conscious) | −10 | −2 | alive T→F, dead F→T, pacified F→F |
+| Kill Roux | −349 | −341 | same |
+| Kill Bourque / Lauzier / Auger | −9 … −12 | −1 … −2 | same |
+| Pacify Marcheterre | −121 | −111 | pacify pattern |
+| Kill Mills | −59 | −51 | kill pattern |
+| explosion: Kill Donovan / Pacify Furchard / Pacify Novikov | −100 / −437 / −641 | −135 / −441 / −625 | one pin group (26 pins) for three victims; S1 events queued over 0.5 s |
+| **Kill Novikov (pacified)** | −14 | −4 | alive F→F, dead T→T, pacified T→F |
+| Kill Assis | −169 | −157 | kill pattern |
+
+Order was **S3 → S2 → S1 in every case** (pins in frame N, the actor's state in frame N+1, the event 1 ms to 640 ms later), never S1 first. No "dying" window was visible at frame granularity.
+
+### Pacify → Kill of the same actor (twice: Ducloitre, Novikov)
+
+Both S1 events exist; `RepositoryId`, `ActorName` and **`ActorId` are identical** across the pair (195054661; 1171052055); the Kill carries the pacifying hit in `History`; S2 shows `IsDead` already true from the pacification and only `IsPacified` falling on the kill; S3 emits `PacifiedData` on the pacification and not on the kill.
+
+### Identity correlation
+
+For all 16 Kill/Pacify events the S1 `RepositoryId` matched the S2 `RepositoryId` **entity property** of exactly one identified actor, whose `GetActorName()` matched `ActorName` (the native `m_sActorName` carries mangled UTF-8 for accented names; the repository name is correct). **`ActorId` is neither the runtime id nor the low 32 bits of the entity id**, and it is **not** a per-actor constant across event types: the same NPC had different `ActorId`s in `Investigate_Curious` and `Pacify`, and in `Kill` and `BodyBagged`. It was constant only across `Pacify`→`Kill`. Its derivation is unknown; it must not be used as actor identity. `RepositoryId` was the consistent cross-event key in this run, with the known caveat (308 distinct among 338 actors: 30 generic NPCs share a character).
+
+Census at first entry: 338 activated, **338 distinct authored entity ids** (no duplicates, so the blueprint-owner qualifier was not needed in Paris; all 338 share owner `006d465c6f70c066`, the mission brick), 338 distinct runtime ids, 2 targets by `m_bContractTarget` (the manager's `m_aTargetList` was empty both times — it is not the target source), 32 crowd. **Restart:** all 338 left the activated list and 338 were re-identified; the 306 non-crowd actors seen in both attempts had **identical entity id and runtime id** (Novikov: `28aab529a006ecb1`, runtime 86, both times). The scene rebuild is deterministic for identity.
+
+### S2 semantics (correlation instrument)
+
+- `IsAlive()` false does not mean dead: 76 actors were identified with `alive false, dead false` (not yet enabled), and the 42 `John/Jane Doe` crowd edges are activation churn. `IsAlive` alone is not usable.
+- **`IsDead()` is "down", not "dead": it went true on every pacification.** `IsPacified()` is the discriminator. Death clears `IsPacified`.
+- `IsDead` is not sticky either: it returned to false for two bodies when they were **bagged** (`BodyBagged` events for exactly those two) and for one pacified actor who was **revived** (`alive F→T, dead T→F, pacified T→F`, 13 minutes after the explosion — the recovery case is real and observed).
+- An actor leaving the activated list happened only at the restart (338) — never for a death.
+
+### S3 (ordering instrument)
+
+172 pins in 16 groups, one group per occurrence (9–12 pins; 26 for the three-victim explosion), all from a fixed set of **seven non-actor logic entities** (two emit `Dead`/`DeathContext`/`PacifiedData`, five emit `Death`), plus `OnPacified` from one of sixteen other entities per pacification (owned by the mission brick or `003a5474312d63cd`). **No pin was emitted by the actor.** The pins carry order (one frame before the state edge) and a lethal/non-lethal distinction (`PacifiedData` present only for pacifications, including the target's); they carry no identity the probe could read without decoding payloads.
+
+### Multiplicity
+
+`Kill` and `Pacify`: exactly one per occurrence per actor (16 events, 16 occurrences). Repeats exist in the *follow-up* vocabulary and are per observer, not per fact: `BodyFound` 1–3 per body (Novikov 3, Auger 3), `DeadBodySeen` 5, `Spotted` 9 (including a doubled line with and without `XboxGameMode` fields), `Witnesses` 3, `Noticed/Unnoticed_*` one per outcome. Nothing in the run needed deduplication to count outcomes; follow-ups would need an explicit policy.
+
+### Answers
+
+**A. Is S1 reliable enough to be the primary actor-outcome source?** Yes, on this evidence. 16 controlled outcomes produced exactly 16 `Kill`/`Pacify` events, each within one frame to 0.6 s of the state change, each with engine-classified type, context, class, method, item, target flag and actor type, each correlating to exactly one actor by `RepositoryId`+`ActorName`, with a complete and Peacock-identical schema, no parse failure, no fault, no measurable frame cost. Unknowns that remain: behaviour with the backend unreachable; NPC-on-NPC and scripted deaths (none occurred); crowd-character deaths (one `MurderedBodySeen` with `IsCrowdActor: true` and a null repository id hints they are reported differently).
+
+**B. Does S2 agree strongly enough to serve as validation/fallback, and what does it add?** It agreed 16/16 on *that* something happened and on lethal vs non-lethal (via `IsPacified`), one frame before S1. It adds: the pointer-level identity (authored entity id, runtime id, repository property) that lets a `RepositoryId` be resolved to a specific live actor even where repository ids are shared; the **recovery** and **body-bagged** transitions, which S1 reports only indirectly (`BodyBagged`) or not at all (the revive had no S1 event); and a fallback if S1 ever stops. It cannot by itself say dead vs pacified without `IsPacified`, and cannot say why.
+
+**C. Does S3 add semantic information or only ordering/correlation?** Ordering, a frame earlier than S2, plus one bit (`PacifiedData`). Nothing identifying. Not worth a hook on its own.
+
+**D. Does the complete S1 corpus justify treating the achievement-manager stream as a candidate general M2 semantic telemetry boundary?** Yes. In one 22-minute session the stream covered, with engine-authored semantics: mission lifecycle (`ContractStart`, `ContractFailed` **with the restart/exit reason**, `IntroCutEnd`, `HeroSpawn_Location`, and the orphaned-session resolution from the backend), kills/pacifications with cause and classification, objectives (`ObjectiveCompleted`), disguises (`Disguise`, `DisguiseBlown`, `BrokenDisguiseCleared`, `StartingSuit`), items (`ItemPickedUp/Dropped/Thrown/RemovedFromInventory/Stashed`, `HoldingIllegalWeapon`), body handling and discovery (`BodyFound`, `BodyBagged`, `BodyHidden` known, `DeadBodySeen`, `MurderedBodySeen`, `Noticed/Unnoticed_*`), detection and tension (`Spotted`, `Witnesses`, `Trespassing`, `AmbientChanged`, `Investigate_Curious`, `SituationContained`, `SecuritySystemRecorder`), opportunities and level script (`OpportunityEvents`, `OpportunityStageEvent`, `Level_Setup_Events`, `setpieces`), and player action stats (`ShotsFired/Hit`, `FirstMissedShot`, `Agility_Start`). That is every vocabulary the M2 roadmap names except player health (`Hero_Health` exists in Peacock's list and did not occur here because 47 was never hurt). The stream is the game's own semantic interpretation, already versioned by the backend contract, already keyed by a session id that the backend and the registry agree on.
+
+### Implications (recommendation, not a decision)
+
+1. The next architecture step is an ADR, not an actor event: *Glacier-authored telemetry (`OnEventSent`) is the preferred M2 observation surface where it covers a fact; direct state observation validates it, supplements it (identity resolution, recovery, bagging), and covers what the stream lacks.* The M1 predicate stays as the hook-free lifecycle backbone and the thing that bounds attempts; the stream's `ContractStart`/`ContractFailed` become evidence attached to those attempts, not a replacement.
+2. Relay normalization should sit on the stream: pass the engine's `Name` and classification through as observations (`game.event` with the engine's `Name`, `ContractSessionId` observational, `Value` validated per name/schema version on the BEAM side), and derive the M2 summary from that, rather than building one native observer per vocabulary.
+3. Actor identity for Relay: `RepositoryId` + `ActorName` from the stream, resolved to the authored entity id by the S2 census when a specific body matters; never `ActorId`.
+4. Dedup policy is needed only for the observer-relative follow-ups, and only when a summary wants to count them.
+5. Open before any implementation: offline behaviour of `OnEventSent`; the 7 unseen event indices; crowd deaths; NPC-caused deaths; `Hero_Health`/player death; whether `_DONTSEND` events should cross the Relay boundary at all.
+
+Nothing was implemented after the run. `GlacierRelay`, `relay/` and `relay/m2` are unchanged.
