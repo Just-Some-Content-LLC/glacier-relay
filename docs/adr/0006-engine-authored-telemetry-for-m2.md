@@ -1,6 +1,6 @@
 # ADR 0006 — Prefer Glacier's engine-authored telemetry stream for M2 telemetry
 
-**Status:** Proposed (2026-10-07). Scope: **M2 telemetry only.** This ADR does not make the stream the source of truth for mission-attempt lifecycle (ADR 0005 and the M1/M2 Stage A predicate stand), for commands (M5), for replication (M7+), or for any future Glacier Relay architecture.
+**Status:** Accepted (2026-10-07; proposed the same day). Accepted on the strength of the M2 B1 controlled runtime experiment (`docs/design/M2_TELEMETRY.md`, section 26): 12 engine-authored actor outcomes became 12 Relay semantic events through the normalization boundary with field-for-field native/BEAM agreement, zero drops, zero malformed and zero outside-attempt occurrences. Scope: **M2 telemetry only.** This ADR does not make the stream the source of truth for mission-attempt lifecycle (ADR 0005 and the M1/M2 Stage A predicate stand), for commands (M5), for replication (M7+), or for any future Glacier Relay architecture.
 
 ## Context
 

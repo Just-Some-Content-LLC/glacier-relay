@@ -878,3 +878,92 @@ Standalone wire: probe step `b2` replaying `ContractStart`/`ContractFailed` arou
 Native (`relay/m2`, from `f6190fb5`, one root cause per commit): **B2-R1** normalizer table gains the gating class and the two entries, `ContractStartedEvent`/`ContractEndedEvent`, serialization, adapter overloads, tests from the B0 payloads; **B2-R2** `RelayFrame::Process` publishes ungated events regardless of `Playing()` (gated path unchanged), frame-order tests; **B2-R3** wire probe `b2`. BEAM: **B2-R4** `Events` validation; **B2-R5** `Lifecycle.ContractSession`, pairing rules, `Attempt.disposition`, `Summary`, tests, fixture. Then clean build, inertness table (still one detour, no new imports), standalone wire run, and a controlled run under its own authorization: menu → Paris → restart → exit to menu → Paris → quit from inside (27.9). Pass: both `contract.*` events per session, ordering as 27.3 with Relay sequences contiguous, pairing `:next_rise` then `:open_attempt`, dispositions `restarted` and `exited_to_menu` from engine evidence only, attempt 3 `not_observed`, no fabricated end, B1 counters unchanged.
 
 Stop here for architectural review.
+
+---
+
+## 28. B2 implementation record (2026-10-07) — built and validated without the game
+
+Authorized as "M2 B2 — Contract Lifecycle Implementation" on the section 27 design with refinements: public `contract.started` / `contract.ended` (not `contract.failed`); the contract-start payload bounded to contract lifecycle; the normalizer's gating extended minimally (attempt-gated / ungated, no grace window, no native attachment); attempt and contract session kept as distinct identities with the relationship documented as a BEAM-derived temporal correlation; ambiguity reported rather than resolved; id disagreement preserved as an anomaly; disposition from normalized contract evidence only; both timestamps preserved and the Relay sequence never reordered; contract events kept as first-class instance evidence; hard stop before deployment. ADR 0006 moved to **Accepted** on the B1 runtime validation. **`GlacierRelay.dll` has not been deployed since the B1 run.**
+
+### Architecture as built
+
+The B1 pipeline unchanged, plus two table rows and one per-row fact:
+
+```
+TelemetryNormalizer table   Kill → actor.died (attempt-gated)    Pacify → actor.pacified (attempt-gated)
+                            ContractStart → contract.started (ungated)   ContractFailed → contract.ended (ungated)
+RelayFrame::Process         drain → normalize → attempt-gated: publish iff Playing(), else "outside attempt"
+                                                ungated: publish (adapter present) → then this frame's edge
+BEAM Lifecycle              ContractSession evidence on the instance; attempt ↔ session correlation by order;
+                            Attempt.disposition from the paired session's contract.ended only
+```
+
+The intake is unchanged: `IsSupportedSourceName` now answers true for the two contract names, so the detour copies their `ContractSessionId`, `ContractId`, `Timestamp` and `Value` exactly as it does for `Kill`/`Pacify`. Same single detour, no S2, no S3, no engine writes, `TcpRelaySink.{h,cpp}` 0 lines changed, TCP ownership unchanged.
+
+### Public events
+
+**`contract.started` v1** — `source: "engine_telemetry"`, `engine_event: "ContractStart"` (provenance), `contract_session_id` (required, non-empty: the event's subject), `contract_id`, `location_id`, `contract_type`, `difficulty_level` (integer; the engine's number, not mapped to a name), `starting_disguise_repository_id`, `is_hitman_suit`, `engine_timestamp_s` (optional; observed 0). **Deferred on purpose** (present in the source event, not normalized): `Loadout` and its item traits (B4 inventory semantics are not defined inside B2), `GameChangers`, `IsVR`, `SelectedCharacterId`, `XboxGameMode`/`XboxDifficulty`, and `HeroSpawn_Location` as a whole. They remain available as raw observations in the B0 corpus and would need their own table decision.
+
+**`contract.ended` v1** — `source`, `engine_event: "ContractFailed"`, `contract_session_id` (required), `contract_id`, `reason` (the engine's string verbatim, required non-empty), `reason_kind` (`restart` for `"Contract ended manually: OnRestartLevel"`, `exit_to_menu` for `"Contract ended manually: User pressed exit to Main menu"`, matched exactly; `other` for any other string, which is preserved), `engine_timestamp_s` (the session's duration on the contract clock). Nothing in this event is mission failure, success, completion or player death. Malformed (counted, logged, not published, no sequence consumed): `Value` not a string / empty; `Value` not an object for `ContractStart`; any required field missing or mistyped; non-integral difficulty; empty envelope `ContractSessionId`.
+
+### Native changes (`relay/m2`, from `f6190fb5`)
+
+| Commit | Change |
+|---|---|
+| `2bd1f4de` B2-R1 | `ContractStartedEvent`/`ContractEndedEvent`, serialization, adapter overloads; normalizer table rows with `Gating`, `NormalizeContractStarted/Ended`, `ReasonKind`; fixture `B0ContractLifecycle.h` (the four recorded B0 events, identifiers redacted) |
+| `8f5087a8` B2-R2 | `RelayFrame::Process` publishes ungated events regardless of the predicate (attempt-gated path and drain-before-edge unchanged); `Result.ungated_published`; counters line gains `ungated published N`; `ContractLifecycleTests.cpp` |
+| `9f746cad` B2-R3 | wire probe step `b2`: the observed fresh-load / restart / exit-to-menu order through `RelayFrame::Process` with the recorded payloads and the registry id seen on each edge |
+
+### BEAM changes (`main`, from `98a42da`)
+
+| Commit | Change |
+|---|---|
+| `a0ee5b7` B2-R4 | `Events.validate` for both types (Relay names only; `reason_kind` constrained; `contract.failed` unknown) |
+| `890e572` B2-R5 | `Lifecycle.ContractSession` (full `started_payload`/`ended_payload` kept), `Instance.contract_sessions / pending_contracts / unmatched_contract_ends / anomalies`, `Attempt.contract_session_id / contract_paired_by / contract_candidates / disposition`; pairing rules; `MissionSession` log notes; `Summary` contract and disposition lines; fixture `b2_probe_envelopes.ndjson`; 23 tests |
+
+Correlation rules as implemented: `contract.started` pairs with the open attempt if that attempt has no session yet (`:open_attempt`); otherwise it waits. `mission.playing` pairs with the single waiting session (`:next_rise`); with several waiting, none is paired, the ids are recorded as `contract_candidates` on the attempt and as a `:contract_pairing_ambiguous` anomaly, and the sessions stay unpaired evidence. `contract.ended` closes the open session with its id; with none it is kept in `unmatched_contract_ends` (never attached by adjacency); with several open sessions of that id it is kept unmatched with a `:contract_end_ambiguous` anomaly. The rise's `game_session_id` is compared to the paired session's id: a difference is a `:contract_session_id_mismatch` anomaly, the pairing stands, neither id is rewritten. `Attempt.disposition` ∈ `:not_observed | :restarted | :exited_to_menu | {:ended, reason}` from the paired session's `contract.ended` only; `mission.stopped`, registry rotation, TCP close, scene and timing derive nothing (the B1 and Stage A tests for those still pass). Every `contract.*` event reaches subscribers and stays on the instance with its payload whether or not it enriched an attempt.
+
+Summary wording (two lines per attempt, observed then derived):
+
+```
+    contract (engine telemetry): session <id>, LOCATION_PARIS, mission, difficulty 2; started #1 @0s; ended #4 by restart ("Contract ended manually: OnRestartLevel") @907.95282s on the contract clock
+    disposition (BEAM-derived, session paired by next_rise): restarted
+```
+
+or `contract (engine telemetry): not observed` / `disposition (BEAM-derived): not observed`, `… not observed; contract end not seen`, `N sessions started before this rise; none correlated (ambiguous)`, plus instance lines for unpaired sessions, unmatched ends and anomalies. The words "failed" and "completed" do not appear for a restart or an exit (tested).
+
+### Tests
+
+| Layer | Result |
+|---|---|
+| Native `GlacierRelayTests` | B1 suites unchanged and passing; `ContractLifecycleTests`: table and gating; both `ContractStart` payloads → exact `contract.started` JSON with the deferred fields absent; both `ContractFailed` payloads → `restart` / `exit_to_menu` with exact JSON; unknown reason → `other` with the string preserved; 9 malformed `ContractStart` variants + non-object `Value`; 3 malformed `ContractFailed` variants (backend object shape, empty reason, no session id); frame order for fresh load (`contract.started` before `mission.playing`, not outside-attempt), restart (`actor.died`, `contract.ended`, `mission.stopped`, `mission.playing`, `contract.started`), exit to menu (`mission.stopped`, `contract.ended`), attempt-gated outcome still outside-attempt beside an ungated publish, malformed ungated consumes no sequence, no adapter. Clean tree: pass, 0 relay warnings; **25/25 consecutive runs** on the clean binary. |
+| Elixir | **87 tests, 5× stable** (64 + 23): validation (required/typed/constrained, `contract.failed` unknown, schema v2 rejected); the 9 B2 wire envelopes decode with every payload field equal to the native JSON (checked programmatically); the recorded run → attempt 1 `:next_rise`/`:restarted` (`ended_relative :during`), attempt 2 `:open_attempt`/`:exited_to_menu` (`:after_stop`), no anomalies; fresh load; restart same-frame and early-start variants; exit to menu after the stop; unknown reason → `{:ended, reason}`; unmatched start stays pending/unpaired; multiple pending starts → no pairing, candidates + anomaly, later end closes the session but derives no disposition; unmatched end kept, not attached; id mismatch → anomaly, pairing kept, nothing rewritten; rise without registry id → no check; TCP close fabricates nothing; process exit leaves `:not_observed`; duplicate start noted; ambiguous end → unmatched + anomaly; one shared sequence; summary wording; two listener tests over TCP (full run; orphan `contract.ended`). |
+| Standalone wire | `GlacierRelayWireProbe 4747 sleep:1500,b2,sleep:800` → BEAM: 9 lines, 0 rejected, order `contract.started #1, mission.playing #2, actor.died #3, contract.ended #4, mission.stopped #5, mission.playing #6, contract.started #7, mission.stopped #8, contract.ended #9`; **9/9 native `published` envelopes equal to BEAM's reconstructed events, 0 field mismatches**; attempts 1–5 → 1, 6–9 → 2; dispositions `restarted`, `exited to menu`; no anomalies. Run on the incremental binary (fixture committed as `relay/test/b2_probe_envelopes.ndjson`; a second run reproduced identical payloads) and again on the clean binary (`relay-20261007-052433-90036.log`, SHA-256 `38f6173f…`). Evidence in `%TEMP%\glacier-m0\hitmen\wire-probe\b2\`. |
+
+### Clean build and inertness
+
+`_build/relay-x64-Debug` deleted; configure, build and tests at `9f746cad`: pass, 0 warnings from relay sources. **`GlacierRelay.dll` SHA-256 `0e10e2839c568ae86cb74cdef5fca78445b9c909405ea20da62b3876ea730e30`.**
+
+| Check | Result |
+|---|---|
+| Detours | the one `ZAchievementManagerSimple_OnEventSent` detour of B1; `DEFINE_PLUGIN_DETOUR` sites unchanged |
+| S2 / S3 / engine writes | none (`ActorManager`, `m_activatedActors`, `SignalOutputPin`, `ZActor_YouGotHit`, `SetProperty`, `SetWorldMatrix`, `SetObjectToWorld*` absent) |
+| Imports / exports | **identical to the B1 DLL** (normalized `dumpbin` diff: only link addresses differ); `WS2_32` client set unchanged, no `listen`/`accept`/`bind`; the three SDK plugin exports |
+| TCP | `TcpRelaySink.{h,cpp}` 0 lines changed; ownership unchanged |
+| Intake / queue | `TelemetryIntake.cpp`, `TelemetryQueue.h` 0 lines changed |
+| Boundary | SDK headers only in the three Glacier-facing files; `GlacierRelayTests` and the probe build every other source without the SDK include path |
+
+### Proposed B2 controlled runtime experiment (NOT executed; requires explicit authorization)
+
+Setup as B1 (section 26): BEAM first with the live subscriber, pre-flight hashes against the B1 post-cleanup baseline, install `GlacierRelay.dll` `0e10e283…730e30` + `[glacierrelay]`, no `glacierrelay.ini`, VS attached after the menu gate, rollback by hash. Script:
+
+1. menu (gate as B1; expect no telemetry)
+2. **fresh Paris load**, stand ~10 s — expect `contract.started #1` **before** `mission.playing #2`; BEAM attempt 1 paired `:next_rise`, id check passing (the rise's `game_session_id` equals the session id)
+3. **Paris restart** — expect `contract.ended` (`restart`) ~1.9 s **before** `mission.stopped`, then `mission.playing`, then `contract.started` for the new session (same engine frame, after the rise); attempt 1 `disposition: restarted` with `ended_relative :during`; attempt 2 paired `:open_attempt`
+4. **exit Paris to menu** — expect `mission.stopped` then `contract.ended` (`exit_to_menu`) one frame later; attempt 2 `disposition: exited_to_menu`, `ended_relative :after_stop`; counters line shows `outside attempt 0`, `ungated published 4`
+5. **fresh mission load** (Paris or Sapienza) — a third session and attempt paired `:next_rise`
+6. **direct quit to desktop from inside the mission** (pause menu) — determines whether Glacier emits any contract end before the process disappears. Either outcome is evidence: if a `contract.ended` arrives before the TCP close, attempt 3 gains a disposition from it; if not, attempt 3 stays "last known playing; observation lost", `disposition: not_observed`, and nothing is fabricated from the close.
+
+Pass: every `ContractStart`/`ContractFailed` the native log shows as `captured` appears exactly once in BEAM as `contract.started`/`contract.ended` with values equal to the native `published` line; orderings as in section 27.3; attempts paired as above with no anomaly (an anomaly is a finding, not a failure); dispositions from contract evidence only; attempt 3 as the evidence dictates; `queue dropped = 0`, `malformed = 0`, `outside attempt = 0`; B1 actor outcomes unaffected if any occur; no `ERROR`/`FAULT`; rollback verified. Record: the exact frame offsets of each contract event from its predicate edge; the registry id on each edge versus the paired session; whether the quit emitted anything; any `other` reason string.
+
+B3 (disguise) is not started.
