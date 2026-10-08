@@ -437,6 +437,49 @@ defmodule GlacierRelay.Wire.ListenerTest do
     :gen_tcp.close(socket)
   end
 
+  # -- B3: disguise over the wire ------------------------------------------------------------
+
+  @b3 File.read!("test/b3_probe_envelopes.ndjson") |> String.split("\n", trim: true)
+  @b3_id "2f06fed8-6542-47fd-b383-68580798c96b"
+
+  test "the B3 native envelopes arrive in order; disguise occurrences attach by order and the derived view reads them conservatively" do
+    socket = connect()
+    :ok = :gen_tcp.send(socket, Enum.join(@b3, "\n") <> "\n")
+    assert_receive {:relay_event, %{sequence: 22, event_type: "contract.ended"}}, 1_000
+
+    instance = MissionSession.state()[@b3_id]
+    assert instance.gaps == [] and instance.unattributed_disguise_events == []
+    assert [%Attempt{disguise_events: first}, %Attempt{disguise_events: second}] = instance.attempts
+    assert Enum.map(first, &{&1.type, &1.kind, &1.sequence}) == [
+             {:equipped, :initial, 3}, {:equipped, :change, 4}, {:compromised, nil, 5}, {:compromise_cleared, nil, 10},
+             {:equipped, :change, 11}, {:compromised, nil, 12}, {:compromise_cleared, nil, 15}
+           ]
+    assert Enum.map(second, &{&1.type, &1.kind, &1.sequence}) == [{:equipped, :initial, 20}]
+
+    [a1, a2] = instance.attempts
+    assert %{worn_standing: :cleared, changes: 2, history: :complete, anomalies: []} = GlacierRelay.Disguise.derive(a1, instance)
+    assert %{worn_standing: :not_observed, changes: 0, used: ["874c4c48-0a8b-49e9-883e-49fc5f1fb051"]} = GlacierRelay.Disguise.derive(a2, instance)
+
+    text = MissionSession.summary_text()
+    assert text =~ "disguise state (BEAM-derived): worn 992cc7b6… since #11; worn outfit: cleared; 2 changes, 3 definitions used; history intact"
+    assert text =~ "worn 874c4c48… (equals the starting suit id) since #20; worn outfit: no compromise observed"
+    refute text =~ ~r/clean|undetected|safe|silent assassin|complet/i
+    :gen_tcp.close(socket)
+  end
+
+  test "a disguise event with no open attempt over the wire stays unattributed" do
+    orphan = Enum.at(@b3, 4) |> String.replace(@b3_id, "orphan-disguise")
+    socket = connect()
+    :ok = :gen_tcp.send(socket, orphan <> "\n")
+    assert_receive {:relay_event, %{adapter_instance_id: "orphan-disguise", event_type: "disguise.compromised"}}, 1_000
+
+    instance = MissionSession.state()["orphan-disguise"]
+    assert instance.attempts == []
+    assert [%{type: :compromised, sequence: 5}] = instance.unattributed_disguise_events
+    assert MissionSession.summary_text() =~ "disguise compromised 2018db77… #5 @222.863129s with no open attempt"
+    :gen_tcp.close(socket)
+  end
+
   defp wait_until(fun, attempts \\ 50) do
     cond do
       fun.() -> :ok

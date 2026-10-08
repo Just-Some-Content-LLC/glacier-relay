@@ -243,6 +243,70 @@ defmodule GlacierRelay.DisguiseTest do
     end
   end
 
+  # -- evidence: the native envelopes of the B3 standalone wire run ----------------------------
+
+  @b3_lines File.read!("test/b3_probe_envelopes.ndjson") |> String.split("\n", trim: true)
+  @b3_id "2f06fed8-6542-47fd-b383-68580798c96b"
+
+  describe "B3 wire fixture (22 native envelopes, B0 session 1 order through the production sequencing)" do
+    test "every envelope decodes with the payload the native normalizer wrote" do
+      decoded = Enum.map(@b3_lines, fn l -> {:ok, e} = Envelope.decode(l); e end)
+      assert Enum.map(decoded, & &1.sequence) == Enum.to_list(1..22)
+      assert Enum.map(decoded, & &1.event_type) == [
+               "contract.started", "mission.playing", "disguise.equipped", "disguise.equipped", "disguise.compromised",
+               "actor.pacified", "actor.pacified", "actor.pacified", "actor.died", "disguise.compromise_cleared",
+               "disguise.equipped", "disguise.compromised", "actor.died", "actor.died", "disguise.compromise_cleared",
+               "contract.ended", "mission.stopped", "mission.playing", "contract.started", "disguise.equipped",
+               "mission.stopped", "contract.ended"
+             ]
+
+      # The validated payload equals the native JSON field for field (nil for absent optionals).
+      for {line, e} <- Enum.zip(@b3_lines, decoded), Events.disguise_event?(e.event_type) do
+        raw = JSON.decode!(line)["payload"]
+        assert e.payload.source == raw["source"]
+        assert e.payload.kind == raw["kind"]
+        assert e.payload.engine_event == raw["engine_event"]
+        assert e.payload.disguise_repository_id == raw["disguise_repository_id"]
+        assert e.payload.contract_session_id == raw["contract_session_id"]
+        assert e.payload.engine_timestamp_s == raw["engine_timestamp_s"]
+        assert Map.keys(raw) -- ["source", "kind", "engine_event", "disguise_repository_id", "contract_session_id", "engine_timestamp_s"] == []
+        if e.event_type != "disguise.equipped", do: refute(Map.has_key?(raw, "kind"))
+      end
+    end
+
+    test "folded: the recorded session's view, and the facts reproduce it" do
+      decoded = Enum.map(@b3_lines, fn l -> {:ok, e} = Envelope.decode(l); e end)
+      {inst, notes} = fold(decoded, Lifecycle.new(@b3_id))
+      refute Enum.any?(notes, &match?({:unattributed_disguise_event, _}, &1))
+      assert inst.received == 22 and inst.gaps == []
+
+      d = view(inst, 1)
+      assert d.initial == %{repository_id: @suit, sequence: 3}
+      assert d.worn == %{repository_id: @outfit_b, since_sequence: 11, kind: :change}
+      assert d.worn_standing == :cleared and d.standing_reason == :latest_names_worn
+      assert d.compromise_episodes == [
+               %{repository_id: @outfit_a, compromised_sequences: [5], cleared_sequence: 10},
+               %{repository_id: @outfit_b, compromised_sequences: [12], cleared_sequence: 15}
+             ]
+      assert d.used == [@suit, @outfit_a, @outfit_b] and d.changes == 2 and d.history == :complete
+      assert d.notes == [] and d.anomalies == []
+      assert from_facts(inst, 1) == d
+
+      d2 = view(inst, 2)
+      assert d2.initial == %{repository_id: @suit, sequence: 20} and d2.worn_standing == :not_observed
+      assert d2.anomalies == [] and from_facts(inst, 2) == d2
+
+      # Actor outcomes and disguise occurrences interleave in one sequence and stay apart.
+      assert Enum.map(hd(inst.attempts).outcomes, & &1.sequence) == [6, 7, 8, 9, 13, 14]
+      assert Enum.map(hd(inst.attempts).disguise_events, & &1.sequence) == [3, 4, 5, 10, 11, 12, 15]
+
+      t = Summary.render(%{@b3_id => inst})
+      assert t =~ "initial 874c4c48… #3 @13.011781s; change → 2018db77… #4 @202.104156s; compromised 2018db77… #5 @222.863129s; cleared 2018db77… #10 @393.788727s; change → 992cc7b6… #11 @497.756409s; compromised 992cc7b6… #12 @615.012756s; cleared 992cc7b6… #15 @624.086853s"
+      assert t =~ "worn 992cc7b6… since #11; worn outfit: cleared; 2 changes, 3 definitions used; history intact"
+      refute t =~ ~r/clean|undetected|safe|silent assassin|complet/i
+    end
+  end
+
   # -- evidence: the B0 session ----------------------------------------------------------------
 
   describe "B0 session 1 (evidence order)" do
