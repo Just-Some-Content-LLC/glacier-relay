@@ -5,8 +5,8 @@ defmodule GlacierRelay.Summary do
   infers a gameplay outcome. Each line says what was observed, and "not observed" where it wasn't.
   """
 
-  alias GlacierRelay.Lifecycle
-  alias GlacierRelay.Lifecycle.{Attempt, Connection, ContractSession, Instance, Outcome}
+  alias GlacierRelay.{Disguise, Lifecycle}
+  alias GlacierRelay.Lifecycle.{Attempt, Connection, ContractSession, DisguiseOccurrence, Instance, Outcome}
 
   @doc "Summary data, one map per instance, oldest attempt first."
   @spec build(%{String.t() => Instance.t()}) :: [map()]
@@ -49,7 +49,7 @@ defmodule GlacierRelay.Summary do
       gaps: Enum.reverse(instance.gaps),
       observation: Lifecycle.observation(instance),
       connections: instance.connections |> Enum.reverse() |> Enum.map(&connection/1),
-      attempts: Enum.map(instance.attempts, &attempt(&1, instance.contract_sessions)),
+      attempts: Enum.map(instance.attempts, &attempt(&1, instance)),
       unmatched_stops:
         Enum.map(instance.unmatched_stops, fn stray ->
           %{
@@ -59,6 +59,9 @@ defmodule GlacierRelay.Summary do
           }
         end),
       unattributed_outcomes: Enum.map(instance.unattributed_outcomes, &outcome/1),
+      # Disguise occurrences with no open attempt (M2 B3): kept visible, never attached.
+      unattributed_disguise_events:
+        Enum.map(instance.unattributed_disguise_events, &disguise_occurrence/1),
       # Contract lifecycle (M2 B2): every session Glacier reported, paired or not, plus what
       # could not be correlated and every observable discrepancy.
       contract_sessions: Enum.map(instance.contract_sessions, &contract_session/1),
@@ -80,7 +83,7 @@ defmodule GlacierRelay.Summary do
     }
   end
 
-  defp attempt(%Attempt{} = attempt, sessions) do
+  defp attempt(%Attempt{} = attempt, %Instance{contract_sessions: sessions} = instance) do
     paired =
       Enum.find(sessions, fn c ->
         c.attempt_number == attempt.number and c.contract_session_id == attempt.contract_session_id
@@ -114,7 +117,26 @@ defmodule GlacierRelay.Summary do
       contract_paired_by: attempt.contract_paired_by,
       contract_candidates: attempt.contract_candidates,
       contract: paired && contract_session(paired),
-      disposition: attempt.disposition
+      disposition: attempt.disposition,
+      # Disguise (M2 B3): the occurrences as facts, then BEAM's labelled reading of them.
+      disguise_events: Enum.map(attempt.disguise_events, &disguise_occurrence/1),
+      disguise: Disguise.derive(attempt, instance)
+    }
+  end
+
+  defp disguise_occurrence(%DisguiseOccurrence{} = o) do
+    p = o.payload
+
+    %{
+      type: o.type,
+      kind: o.kind,
+      sequence: o.sequence,
+      timestamp: o.timestamp,
+      source: p.source,
+      engine_event: p.engine_event,
+      disguise_repository_id: p.disguise_repository_id,
+      contract_session_id: p.contract_session_id,
+      engine_timestamp_s: p.engine_timestamp_s
     }
   end
 
@@ -241,9 +263,14 @@ defmodule GlacierRelay.Summary do
         "  contract.ended ##{e.sequence} for session #{e.contract_session_id} (#{render_reason(e.reason_kind, e.reason)}) with no open contract session"
       end)
 
+    unattributed_disguise =
+      Enum.map(s.unattributed_disguise_events, fn o ->
+        "  disguise #{render_disguise_occurrence(o)} with no open attempt"
+      end)
+
     anomalies = Enum.map(s.anomalies, &("  anomaly: " <> render_anomaly(&1)))
 
-    [header] ++ connections ++ attempts ++ strays ++ unattributed ++ unpaired ++ unmatched_ends ++ anomalies
+    [header] ++ connections ++ attempts ++ strays ++ unattributed ++ unattributed_disguise ++ unpaired ++ unmatched_ends ++ anomalies
   end
 
   defp render_attempt(a) do
@@ -287,8 +314,125 @@ defmodule GlacierRelay.Summary do
             Enum.map(outcomes, &("    " <> render_outcome(&1)))
       end
 
-    [line] ++ render_attempt_contract(a) ++ outcome_lines
+    [line] ++ render_attempt_contract(a) ++ outcome_lines ++ render_attempt_disguise(a)
   end
+
+  # Two lines per attempt (M2 B3): the disguise occurrences Glacier reported, in order, then the
+  # derived view with its uncertainty on the same line. Words that never appear: clean, undetected,
+  # safe, Silent Assassin. An earlier episode is rendered with its own facts, never as the worn
+  # outfit's standing.
+  defp render_attempt_disguise(a) do
+    contract_says =
+      case a.contract do
+        %{starting_disguise_repository_id: id, is_hitman_suit: suit?} ->
+          "contract.started says #{short(id)}#{if suit?, do: " (hitman suit)", else: ""}; "
+
+        _ ->
+          ""
+      end
+
+    observed =
+      case a.disguise_events do
+        [] ->
+          "    disguises (engine telemetry): #{contract_says}none observed in the attempt"
+
+        events ->
+          "    disguises (engine telemetry): #{contract_says}" <>
+            Enum.map_join(events, "; ", &render_disguise_occurrence/1)
+      end
+
+    d = a.disguise
+
+    worn =
+      case d.worn do
+        :not_observed -> "worn: not observed"
+        %{repository_id: id, since_sequence: seq} -> "worn #{short(id)}#{suit_note(id, a.contract)} since ##{seq}"
+      end
+
+    standing = "worn outfit: " <> render_standing(d)
+
+    counts = "#{d.changes} change#{plural(d.changes)}, #{length(d.used)} definition#{plural(length(d.used))} used"
+
+    history =
+      case d.history do
+        # "complete" is reserved: it must never appear in a summary (it would read as mission completion).
+        :complete -> "history intact"
+        {:incomplete, reasons} -> "history broken: " <> Enum.map_join(reasons, ", ", &render_history_reason/1)
+      end
+
+    anomalies =
+      case d.anomalies do
+        [] -> ""
+        list -> "; anomalies: " <> Enum.map_join(list, ", ", &inspect/1)
+      end
+
+    derived =
+      "    disguise state (BEAM-derived): #{worn}; #{standing}; #{counts}; #{history}#{anomalies}"
+
+    [observed, derived]
+  end
+
+  defp render_disguise_occurrence(o) do
+    at = if o.engine_timestamp_s, do: " @#{o.engine_timestamp_s}s", else: ""
+
+    what =
+      case {o.type, o.kind} do
+        {:equipped, :initial} -> "initial"
+        {:equipped, :change} -> "change →"
+        {:compromised, _} -> "compromised"
+        {:compromise_cleared, _} -> "cleared"
+      end
+
+    "#{what} #{short(o.disguise_repository_id)} ##{o.sequence}#{at}"
+  end
+
+  defp render_standing(%{worn: :not_observed}), do: "not observed"
+
+  defp render_standing(%{worn_standing: :unknown, standing_cut: %{cut: cut, standing_before: before}}) do
+    where =
+      case cut do
+        {:gap, expected, got} -> "gap #{expected}→#{got} inside this wear"
+        {:interruption, at, reason} -> "observation lost #{fmt(at)} (#{inspect(reason)}) inside this wear"
+      end
+
+    "unknown (#{where}; before it: #{render_plain_standing(before)})"
+  end
+
+  defp render_standing(%{worn_standing: :unknown, standing_reason: :latest_names_other}),
+    do: "unknown (the latest statement in this wear names another outfit)"
+
+  defp render_standing(%{worn_standing: :unknown, standing_reason: :earlier_compromise, compromise_episodes: episodes, worn: %{since_sequence: since}}) do
+    earlier =
+      episodes
+      |> Enum.filter(fn e -> hd(e.compromised_sequences) < since end)
+      |> Enum.map_join(", ", fn e ->
+        "#{short(e.repository_id)} ##{hd(e.compromised_sequences)}" <>
+          if(e.cleared_sequence, do: " cleared ##{e.cleared_sequence}", else: " episode open")
+      end)
+
+    "unknown (compromise observed earlier in this attempt: #{earlier}; not evidenced for this wear)"
+  end
+
+  defp render_standing(%{worn_standing: standing}), do: render_plain_standing(standing)
+
+  defp render_plain_standing(:not_observed), do: "no compromise observed"
+  defp render_plain_standing(:compromised), do: "compromised"
+  defp render_plain_standing(:cleared), do: "cleared"
+  defp render_plain_standing(:unknown), do: "unknown"
+
+  defp render_history_reason({:gap, expected, got}), do: "gap #{expected}→#{got}"
+  defp render_history_reason({:interruption, at, reason}), do: "observation lost #{fmt(at)} (#{inspect(reason)})"
+  defp render_history_reason(:superseded), do: "superseded"
+
+  # "suit" only as a labelled id equality with the paired session's starting suit.
+  defp suit_note(id, %{starting_disguise_repository_id: id, is_hitman_suit: true}), do: " (equals the starting suit id)"
+  defp suit_note(_id, _contract), do: ""
+
+  defp short(id) when is_binary(id) and byte_size(id) > 8, do: binary_part(id, 0, 8) <> "…"
+  defp short(id), do: to_string(id)
+
+  defp plural(1), do: ""
+  defp plural(_), do: "s"
 
   # Two lines per attempt: what Glacier said about the correlated contract session (observed
   # semantic occurrences), then what BEAM derived from it and how (correlation and disposition).

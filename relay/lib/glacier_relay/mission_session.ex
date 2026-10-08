@@ -199,6 +199,12 @@ defmodule GlacierRelay.MissionSession do
         "relay: #{id}: actor outcome ##{sequence} arrived with no open attempt; kept as unattributed"
       )
 
+  defp log_note(id, {:unattributed_disguise_event, sequence}),
+    do:
+      Logger.warning(
+        "relay: #{id}: disguise event ##{sequence} arrived with no open attempt; kept as unattributed"
+      )
+
   defp log_note(id, {:contract_started_again, session_id, sequence}),
     do:
       Logger.warning(

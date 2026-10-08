@@ -46,6 +46,11 @@ defmodule GlacierRelay.Lifecycle do
   - `Attempt.disposition` is derived only from a paired session's `contract.ended`:
     `:restarted`, `:exited_to_menu` or `{:ended, reason}`; otherwise `:not_observed`. Never from
     `mission.stopped`, the registry id, the transport, the scene or timing.
+  - Disguise occurrences (`disguise.equipped`, `disguise.compromised`,
+    `disguise.compromise_cleared`, M2 B3) are attached to the open attempt by stream order, like
+    outcomes, and kept there as immutable facts (`disguise_events`); with no open attempt they are
+    unattributed. Nothing about the worn outfit or its compromise is stored here: `Disguise.derive/2`
+    reads it from the facts on demand, with the attempt's gap and interruption evidence.
   """
 
   alias GlacierRelay.Wire.Envelope
@@ -61,6 +66,16 @@ defmodule GlacierRelay.Lifecycle do
     `:died` or `:pacified`; everything else is the normalized payload plus stream position.
     """
     defstruct [:kind, :sequence, :timestamp, :received_at, :payload]
+  end
+
+  defmodule DisguiseOccurrence do
+    @moduledoc """
+    One disguise occurrence as the engine recorded it (via the native normalizer). `type` is
+    `:equipped`, `:compromised` or `:compromise_cleared`; `kind` is `:initial` or `:change` on an
+    equipped occurrence and nil otherwise; everything else is the validated payload plus stream
+    position. Facts only: nothing here is derived.
+    """
+    defstruct [:type, :kind, :sequence, :timestamp, :received_at, :payload]
   end
 
   defmodule ContractSession do
@@ -90,8 +105,9 @@ defmodule GlacierRelay.Lifecycle do
 
     `mission` is `:playing` (open; last known state), `:stopped` (closed by `mission.stopped`) or
     `:superseded` (another `mission.playing` arrived while this was open; its end was not observed).
-    `interruptions` lists the times the instance's connection closed while this attempt was open;
-    they are transport evidence and leave `mission` untouched.
+    `interruptions` lists the times the instance's connection closed while this attempt was open,
+    each with `after_sequence`, the last sequence the instance had received at that moment; they
+    are transport evidence and leave `mission` untouched.
 
     `contract_session_id` / `contract_paired_by` record the BEAM-derived correlation to a Glacier
     contract session (M2 B2); `contract_candidates` lists the session ids that were waiting when
@@ -117,7 +133,9 @@ defmodule GlacierRelay.Lifecycle do
       contract_session_id: nil,
       contract_paired_by: nil,
       contract_candidates: [],
-      disposition: :not_observed
+      disposition: :not_observed,
+      # Disguise occurrences in stream order (M2 B3): facts, never derived state.
+      disguise_events: []
     ]
   end
 
@@ -144,7 +162,9 @@ defmodule GlacierRelay.Lifecycle do
               # contract.ended with no open session of that id: kept, never attached by adjacency.
               unmatched_contract_ends: [],
               # Observable discrepancies in the correlated evidence (id mismatch, ambiguity, ...).
-              anomalies: []
+              anomalies: [],
+              # Disguise occurrences with no open attempt (M2 B3): kept, never attached by adjacency.
+              unattributed_disguise_events: []
   end
 
   def new(id), do: %Instance{id: id}
@@ -177,6 +197,9 @@ defmodule GlacierRelay.Lifecycle do
 
         envelope.event_type == GlacierRelay.Events.contract_ended() ->
           contract_ended(instance, envelope.payload, observation)
+
+        GlacierRelay.Events.disguise_event?(envelope.event_type) ->
+          record_disguise(instance, envelope, received_at)
       end
 
     {%{instance | last_event: envelope}, notes ++ more}
@@ -207,7 +230,9 @@ defmodule GlacierRelay.Lifecycle do
         attempt ->
           replace_last(instance.attempts, %{
             attempt
-            | interruptions: attempt.interruptions ++ [%{at: at, reason: reason}]
+            | interruptions:
+                attempt.interruptions ++
+                  [%{at: at, reason: reason, after_sequence: instance.last_sequence}]
           })
       end
 
@@ -510,6 +535,51 @@ defmodule GlacierRelay.Lifecycle do
            instance
            | attempts:
                replace_last(instance.attempts, %{open | outcomes: open.outcomes ++ [outcome]})
+         }, []}
+    end
+  end
+
+  # -- disguise (M2 B3) ----------------------------------------------------------------------
+
+  defp record_disguise(instance, envelope, received_at) do
+    type =
+      cond do
+        envelope.event_type == GlacierRelay.Events.disguise_equipped() -> :equipped
+        envelope.event_type == GlacierRelay.Events.disguise_compromised() -> :compromised
+        true -> :compromise_cleared
+      end
+
+    kind =
+      case envelope.payload[:kind] do
+        "initial" -> :initial
+        "change" -> :change
+        _ -> nil
+      end
+
+    occurrence = %DisguiseOccurrence{
+      type: type,
+      kind: kind,
+      sequence: envelope.sequence,
+      timestamp: envelope.timestamp,
+      received_at: received_at,
+      payload: envelope.payload
+    }
+
+    case current_attempt(instance) do
+      nil ->
+        {%{
+           instance
+           | unattributed_disguise_events: instance.unattributed_disguise_events ++ [occurrence]
+         }, [{:unattributed_disguise_event, envelope.sequence}]}
+
+      open ->
+        {%{
+           instance
+           | attempts:
+               replace_last(instance.attempts, %{
+                 open
+                 | disguise_events: open.disguise_events ++ [occurrence]
+               })
          }, []}
     end
   end
