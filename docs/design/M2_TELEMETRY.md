@@ -1454,3 +1454,85 @@ Files with **zero** changed lines: `GlacierRelay.{cpp,h}`, `SceneObservation.cpp
 ### What this does and does not establish
 
 Established without the game: the four shapes normalize exactly as the B0 corpus has them; the frame-order guarantee holds at both sides of a fall frame; the fold reproduces its view from bare facts on complete and incomplete histories; the wire carries the three types unchanged end to end. Not established, by design: anything about the engine's behaviour on transitions the corpus lacks — a `Disguise` carrying the suit id, a change while a compromise is outstanding, re-equipping a compromised outfit, other clearing paths. The model answers all of those with `:unknown` until a controlled run (section 30.11) supplies evidence. **The B3 controlled runtime experiment requires its own authorization; nothing has been deployed.**
+
+---
+
+## 32. B3 controlled runtime experiment (2026-10-08, 22:46Z to 23:35Z) — pipeline PASS; disguise vocabulary NOT validated
+
+Authorized explicitly as "one controlled B3 runtime experiment under §30.11" on the frozen artifacts: ZHMModSDK `relay/m2` `e9001ee4`, clean-built `GlacierRelay.dll` SHA-256 `c045f92a813ef70d5b92fe8f06d38c999af41fda7cc9c7552044117d0043ef1b` (the installed copy hashed identically in `retail-installed.sha256`), glacier-relay `d5a343c` (containing the BEAM correction `63184c4`). Refs, working trees and the DLL hash were verified before deployment; no implementation change or rebuild before, during or after the run. Objective: validate the four attempt-gated disguise rows at runtime, the re-equip-before-clearing transition the design left `:unknown`, and B1/B2 behaviour beside them.
+
+**Verdict, from the evidence: the relay pipeline passed and the disguise vocabulary did not validate.** Every one of the nine disguise occurrences the engine emitted was captured by the detour and **rejected by the normalizer as malformed — `Value is not a string`**; zero `disguise.*` events crossed the wire. The malformed path behaved exactly as designed (counted per name, warned with name and index, nothing published, no sequence consumed, run continued). The B1 actor rows (23 `Kill`, 1 `Pacify`) and the B2 contract rows (2 `ContractStart`, 1 `ContractFailed`) normalized and published correctly beside them: **30/30 envelopes, 0 field mismatches, 0 drops, 0 outside attempt, 0 ERROR/FAULT.** B3 is therefore **not accepted**; `disguise.equipped` / `disguise.compromised` / `disguise.compromise_cleared` remain unvalidated vocabulary. Root cause is identified below and is not fixed here.
+
+### Setup and pre-flight
+
+Game `3.280.0.0`; 107-file `Retail` listing and hashes identical to the B2 post-cleanup baseline; 26/26 M0 hashes OK; `mods.ini` = M0 (`b90b4c5e…`); no Relay, Hitmen or probe artifact; both repositories clean at the frozen commits; HITMAN not running; port 4747 free on both sides. BEAM first (`relay@VENGEANCE`, listening 22:46:15Z) with the live subscriber. Installed 22:46:31Z; full-tree diff = exactly `mods/GlacierRelay.dll` (`c045f92a…`) and `mods.ini` (`a66a44ed…`, the B1/B2 relay variant). No `glacierrelay.ini`. Operator attached Visual Studio after the menu gate; no effect on the log.
+
+### R1 — menu gate
+
+Pass. Loader: `Successfully installed detour for hook 'ZAchievementManagerSimple_OnEventSent' at address 0x140b6fd50`, `Mod glacierrelay successfully loaded`, 0 errors. Native: DLL built `Oct 8 2026 15:02:35`, `SDK 4.1.1 (ABI 1)`, `Init: one detour registered (…, read-only); lifecycle is polled`, adapter **`1365917c-6918-4adc-91c0-0383d53c6897`**, `telemetry_log names`, queue 256, `tcp sink: connected` 22:48:52.175Z; BEAM accepted 16 ms later. Menu 5→6→7→8: no event; **zero frontend telemetry**; 0 WARN/ERROR/FAULT.
+
+### Script as executed (deviations in bold)
+
+| § 30.11 step | Executed | Engine (native capture) | Wire / BEAM | Operator (HUD/NPC) |
+|---|---|---|---|---|
+| 2 fresh Paris | yes | `ContractStart` 22:52:29.407Z (stage 7) → rise 22:52:29.696Z; `StartingSuit` + `IntroCutEnd` 22:53:00.762Z (31 s after the rise) | `contract.started #1` 123 ms before `mission.playing #2`; **`StartingSuit` captured, not normalized** | in control in the suit |
+| 3 take disguise A | yes — **from a locker, no NPC** | `ItemDropped` → **`Disguise` captured, not normalized** (22:55:35.101Z) → `Trespassing` same ms → `ChallengeCompleted` `_DONTSEND` +242 ms | nothing | wearing A (waiter) |
+| 4 compromise A, keep witnesses alive | compromised; **then the operator killed one NPC** | `Spotted`×2 → `Witnesses` → **`DisguiseBlown` captured, not normalized** (23:00:28.525Z, +220 ms); `Kill` Parker 23:00:34.778Z; **`BrokenDisguiseCleared` captured, not normalized, 244 ms after that `Kill`** | `actor.died #3` | HUD compromised; two others ran for a guard |
+| 4 (redo) compromise A again, witnesses alive | yes | `Spotted` → `Witnesses` → **`DisguiseBlown` (23:03:01.513Z)**, second `Witnesses` +234 ms; no clear | nothing | HUD compromised, 2 NPCs |
+| 5 change to B | **operator returned to the previously worn suit (reported as "the other suit I was originally in"), not a third outfit** | `ItemDropped` → **`Disguise` and `BrokenDisguiseCleared` in the same millisecond** (23:05:03.727Z) → `Trespassing` +219 ms; **no kill involved** | nothing | — |
+| 6 re-equip A | yes | `ItemDropped` → **`Disguise` only** (23:07:59.349Z) → `Trespassing`; **no `DisguiseBlown` restated** | nothing | **HUD: compromised** |
+| 7 kill the witnesses wearing A | yes — 2 witnesses + the guard they alerted | `Kill` ×3 (23:10:00.661Z, 23:10:04.839Z, 23:11:21.780Z), `SituationContained` after the second and third; **no `BrokenDisguiseCleared` at any point afterwards** (observed through 23:27Z) | `actor.died #4–#6` | **HUD: not compromised** after the kills |
+| 8 optional clear-while-wearing-other | **not performed separately** (step 5 already produced a clear at a change) | — | — | — |
+| 9 restart | yes | `ShotsFired/Hit` → `ContractFailed` 23:27:24.620Z → fall 23:27:25.967Z (1.35 s); reload; `ContractStart` captured during stage 7 (23:27:36.854Z) → rise 23:27:37.080Z; `StartingSuit` + `IntroCutEnd` 23:27:38.934Z (**not normalized**) | `contract.ended #7` (restart) → `mission.stopped #8` → **`contract.started #9` → `mission.playing #10` in the same millisecond** | — |
+| 10 exit to menu, 11 fresh load, 12 quit from inside | **not performed as scripted**: attempt 2 became an unscripted combat sequence (19 `Kill`, 1 `Pacify`, `Hero_Health` ×5, 47 shot once), then the operator **quit to desktop from inside the mission** | last delivery index 363 (`Hero_Health`, 23:31:54.102Z); nothing further | `actor.died #11–#29`, `actor.pacified #30`; TCP `:peer_closed` 23:32:00.827Z; no stop, no end | quit |
+
+Suit return (step 9 of 30.11) is covered only by the operator-reported return at 23:05:03; whether that outfit was 47's suit is operator wording, not stream evidence (the ids were not normalized).
+
+### Complete Relay semantic sequence
+
+One adapter instance, one connection, sequences 1–30 contiguous, `gaps []`, 30 lines received, 0 rejected. `#1 contract.started (A) · #2 mission.playing · #3–#6 actor.died · #7 contract.ended (A, restart, contract clock 1848.12 s) · #8 mission.stopped (attempt 1, 2096.3 s) · #9 contract.started (B) · #10 mission.playing · #11–#29 actor.died · #30 actor.pacified · — TCP :peer_closed`. Sessions: A `2516108008655457205-92d4207f-a8ce-49a8-af11-813ea1cb6cfb`, B `2516107987544791131-dd336787-fd88-4716-ab7c-9f39e3d2072d`; both `LOCATION_PARIS`, `mission`, difficulty 2, starting disguise `874c4c48…`, `is_hitman_suit true`. Attempt 1: paired `:next_rise`, `ended_relative :during`, disposition `:restarted`; 4 died (3 civilian, 1 guard; all murder). Attempt 2: paired `:next_rise` (see finding 6), end not observed, disposition `:not_observed`, last known playing, observation lost; 19 died (8 civilian, 11 guard), 1 pacified. `unattributed_outcomes []`, `unattributed_disguise_events []`, anomalies `[]`. Disguise lines on both attempts: `disguises (engine telemetry): contract.started says 874c4c48… (hitman suit); none observed in the attempt` / `disguise state (BEAM-derived): worn: not observed; worn outfit: not observed …` — correct, because nothing reached the wire.
+
+### Native ↔ BEAM comparison
+
+Programmatic (`compare.py` → `native-beam-compare.txt`): **30/30 present, 0 field mismatches** on event type, sequence, timestamp and every payload field; attempts 1–8 → 1, 9–30 → 2; one adapter id. Publish-to-BEAM 1 to 12 ms after the first event.
+
+### Counters (reconciled)
+
+| Checkpoint | Values |
+|---|---|
+| attempt 1 ended (#8), verbatim | `seen 157, captured 14, unsupported 137, dont_send 6, unreadable 0, truncated 0; queue pushed 14, dropped 0; normalized 6, malformed 8, outside attempt 0, ungated published 2` → 14 captured = 6 normalized (ContractStart, Kill ×4, ContractFailed) + 8 malformed (StartingSuit, Disguise ×3, DisguiseBlown ×2, BrokenDisguiseCleared ×2) |
+| process, from the `seen` lines (no end-of-process counters line: no further fall) | seen 353; captured 36 = normalized 27 (2 ContractStart, 1 ContractFailed, 23 Kill, 1 Pacify) + malformed 9 (2 StartingSuit, 3 Disguise, 2 DisguiseBlown, 2 BrokenDisguiseCleared); unsupported 280 across 31 names; `_DONTSEND` 37 (all `ChallengeCompleted`); unreadable 0; truncated 0; queue dropped 0 (no `queue full` warning); outside attempt 0; published 30 = 27 normalized + 3 predicate edges |
+
+Engine indices never delivered to the detour: 6, 36, 79, 166, 188, 232, 243, 247, 320, 354 (10 of 363); as established, not a Relay continuity signal.
+
+### Root cause of the malformed disguise occurrences (identified, not fixed)
+
+`TelemetryIntake::Copy` converts `ZString`, `bool`, `float32/64`, integer types, objects and arrays; any other engine type is kept as `TelemetryValue::Kind::Unsupported` carrying the type name, and `NormalizeDisguise` then reports `Value is not a string`. The four disguise events therefore carry their outfit id in an engine type that is **not `ZString`** — most plausibly `ZRepositoryID` (a GUID struct), which the B0 probe's `ToString` serialization rendered as a JSON string and which the B2 `ContractStart.Disguise` field (a `ZString`, normalized fine) did not expose. The design's "exact payload shape" (30.1) was exact at the JSON level and wrong at the engine-type level; the production run is the first time these names met the typed intake. The engine type name was captured in memory (`Unsupported.text`) but is not logged by the normalizer's detail, so it is **not evidenced in this run's log**; it must be confirmed before any change. Any correction is an intake change (a new engine type at the Glacier-facing boundary) with its own design review, tests and run — not a validation relaxation.
+
+### Findings (engine behaviour, from capture order and operator observation; nothing acted on)
+
+1. **A clear is emitted at an outfit change.** `Disguise` and `BrokenDisguiseCleared` were captured in the same millisecond when the operator changed away from compromised A (23:05:03.727Z), with no kill. Which id the clear named is unknown (not normalized). This is a clearing path the design listed as unknown; it is now observed once.
+2. **Re-equipping the compromised outfit restated nothing.** Only `Disguise` was emitted (23:07:59.349Z); no second `DisguiseBlown`; the HUD showed the outfit compromised. The stream's compromise bookkeeping and the HUD's compromised state are not the same thing, and the stream is silent on persistence at re-equip. The design's `:unknown` after a change is the only reading consistent with this evidence; a model that had treated the 23:05:03 clear as "A is clear" would contradict the HUD.
+3. **Killing all witnesses after the re-equip emitted no clear.** Three `Kill` (two witnesses, the alerted guard), `SituationContained` twice, and no `BrokenDisguiseCleared` through the end of the attempt — while the HUD later showed the outfit not compromised. The stream can go silent on a state change the HUD shows. Contrast: the first compromise's clear arrived 244 ms after a `Kill` (the B0/B1 shape), when the compromise was open on the stream.
+4. `DisguiseBlown` again followed `Spotted`/`Witnesses` by ~220 ms, both times; `Disguise` was again followed by `Trespassing` within the same frame (3/3) — the B0/B1 ordering shape reproduced on the names.
+5. **Direct quit from inside the mission with the B3 binary: outcome B** — nothing at the hook after `Hero_Health` (23:31:54.102Z); BEAM saw only `:peer_closed`; attempt 2 last known playing, end not observed; nothing synthesized. Third consecutive observation of this path.
+6. **Restart path, third ordering variant for `ContractStart`:** captured during stage 7, 226 ms before the rise, so it drained before the edge — `contract.started #9` then `mission.playing #10` in the same millisecond. B1 and B2 had it after the rise (`:open_attempt`); here BEAM paired `:next_rise`. Both rules handle it; the restart path has no fixed order.
+7. **New names (production, names only):** `ItemDropped` (7), `ItemDestroyed` (1), `Hero_Health` (5). `Hero_Health` was listed as unobserved in section 24; `Hero_Dead` still unobserved (47 was shot but did not die).
+8. `contract.ended` led the restart fall by 1.35 s (B0 1.93, B1 1.84, B2 1.03, B3 1.35: no fixed lead).
+9. No actor outcome, contract or lifecycle regression: B1 and B2 rows behaved as in their accepted runs beside nine malformed disguise observations, including in the same drains.
+
+### Performance, warnings, errors, faults, debugger
+
+Operator: **no perceivable frame-rate effect**; no numeric measurement. Native log: **482 lines; 9 WARN, all the "not normalized" disguise lines; 0 ERROR; 0 FAULT**; two threads. BEAM: 0 rejected lines; the expected close-while-playing warning only. No debugger break; the process ended by the operator's quit.
+
+### Cleanup and hash verification
+
+Final BEAM state captured (`beam-final-state.txt`, `beam-events.ndjson`), BEAM stopped by RPC, `GlacierRelay.dll` removed, `mods.ini` restored from the pre-flight copy; `retail-after.*` identical to `retail-before.*` (107 files); 26/26 M0 hashes OK; no Relay, Hitmen or probe artifact; port 4747 free; process gone. One procedural repeat of the section 29 false alarm: a `pkill -f` on the watcher's script name matched the operator shell's own command line and killed that shell before the cleanup ran; the cleanup was then rerun without any broad kill (the watcher had already exited on the process exit). Evidence in `%TEMP%\glacier-m0\hitmen\b3-run1\` (23 files): native log `relay-20261008-224830-83392.log` (SHA-256 `ce60de92…`), `beam.log` (`c10dd510…`), `beam-final-state.txt` (`65abd8fb…`), `beam-events.ndjson` (`010e3dd3…`), `native-beam-compare.txt`, both loader logs, `mods.ini` before/relay/after-run, `Retail` listings and hashes before/installed/after, `installed-at.txt`, and the scripts (`live_watch.exs`, `final_state.exs`, `compare.py`, `watch-b3.sh`).
+
+### Unresolved
+
+- The engine type of the disguise `Value` (needs the type name, available from the intake's `Unsupported` record, before any change).
+- Which id the change-time `BrokenDisguiseCleared` names; whether the HUD-visible clearing after the witness kills has any stream counterpart; whether a second `DisguiseBlown` ever occurs for an already-blown id.
+- Exit-to-menu, second fresh load and the optional clear-while-wearing-other case were not executed in this run.
+
+**Conclusion.** The B3 code is safe and inert at runtime and left B1/B2 behaviour intact, but it validated nothing of the disguise vocabulary because the engine's payload type for these four names differs from what the B0 corpus showed. The run nevertheless produced the transition evidence the design asked for, and that evidence vindicates the conservative fold (`:unknown` after a change) and refutes any model that reads a clear as "clean". Next step, for review: confirm the engine type, then a bounded intake change under its own design and gate. **M2 remains incomplete; the B3 vocabulary is not accepted.**
