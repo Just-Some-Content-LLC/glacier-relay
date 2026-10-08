@@ -1383,3 +1383,73 @@ Expected but not safety-relevant, as clarified for B1 and B2: `outside attempt 0
 **Smallest next implementation stage, if approved:** B3-R1 through B3-R5 above — four attempt-gated table rows mapping string payloads to `disguise.equipped` / `disguise.compromised` / `disguise.compromise_cleared` v1, BEAM validation, the per-attempt derived disguise view and summary lines, fixtures from the 8 B0 payloads, the `b3` wire step — followed by the gate, and only then a controlled run under its own authorization. B4 (items), B5 (objectives), B6 (player state; `Trespassing` and `HoldingIllegalWeapon` remain there), detection/witness events, and any name resolution are out of scope and untouched.
 
 Stop here for architectural review. **B3 implementation and runtime await review.**
+
+---
+
+## 31. B3 implementation record (2026-10-08) — built and validated without the game
+
+Authorized as "bounded B3 implementation, B3-R1 through B3-R5, followed by standalone validation" on the section 30 design as reconciled in 30.8 (commit `ad1f476`). Deployment and a HITMAN runtime experiment were explicitly outside the authorization. **`GlacierRelay.dll` has not been deployed since the B2 run.**
+
+### Architecture as built
+
+The B1/B2 pipeline unchanged, plus four attempt-gated table rows, one event struct and one pure BEAM fold:
+
+```
+TelemetryNormalizer table   StartingSuit → disguise.equipped (kind initial)   Disguise → disguise.equipped (kind change)
+                            DisguiseBlown → disguise.compromised              BrokenDisguiseCleared → disguise.compromise_cleared
+                            (all attempt-gated; Kill/Pacify and ContractStart/ContractFailed rows unchanged)
+RelayFrame::Process         drain → normalize → attempt-gated: publish iff Playing(), else "outside attempt" (unchanged gate)
+BEAM Lifecycle              Attempt.disguise_events (immutable facts, by stream order); Instance.unattributed_disguise_events
+BEAM Disguise.derive/2      the fold of section 30.8, computed on demand from the facts + gaps + interruptions, never stored
+```
+
+The intake is unchanged: `IsSupportedSourceName` answers true for the four names, so the detour copies their string `Value`, `ContractSessionId` and `Timestamp` exactly as for `ContractFailed`. Same single detour, no S2, no S3, no engine writes, no name resolution; ids only.
+
+### Public events (all v1)
+
+`disguise.equipped` — `source`, **`kind`** (`initial` | `change`, Relay-owned, required), `engine_event` (`StartingSuit` | `Disguise`, provenance), `disguise_repository_id` (required, non-empty, verbatim), optional `contract_session_id`, `engine_timestamp_s`. `disguise.compromised` / `disguise.compromise_cleared` — the same without `kind` (`engine_event` `DisguiseBlown` | `BrokenDisguiseCleared`). Malformed (counted per name, logged, not published, no sequence consumed): `Value` not a string, empty or absent. `_DONTSEND` policy unchanged. No deduplication.
+
+### Native changes (`relay/m2`, from `9f746cad`)
+
+| Commit | Change |
+|---|---|
+| `ddc9987f` B3-R1 | `DisguiseEvent` (`Kind` Initial/Change/Compromised/CompromiseCleared), `DisguisePayloadJson`, adapter overload selecting the event type from the kind, four `k_Sources` rows, `NormalizeDisguise` (string-`Value` reader), fixture `B0Disguise.h` (the 8 recorded B0 payloads, user/platform ids removed), `DisguiseTelemetryTests.cpp` |
+| `0a62c03c` B3-R2 | `RelayFrame::Process` publishes `Result.disguise` on the existing attempt-gated branch; frame-order tests for both sides of a fall frame's drain |
+| `e9001ee4` B3-R3 | wire probe step `b3`: B0 session 1's disguise order interleaved with its actor outcomes, restart, second session's `StartingSuit`, exit to menu |
+
+Files with **zero** changed lines: `GlacierRelay.{cpp,h}`, `SceneObservation.cpp`, `TelemetryIntake.{cpp,h}`, `TelemetryQueue.h`, `TcpRelaySink.{cpp,h}`, `MissionObserver.cpp`. 14 files changed in all (+673/−2), of which 515 lines are tests, fixture and probe.
+
+### BEAM changes (`main`, from `a86e649`)
+
+| Commit | Change |
+|---|---|
+| `ad1f476` | section 30 fold contract reconciled (docs only) |
+| `b04ff57` B3-R4 | `Events.validate` for the three types; `kind` required and constrained on `equipped`, rejected elsewhere; 7 tests |
+| `e7620e7` B3-R5 | `Lifecycle.DisguiseOccurrence` facts on attempts (unattributed with no open attempt; never by adjacency); interruptions gain `after_sequence`; `GlacierRelay.Disguise.derive/2`; `Summary` observed + derived lines; `MissionSession` note; 25 tests |
+| `5c4d332` | fixture `relay/test/b3_probe_envelopes.ndjson` (the 22 native envelopes of the standalone run), fixture decode/fold tests, two listener tests over TCP |
+
+`Disguise.derive/2` as implemented, in the order of 30.8: `initial` = first `equipped/initial` (a later one before any change is `:initial_restated`, `:initial_conflict` if the id differs; after a change it is `:initial_after_change` and leaves `worn` alone); `worn` = the current wearing interval, started by every `change` and by an `initial` seen before any change; `compromise_episodes` = derived grouping (open episode restated by further `compromised X`, closed by `cleared X`; a stray clear is `:cleared_without_compromise` and creates nothing); `worn_standing` with `standing_reason` — (1) a gap whose first missing sequence, or an interruption whose `after_sequence + 1`, is after the interval's start → `:unknown` (`:cut`, with `standing_cut.standing_before`); (2) else the latest compromised/cleared occurrence in the interval → `:compromised`/`:cleared` if it names the worn id (`:latest_names_worn`), `:unknown` if another (`:latest_names_other`); (3) else any compromise occurrence before the interval → `:unknown` (`:earlier_compromise`); (4) else `:not_observed`. `history` lists the attempt's gaps, interruptions and supersession. `contract.started` never initializes `worn`; an `initial` differing from the paired session's starting disguise is `:initial_differs_from_contract`. The summary says "history intact / history broken: …" because "complete" is reserved.
+
+### Tests
+
+| Layer | Result |
+|---|---|
+| Native `GlacierRelayTests` | B1/B2 suites unchanged and passing; `DisguiseTelemetryTests`: table (four names; `Spotted`, `Witnesses`, `Trespassing` not supported); the 8 B0 payloads → kind, provenance, id, session, timestamp; exact wire JSON for all three types (`kind` only on `equipped`); adapter type mapping and one shared sequence; malformed (object, array, number, empty, absent) counted per name; optional provenance absent not empty; `_DONTSEND`; repeated occurrence → two events; B1/B2 classes unchanged; B0 session order through `RelayFrame::Process` interleaved with actor outcomes; fall-frame (a) queued before the drain → published before `mission.stopped`; (b) emitted after it → outside attempt, not published, no sequence; ungated contract event beside an outside-attempt disguise event; malformed consumes no sequence. Clean tree: pass, 0 relay warnings; **25/25 consecutive runs** on the clean binary. |
+| Elixir | **123 tests, 5× stable** (94 before B3 + 29): validation; the B0 session (standings `:not_observed → :compromised → :cleared → :unknown → :compromised → :cleared`, episodes, used, changes, wording); the SYN table of 30.10 — A → compromised A → cleared A → B (`:unknown`), re-equip (still `:unknown`, then `:compromised` on restatement, `:cleared`), three compromises before one clear (one episode, three sequences, every occurrence kept), cycles, clear naming another outfit, delayed/missing/restated/conflicting initial, no disguise event at all, gap inside the wear (`standing_before` shown), gap before the wear, stale id not re-established by a later clear or compromise, new equipped after the gap, interruption cut and reconnect, interruption before the wear, TCP close, superseded attempt, unattributed after the stop, restart from nothing; **replay equivalence**: `derive` from the folded attempt equals `derive` from the bare facts on six streams including every incomplete-history case, and every prefix's facts are a prefix of the final facts; wording never "clean", "undetected", "safe", "Silent Assassin" or "complete"; the 22-envelope fixture decodes field for field against the native JSON and folds to the recorded view; two listener tests over TCP (full run; unattributed `disguise.compromised`). |
+| Standalone wire | `GlacierRelayWireProbe 4747 sleep:1500,b3,sleep:800` → BEAM: **22 lines, 0 rejected**, order `contract.started #1, mission.playing #2, disguise.equipped #3 (initial), disguise.equipped #4 (change), disguise.compromised #5, actor.pacified #6–#8, actor.died #9, disguise.compromise_cleared #10, disguise.equipped #11, disguise.compromised #12, actor.died #13–#14, disguise.compromise_cleared #15, contract.ended #16, mission.stopped #17, mission.playing #18, contract.started #19, disguise.equipped #20 (initial), mission.stopped #21, contract.ended #22`; **22/22 native `published` envelopes equal to BEAM's reconstructed events, 0 field mismatches**; attempts 1–17 → 1, 18–22 → 2; attempt 1 `worn 992cc7b6… since #11; worn outfit: cleared; 2 changes, 3 definitions used; history intact`, attempt 2 `worn 874c4c48… (equals the starting suit id) since #20; worn outfit: no compromise observed`; no unattributed, no anomaly. Run on the incremental binary (`relay-20261008-215826-99284.log`, SHA-256 `824f16c1b734f974cf5aa76a97abe303125afe950e8bf2f6bed3c16ef4142c23`; its `published` lines are the committed fixture) and again on the clean binary (`relay-20261008-220613-99920.log`, `ec6c9bc6…`; sequence, type, schema and payload identical to the first run; 22/22, 0 mismatches). Evidence in `%TEMP%\glacier-m0\hitmen\wire-probe\b3\` (`beam-b3.log`, `beam-b3-clean.log`, `beam-final-state.txt`, `beam-events.ndjson`, `native-beam-compare*.txt`, `clean/`, the scripts). |
+
+### Clean build and inertness
+
+`_build/relay-x64-Debug` deleted; configure, build and tests at `e9001ee4`: pass, 0 warnings from relay sources (`b3-clean.log`). **`GlacierRelay.dll` SHA-256 `c045f92a813ef70d5b92fe8f06d38c999af41fda7cc9c7552044117d0043ef1b`** (10,060,800 bytes); `GlacierRelayWireProbe.exe` `f18e375d…`.
+
+| Check | Result |
+|---|---|
+| Detours | the one `ZAchievementManagerSimple_OnEventSent` detour; `DEFINE_PLUGIN_DETOUR` / `DECLARE_PLUGIN_DETOUR` sites unchanged (one each) |
+| S2 / S3 / engine writes / name resolution | none (`ActorManager`, `m_activatedActors`, `SignalOutputPin`, `ZActor_YouGotHit`, `SetProperty`, `SetWorldMatrix`, `SetObjectToWorld*`, `SetOutfit`, `ZContentKitManager`, `m_rOutfitKit`, `m_OutfitRepositoryID`, `ZGlobalOutfitKit` absent from `Src/`) |
+| Imports / exports | set-compared against the saved Stage A dump (`m2-imports.txt`; B1 and B2 each reported identical imports to their predecessor, so this is the transitive comparison): the only import not in Stage A is the `OnEventSent` hook B1 added; nothing removed; exports identical (`CompiledSdkAbiVersion`, `CompiledSdkVersion`, `GetPluginInterface`); `WS2_32` ordinal set identical (14 ordinals + `inet_pton`), no `accept`/`bind`/`listen` (ordinals 1/2/13 absent) |
+| TCP / intake / queue / observer | 0 lines changed |
+| Boundary | SDK headers only in `GlacierRelay.{cpp,h}`, `SceneObservation.cpp`, `TelemetryIntake.cpp`; `GlacierRelayTests` and the probe build every other source without the SDK include path |
+
+### What this does and does not establish
+
+Established without the game: the four shapes normalize exactly as the B0 corpus has them; the frame-order guarantee holds at both sides of a fall frame; the fold reproduces its view from bare facts on complete and incomplete histories; the wire carries the three types unchanged end to end. Not established, by design: anything about the engine's behaviour on transitions the corpus lacks — a `Disguise` carrying the suit id, a change while a compromise is outstanding, re-equipping a compromised outfit, other clearing paths. The model answers all of those with `:unknown` until a controlled run (section 30.11) supplies evidence. **The B3 controlled runtime experiment requires its own authorization; nothing has been deployed.**
