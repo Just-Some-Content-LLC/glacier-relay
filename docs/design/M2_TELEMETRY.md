@@ -756,7 +756,7 @@ Distinguish, per normalizer table entry, how the native plugin gates publication
 | **attempt-gated** | `Kill` → `actor.died`, `Pacify` → `actor.pacified` (validated in B1) | publish only while `Playing()`; otherwise count *outside attempt*, log, do not publish (unchanged) | attach to the open attempt; otherwise `unattributed_outcomes` (unchanged) |
 | **ungated** | `ContractStart` → `contract.started`, `ContractFailed` → `contract.ended` | publish whenever captured and valid; the frame-order contract still applies (drained before this frame's edge), so the exit `ContractFailed` publishes after `mission.stopped` and the fresh-load `ContractStart` before `mission.playing` | contract-session model on the instance; correlated to attempts by the rules in 27.7 |
 
-This is one enum field on an existing table row and two branches in `RelayFrame::Process`, not a scope framework: no `scope` field on the wire (the event type implies it), no generic "scoped event" abstraction in BEAM, no time windows. The native *outside attempt* counter keeps its B1 meaning for the attempt-gated class. Revisit only if a third class appears; `StartingSuit` (B3) arrives at `Timestamp 0.0` on the fresh-load path and will face the same question, which argues for deciding it per entry then rather than generalizing now.
+This is one enum field on an existing table row and two branches in `RelayFrame::Process`, not a scope framework: no `scope` field on the wire (the event type implies it), no generic "scoped event" abstraction in BEAM, no time windows. The native *outside attempt* counter keeps its B1 meaning for the attempt-gated class. Revisit only if a third class appears; `StartingSuit` (B3) will face the same question, which argues for deciding it per entry then rather than generalizing now. (Originally written here as "arrives at `Timestamp 0.0` on the fresh-load path"; corrected from the B0/B2 logs in sections 29 and 30: it arrives with `IntroCutEnd`, 2 to 30 s after the rise, inside the attempt.)
 
 Rejected: widening the native attempt window by a grace period (a heuristic that would hide the real ordering), and attaching contract events to attempts natively (the plugin would have to guess on both edges).
 
@@ -967,3 +967,346 @@ Setup as B1 (section 26): BEAM first with the live subscriber, pre-flight hashes
 Pass: every `ContractStart`/`ContractFailed` the native log shows as `captured` appears exactly once in BEAM as `contract.started`/`contract.ended` with values equal to the native `published` line; orderings as in section 27.3; attempts paired as above with no anomaly (an anomaly is a finding, not a failure); dispositions from contract evidence only; attempt 3 as the evidence dictates; `queue dropped = 0`, `malformed = 0`, `outside attempt = 0`; B1 actor outcomes unaffected if any occur; no `ERROR`/`FAULT`; rollback verified. Record: the exact frame offsets of each contract event from its predicate edge; the registry id on each edge versus the paired session; whether the quit emitted anything; any `other` reason string.
 
 B3 (disguise) is not started.
+
+---
+
+## 29. B2 controlled runtime experiment (2026-10-08, 19:16Z to 19:36Z) — PASS; B2 accepted
+
+Authorized explicitly as "M2 B2 Runtime Experiment" against the pre-runtime gate of section 28: ZHMModSDK `relay/m2` `9f746cad`, clean-built `GlacierRelay.dll` SHA-256 `0e10e2839c568ae86cb74cdef5fca78445b9c909405ea20da62b3876ea730e30` (the installed copy hashed identically in `retail-installed.sha256`), glacier-relay `e51deca`. No implementation change before, during or after the run. Objective: validate the first ungated normalizer entries — `ContractStart → contract.started` v1 and `ContractFailed → contract.ended` v1 published on both sides of the mission predicate's edges — and BEAM's correlation of Glacier contract sessions to Relay attempts by stream order, with attempt disposition derived from contract evidence only.
+
+**Outcome: accepted** (architectural review of 2026-10-08). B2 is a validated M2 stage; `contract.started` v1 and `contract.ended` v1 are validated M2 semantic vocabulary; the two-class gating (attempt-gated / ungated) and the BEAM correlation rules of section 28 are validated at runtime.
+
+This record was written from the saved evidence (`%TEMP%\glacier-m0\hitmen\b2-run1\`, 23 files) after the run, not from the live session; every timestamp, id and counter below is copied from those files.
+
+### Setup and pre-flight
+
+Game `3.280.0.0`, Steam build `24833614`; 107-file `Retail` listing and hashes identical to the B1 post-cleanup baseline (`retail-before.*`); `mods.ini` = M0 (`b90b4c5e0f6b…21b0b9`); no Hitmen, probe or Relay artifact under the game root; both repositories clean at the authorized commits; OTP 28.4.2 / Elixir 1.19.6; port 4747 free. BEAM first (`relay@VENGEANCE`, listening at 19:16:30.274Z) with the live subscriber script. Installed at 19:16:31Z; the full-tree diff against the pre-flight listing shows exactly two changes (`retail-installed.sha256`): `mods/GlacierRelay.dll` (hash above) and `mods.ini` with `[glacierrelay]` (`a66a44ed…`, byte-identical to the B1 relay variant). No `glacierrelay.ini` (defaults: `tcp`, 4747, `telemetry_log = names`). Operator attached Visual Studio after the menu gate and reported no disturbance.
+
+### R1 — menu gate
+
+Pass. Loader: `Successfully installed detour for hook 'ZAchievementManagerSimple_OnEventSent' at address 0x140b6fd50` (the B1 address; a build-specific observation, not a constant), `Mod glacierrelay successfully loaded`, durable log `%LOCALAPPDATA%\GlacierRelay\Relay\relay-20261008-192015-85348.log`. Native: `plugin constructed … SDK 4.1.1 (ABI 1)`, `Init: one detour registered (ZAchievementManagerSimple_OnEventSent, read-only); lifecycle is polled`, adapter instance **`0310e745-d651-435e-8184-d1a928196524`**, `TcpRelaySink`, protocol 1, queue 256, `telemetry_log names`; `tcp sink: connected to 127.0.0.1:4747` at 19:20:38.642Z; BEAM `CONNECTION opened` at 19:20:38.667Z (25 ms), unidentified. Menu scene 5 → 6 → 7 → 8 (19:20:38.655Z to 39.103Z): no event, no sequence consumed. **Zero Glacier telemetry at the frontend**, as in B1 (a result of this run, not a rule). 0 `WARN`/`ERROR`/`FAULT`.
+
+### Complete Relay semantic sequence
+
+One adapter instance, one TCP connection for the whole process, sequences 1 to 10 contiguous, BEAM `gaps []`, **10 lines received, 0 rejected**. "Native timestamp" is the envelope `timestamp` — Relay's observation/publication time on the frame thread, not Glacier's occurrence time; `engine_timestamp_s` is the contract clock. Contract sessions, in full:
+
+- **A** `2516108132899378538-d153d3b7-f998-45fa-aad5-36ae9df0d444`
+- **B** `2516108131754977057-1ef653a1-970e-4ff8-8fc8-cdf782572aa3`
+- **C** `2516108128579619815-8d205c24-14ec-4f5a-b76b-87996dc247b0`
+
+All three: `contract_id 00000000-0000-0000-0000-000000000200`, `LOCATION_PARIS`, `mission`, `difficulty_level 2`, `starting_disguise_repository_id 874c4c48-0a8b-49e9-883e-49fc5f1fb051`, `is_hitman_suit true`.
+
+| # | Event | Payload (normalized) | Native timestamp | BEAM Δ | Contract session / registry id on the edge | Attempt |
+|---|---|---|---|---|---|---|
+| 1 | `contract.started` | session A, `engine_timestamp_s 0` | 19:25:25.812Z | +80 ms (first decode; connection identified 19:25:25.868Z) | A | pending → paired to attempt 1 at #2 (`:next_rise`) |
+| 2 | `mission.playing` Paris / Peacock | — | 19:25:25.922Z | +3 ms | registry id = A | 1 opens |
+| 3 | `contract.ended` | A, `reason "Contract ended manually: OnRestartLevel"`, `reason_kind restart`, `engine_timestamp_s 95.2977` | 19:27:03.891Z | +10 ms | A | 1 (`ended_relative :during`) |
+| 4 | `mission.stopped` (restart fall: loaded false, stage 8) | — | 19:27:04.919Z | +2 ms | registry id **already B** | 1 closes, **99.0 s** |
+| 5 | `mission.playing` Paris / Peacock | — | 19:27:16.072Z | +2 ms | registry id = B | 2 opens |
+| 6 | `contract.started` | session B | 19:27:16.097Z | +1 ms | B | paired to the open attempt 2 (`:open_attempt`) |
+| 7 | `mission.stopped` (exit-to-menu fall) | — | 19:29:08.164Z | +2 ms | registry id = B | 2 closes, **112.1 s** |
+| 8 | `contract.ended` | B, `reason "Contract ended manually: User pressed exit to Main menu"`, `reason_kind exit_to_menu`, `engine_timestamp_s 110.1097` | 19:29:11.247Z | +2 ms | B | 2 (`ended_relative :after_stop`) |
+| 9 | `contract.started` | session C | 19:32:36.496Z | +3 ms | C | pending → paired to attempt 3 at #10 (`:next_rise`) |
+| 10 | `mission.playing` Paris / Peacock | — | 19:32:36.602Z | +2 ms | registry id = C | 3 opens |
+| — | direct quit from inside the mission; TCP `:peer_closed` | | 19:34:52.403Z (BEAM) | | connection observation only | 3: observation lost; no stop, no end |
+
+The TCP close is not an eleventh Relay event. The contract clock (95.30 s, 110.11 s) and the predicate-bounded attempt durations (99.0 s, 112.1 s) measure different boundaries and are both kept; they are not reconciled.
+
+### Transition-specific ordering (native log, frame thread)
+
+| Transition | Observed order | Offsets |
+|---|---|---|
+| **Fresh entry** (menu → Paris, ×2) | `HeroSpawn_Location` (19:25:25.374Z) → stage 7 (25.613Z) → `ContractStart` captured (25.793Z) → **`contract.started` #1 published (25.812Z)** → stage 8 / rise → **`mission.playing` #2 (25.922Z)** | `contract.started` **110 ms before** the rise. Second fresh entry: captured 19:32:36.480Z, #9 published 36.496Z, rise #10 36.602Z — **106 ms before**. Both published while `Playing()` was false: the ungated path did exactly what B2-R2 intended |
+| **Restart** | `ContractFailed` captured 19:27:03.882Z → **`contract.ended` #3 (03.891Z)** → fall / **`mission.stopped` #4 (04.919Z)**, registry already B → stage 0 (04.928Z) → 5 (10.533Z) → 6 (12.539Z) → `HeroSpawn_Location` (15.610Z) → stage 7 (15.722Z) → rise / **`mission.playing` #5 (16.072Z)** → `ContractStart` captured (16.074Z) → **`contract.started` #6 (16.097Z)** | `contract.ended` **1.03 s before** the fall (B0: 1.93 s, B1: 1.84 s — the lead varies; no fixed timing rule). `ContractStart` captured 2 ms after the rise and published on the next frame, 25 ms after #5 |
+| **Exit to menu** | fall / **`mission.stopped` #7 (19:29:08.164Z)**, counters line, then `ContractFailed` captured in the **same frame** (08.164Z, logged after the fall) → no frame updates while the scene unloaded → stage 2 (11.247Z) and **`contract.ended` #8 published in that first frame (11.247Z)** | published **3.08 s after capture** with `Playing()` false; `engine_timestamp_s 110.1097` preserved. The queue held the observation across the unload; nothing was lost or reordered |
+
+Finding, accepted as a timing fact and not a defect: **during a scene unload the frame update does not run, so a telemetry observation captured in the fall frame is published on the first frame of the next scene** — here 3.08 s later. The Relay `sequence` records publication order; `engine_timestamp_s` records the engine's occurrence time; BEAM's receipt time is a third clock. None of the three is rewritten. The queue behaviour (bounded, drained on the frame thread, no timers) is unchanged by this record.
+
+The edge ordering is therefore **transition-dependent**: `contract.started` precedes the rise on fresh entry and follows it on restart; `contract.ended` precedes the fall on restart and follows it on exit to menu. Neither "contract first" nor "mission first" is a rule; the correlation has to be made by BEAM from the order actually observed, which is what section 28's rules do.
+
+`StartingSuit` (unsupported in B2) arrived at 19:25:49.163Z, 19:27:45.917Z and 19:32:42.454Z — 23.2 s, 29.8 s and 5.9 s after the respective rises, each in the same millisecond as `IntroCutEnd`. This corrects the parenthetical in section 27.5 ("`StartingSuit` arrives at `Timestamp 0.0` on the fresh-load path"): it arrives when the intro cut ends, inside the attempt (B0 contract clock 13.01 s and 2.28 s). See section 30.
+
+### Correlations and dispositions (BEAM-derived)
+
+| Attempt | Session | Paired by | `ended_relative` | Rise `game_session_id` = session id | Disposition | From |
+|---|---|---|---|---|---|---|
+| 1 | A | `:next_rise` | `:during` | yes | `:restarted` | #3 `reason_kind restart` |
+| 2 | B | `:open_attempt` | `:after_stop` | yes | `:exited_to_menu` | #8 `reason_kind exit_to_menu` |
+| 3 | C | `:next_rise` | — (no end observed) | yes | `:not_observed` | nothing |
+
+`beam-final-correlation.txt`: `observation/unpaired/unmatched/anomalies/gaps: {:lost, 0, [], [], []}`. Both correlation rules of section 28 were exercised once each; the registry id on every rise equalled the paired session's id (consistency check passed three times); the registry's rotation to B before attempt 1's fall (#4) participated in nothing. Both dispositions came from paired `contract.ended` payloads only. Attempt and session identities stayed distinct throughout.
+
+### Direct in-mission quit: outcome B, with the telemetry hook installed
+
+The last `OnEventSent` delivery was index 45, `Level_Setup_Events`, at 19:33:18.893Z. The operator quit to desktop from inside attempt 3 at about 19:34:52Z. Between those times the native log has no line: **no `ContractFailed`, no predicate fall, no telemetry of any kind reached the detour before termination**, and BEAM saw only the TCP close (`:peer_closed` at 19:34:52.403Z, after 10 lines, 0 rejected). This answers section 27.9's open question for this build, mission and quit path: **Glacier sends no local contract-end evidence on a direct quit**, which is consistent with B0's backend `OrphanedSession` resolution for Stage A's quit. It is not evidence about crashes, other quit paths, other modes or other builds.
+
+Final summary lines for attempt 3 (`beam-final-state.txt`):
+
+```
+attempt 3: Peacock (…): playing 2026-10-08T19:32:36.602Z (#10), stop not observed; last known playing; observation lost 2026-10-08T19:34:52.402712Z (:peer_closed)
+  contract (engine telemetry): session 2516108128579619815-8d205c24-14ec-4f5a-b76b-87996dc247b0, LOCATION_PARIS, mission, difficulty 2; started #9 @0s; end not observed
+  disposition (BEAM-derived, session paired by next_rise): not observed; contract end not seen
+  actor outcomes (engine telemetry): none observed
+```
+
+Nothing was synthesized: no stop, no end, no disposition, no failure, no completion.
+
+### Native ↔ BEAM comparison
+
+Programmatic, over the Relay wire schema only (`compare.py` → `native-beam-compare.txt`): the 10 native `published` envelopes against BEAM's final `Lifecycle` state reconstructed as events (`beam-events.ndjson`, 10 lines). **10/10 present, 0 field mismatches**, attempt per sequence `{1..4 → 1, 5..8 → 2, 9..10 → 3}`, one adapter instance id. Compared contract fields: `source`, `engine_event`, `contract_session_id`, `contract_id`, `location_id`, `contract_type`, `difficulty_level`, `starting_disguise_repository_id`, `is_hitman_suit`, `engine_timestamp_s`, `reason`, `reason_kind`; and the scene fields plus `game_session_id` on #2, #4, #5, #7, #10. Protocol 1 / schema 1 on all. Raw Glacier member names were not compared; the normalizer is the boundary.
+
+### Counters (native, verbatim)
+
+| Checkpoint | Counters line |
+|---|---|
+| attempt 1 ended (#4) | `seen 14, captured 2, unsupported 12, dont_send 0, unreadable 0, truncated 0; queue pushed 2, dropped 0; normalized 2, malformed 0, outside attempt 0, ungated published 2` |
+| attempt 2 ended (#7), before the delayed #8 | `seen 27, captured 3, unsupported 24, dont_send 0, unreadable 0, truncated 0; queue pushed 3, dropped 0; normalized 3, malformed 0, outside attempt 0, ungated published 3` |
+| process (from the `seen` lines; no end-of-process counters line because no further fall occurred) | 41 deliveries: 5 captured (3 `ContractStart`, 2 `ContractFailed`), 36 unsupported across 7 names (`Level_Setup_Events` 15, `OpportunityStageEvent` 6, `StartingSuit` 3, `OpportunityEvents` 3, `IntroCutEnd` 3, `HeroSpawn_Location` 3, `AmbientChanged` 3), 0 `_DONTSEND` (no challenge fired in this run) |
+
+5 captured → 5 normalized → 5 published (#1, #3, #6, #8, #9); `ungated published` reached 4 at #8 and 5 at #9. Engine indices **5, 20, 31, 36** never reached the detour (41 of 45); as established in B1 finding 1, `eventIndex` is not a Relay continuity signal and no Relay sequence was lost. The three expected zeros (`dropped`, `malformed`, `outside attempt`) held at every checkpoint.
+
+### Performance, warnings, errors, faults, debugger
+
+No perceptible performance effect was reported by the operator; **no numeric FPS measurement was collected** (as in B1). Native log: **116 lines, 0 `WARN`, 0 `ERROR`, 0 `FAULT`**; two threads (frame, sender); publish-to-BEAM 1 to 10 ms after the first event. BEAM: 0 rejected lines; its only warning is the expected `connection … closed (:peer_closed) while attempt 3 is last known playing; no mission.stopped observed`. No debugger break; the process ended by the operator's quit.
+
+### Cleanup and hash verification
+
+Final BEAM state captured first (`summary_text/0`, `summary/0`, `state/0` → `beam-final-state.txt`); BEAM stopped; `GlacierRelay.dll` removed; `mods.ini` restored from the pre-flight copy; `retail-after.sha256` and `retail-after.tsv` identical to `retail-before.*` (107 entries); 26/26 M0 hashes OK (reported at cleanup); no Relay, Hitmen or probe artifact under the game root; `Runtime` untouched; port 4747 free. Re-checked on 2026-10-08 while writing this record: the game's `mods.ini` hashes `b90b4c5e…`, and `mods/` holds no Relay, Hitmen or probe artifact. One procedural note from the cleanup: a broad `pkill -f` pattern matched the operator's own shell command line and killed that shell — a false alarm, not a game or BEAM fault. Stop BEAM by RPC (`:init.stop/0`) or by a positively identified pid, never by a broad name match.
+
+Evidence in `%TEMP%\glacier-m0\hitmen\b2-run1\` (23 files): native log `relay-20261008-192015-85348.log` (SHA-256 `fc043698a1f11056db612e69f83e44f3570e0beabdfb2ae601e08c5630526490`), `beam.log` (`80f69559…3317`), `beam-final-state.txt` (`aad6c79e…b835`), `beam-final-correlation.txt`, `beam-events.ndjson` (`1b1a74dc…670f`), `native-beam-compare.txt`, both `ZHMModLoader` logs, `mods.ini` before/relay/after-run, `Retail` listings and hashes before/installed/after, `installed-at.txt`, and the scripts used (`live_watch.exs`, `final_state.exs`, `compare.py`, `watch-b2.sh`).
+
+### Findings (evidence; nothing acted on)
+
+1. **Edge ordering is transition-dependent** (table above). Fresh entry: `contract.started` 106 to 110 ms before the rise. Restart: `contract.ended` 1.03 s before the fall; `contract.started` after the rise (next frame). Exit to menu: `contract.ended` captured in the fall frame, after the fall.
+2. **Unload stalls publication, not capture.** The exit-path `ContractFailed` was published 3.08 s after capture, on the first frame of the menu scene, with `engine_timestamp_s` intact. Consumers must not read Relay `timestamp` differences across a scene transition as engine timing.
+3. **Direct quit emits nothing locally** on this build and path, hook installed (above). The attempt stays last known playing; the contract session stays open with no end; nothing is derived from the close.
+4. **Registry rotation before the restart fall reproduced** (Stage A, B1, now B2): the fall's `game_session_id` was already B. Still keyed on nothing.
+5. **No actor outcome, no `_DONTSEND`, no frontend telemetry** occurred in this run; the B1 attempt-gated path was present but not exercised by a supported event (its tests remain the coverage).
+6. `StartingSuit` arrives with `IntroCutEnd`, inside the attempt, 6 to 30 s after the rise — not at contract clock 0 (correction to section 27.5; input to B3).
+7. **Open timing question for later correlation validation (not a change request):** a queued event delayed across an unload, combined with rapid successive transitions (for example restart immediately after a fall, or a second `ContractStart` before a delayed `ContractFailed` drains), could produce an order in which the `:open_attempt` / `:next_rise` rules see more than one candidate. Section 28's rules would then report ambiguity rather than pair — which is the intended behaviour — but the case has not been produced at runtime. Record for the M4 recorder / correlation test plan; do not change the queue or the rules on this evidence.
+
+### Pass criteria of section 28
+
+All met: every `captured` `ContractStart`/`ContractFailed` appears exactly once in BEAM as `contract.started`/`contract.ended` with values equal to the native `published` line; orderings as section 27.3 predicted, Relay sequences contiguous; attempts paired `:next_rise`, `:open_attempt`, `:next_rise` with no anomaly; dispositions `restarted` and `exited_to_menu` from contract evidence only; attempt 3 as the evidence dictated (`not_observed`, nothing fabricated from the close); `queue dropped = 0`, `malformed = 0`, `outside attempt = 0`; no `ERROR`/`FAULT`; rollback verified by hash. Recorded as requested: the frame offsets of each contract event from its edge, the registry id on each edge versus the paired session, that the quit emitted nothing, and that no `other` reason string occurred.
+
+B3 was not started after the run. The B2 implementation is frozen as validated; section 30 is design only.
+
+---
+
+## 30. B3 design — disguise telemetry (design only; not authorized for implementation)
+
+Status: **archaeology and design for review. No native or BEAM production code changed; nothing deployed; no game run.** Inputs: the B0 raw corpus (full payloads; `%TEMP%\glacier-m0\hitmen\b0-run1\relay-20261007-014849-93996.log`), the B1 and B2 production runs (names, ordering, timing only — `telemetry_log = names` records no bodies), the B2 `contract.started` payloads, the SDK headers at `relay/m2`, and Peacock's event handler as independently read prior art (ADR 0004: prior art, not a dependency; nothing is copied). Goal, as set: the **weakest defensible disguise semantics** before the normalized vocabulary grows.
+
+### 30.1 Corpus inventory
+
+Every engine-authored occurrence that concerns disguise, across the three runs. "Payload" is exact for B0; B1 and B2 contribute counts and ordering only.
+
+| Glacier name | Count B0 / B1 / B2 | `Value` (B0, exact) | Envelope | Observed values (B0) | Contract clock (B0) |
+|---|---|---|---|---|---|
+| `StartingSuit` | 2 / 2 / 3 | **string**: outfit repository id | `ContractSessionId`, `ContractId`, `Timestamp`, `Origin "gameclient"`, `Id` | `874c4c48-0a8b-49e9-883e-49fc5f1fb051` both times — equal to `ContractStart.Disguise` of the same session | 13.012 (fresh entry), 2.280 (restart); in the same frame as `IntroCutEnd` in all 7 observations across the three runs |
+| `Disguise` | 2 / 2 / 0 | **string**: outfit repository id | same | `2018db77-aa8a-4bf9-9afb-56bdaa161156` @202.104; `992cc7b6-4ccf-4ae8-a467-e9b2aabaeeb5` @497.756 | mid-mission; each followed 8 ms later by a `_DONTSEND` `ChallengeCompleted` `UI_CHALLENGES_GLOBAL_FRESH_DISGUISE_NAME` |
+| `DisguiseBlown` | 2 / 1 / 0 | **string**: outfit repository id | same | `2018db77…` @222.863; `992cc7b6…` @615.013 — each equal to the most recent `Disguise` value | `Timestamp` identical to a `Spotted` emitted in the preceding frames |
+| `BrokenDisguiseCleared` | 2 / 1 / 0 | **string**: outfit repository id | same | `2018db77…` @393.789; `992cc7b6…` @624.087 — each equal to the preceding `DisguiseBlown` value | 9 ms and 11 ms after a `Kill` |
+
+Raw examples (B0, user and platform ids omitted):
+
+```
+{"Timestamp":13.011781,"Name":"StartingSuit","ContractSessionId":"2516109628137904204-c00b2d17-…","ContractId":"00000000-0000-0000-0000-000000000200","Value":"874c4c48-0a8b-49e9-883e-49fc5f1fb051","Origin":"gameclient","Id":"3b200548-…"}
+{"Timestamp":202.104156,"Name":"Disguise","ContractSessionId":"…","ContractId":"…0200","Value":"2018db77-aa8a-4bf9-9afb-56bdaa161156","Origin":"gameclient","Id":"3d83fef5-…"}
+{"Timestamp":222.863129,"Name":"DisguiseBlown","ContractSessionId":"…","ContractId":"…0200","Value":"2018db77-aa8a-4bf9-9afb-56bdaa161156","Origin":"gameclient","Id":"6209107e-…"}
+{"Timestamp":393.788727,"Name":"BrokenDisguiseCleared","ContractSessionId":"…","ContractId":"…0200","Value":"2018db77-aa8a-4bf9-9afb-56bdaa161156","Origin":"gameclient","Id":"28a079c9-…"}
+```
+
+All four share one shape: the whole `Value` is a non-empty string holding an outfit repository id, with the standard envelope and no `_DONTSEND`, no `XboxGameMode`/`XboxDifficulty` twin (unlike `Spotted`), exactly one emission per occurrence (8 occurrences, 8 sends). This is the `ContractFailed` shape (`Value` is a string), already handled by the intake and by `NormalizeContractEnded`'s reader path.
+
+Related evidence that is **not** a disguise event but constrains the semantics:
+
+| Source | Field(s) | What it adds |
+|---|---|---|
+| `ContractStart` (B2 validated → `contract.started` v1) | `Disguise` (string), `IsHitmanSuit` (bool) | the outfit at session start and whether the engine classes it as the hitman suit; the only `IsHitmanSuit` statement in the corpus for the worn outfit. Observed `874c4c48…`, `true` in all five sessions (B0 ×2, B2 ×3) |
+| `Kill` / `Pacify` (B1 validated; fields not normalized) | `OutfitRepositoryId`, `OutfitIsHitmanSuit` | the outfit 47 wore at each outcome. **All 16 B0 outcomes agree with the latest preceding `Disguise` value** (`2018db77…` for the 5 outcomes between 202.1 s and 497.8 s; `992cc7b6…` for the 11 after), `OutfitIsHitmanSuit false` throughout |
+| `Spotted` | `[actor repository id]`, emitted twice per occurrence | the actor(s) who spotted 47; shares its `Timestamp` with `DisguiseBlown` in both B0 cases |
+| `Witnesses` | `[actor repository id]` | the actor(s) the engine records as witnesses; in both B0 cases the `BrokenDisguiseCleared` followed the `Kill` of the last actor named in a `Witnesses` since the `DisguiseBlown` |
+| `Trespassing` | `{IsTrespassing, RoomId}` | `Disguise` @202.104 was followed by `Trespassing {false}` @202.179 (B0) and by a `Trespassing` 227 ms later (B1): changing disguise altered the trespass evaluation |
+| `ChallengeCompleted` `UI_CHALLENGES_GLOBAL_FRESH_DISGUISE_NAME` | `_DONTSEND` | client-local challenge fired 8 ms after each `Disguise`; policy of section 18 applies (not normalized) |
+| `AmbientChanged` | `Ambient` string | both `DisguiseBlown` followed the ambient reaching `Arrest` (value 7) within the same contract-clock tick |
+
+### 30.2 Observed ordering (B0 session 1, contract clock; B1 ordering by name agrees)
+
+```
+  0.000  ContractStart        Disguise=874c…  IsHitmanSuit=true
+ 13.012  StartingSuit         874c…                      (same frame as IntroCutEnd)
+166.198  Trespassing          {true, room 6}
+202.104  Disguise             2018db77…                  ← change 1
+202.112  ChallengeCompleted   FRESH_DISGUISE  (_DONTSEND)
+202.179  Trespassing          {false, room 3}
+221.431  Spotted ×2           [28aaef75 Rousseau]
+222.833  Spotted, Witnesses   [5dc7ede5 Ducloitre]
+222.863  Spotted ×2           [5dc7ede5];  AmbientChanged → Arrest
+222.863  DisguiseBlown        2018db77…                  ← compromise 1 (same tick as the Spotted)
+223.6–232.0  Pacify Parker, Rousseau, Ducloitre; SituationContained; Ambient → Ambient   (NOT a clear)
+393.780  Kill                 Ducloitre (the Witnesses actor), outfit 2018db77…
+393.789  BrokenDisguiseCleared 2018db77…                 ← clear 1, 9 ms after that Kill
+488.867  Kill                 Quiron (guard), outfit 2018db77…
+497.756  Disguise             992cc7b6…                  ← change 2 (after killing the guard)
+614.984  Witnesses            [43207611 Roux]
+615.013  Spotted ×2           [43207611];  AmbientChanged → Arrest
+615.013  DisguiseBlown        992cc7b6…                  ← compromise 2
+619.902  Spotted ×2, Witnesses [a5cdd554 Bourque]
+620.154  Kill                 Roux            (first witness; no clear)
+624.076  Kill                 Bourque         (last witness)
+624.087  BrokenDisguiseCleared 992cc7b6…                 ← clear 2, 11 ms after that Kill
+656–764  10 more outcomes, all outfit 992cc7b6…
+907.953  ContractFailed       (restart) — no disguise event on the way out
+```
+
+B1 (names only): `StartingSuit`+`IntroCutEnd` 2.3 s after the rise; `Trespassing` → `Disguise` → `Trespassing` (227 ms); `Disguise` again after `SituationContained`; `Spotted ×2` → `Witnesses` → `DisguiseBlown` (224 ms span); four `Kill` (the explosion) → `BrokenDisguiseCleared` 222 ms after the last; restart: `StartingSuit`+`IntroCutEnd` 2.5 s after the rise. B2: `StartingSuit`+`IntroCutEnd` only (no disguise change was made).
+
+Never observed in any run: a `Disguise` whose value is the starting suit (the operator never changed back); a `Disguise` while a `DisguiseBlown` was outstanding; a second `DisguiseBlown` for an already-blown id; a `BrokenDisguiseCleared` without a preceding `Kill`; a `BrokenDisguiseCleared` for an id that was not the one worn; any disguise event outside the predicate window; any disguise event on the frontend; `ContractEnd`, player death, save/load, Freelancer, contracts mode, other locations.
+
+### 30.3 The three semantic questions, kept separate
+
+**Q1 — What is being worn?**
+
+| Source | What Glacier states directly | Evidence that it is a completed transition, not an attempt | What it does not state |
+|---|---|---|---|
+| `ContractStart.Disguise` + `IsHitmanSuit` | the outfit (definition id) the session starts in; whether it is the suit | — | nothing about later changes |
+| `StartingSuit.Value` | the outfit at the end of the intro cut | restates `ContractStart.Disguise` (2/2 with payloads) | not a change; carries no `IsHitmanSuit` |
+| `Disguise.Value` | the player's outfit is now this definition id | the fresh-disguise challenge fires 8 ms later; trespass re-evaluates 75 ms later; **16/16 later outcomes carry the same `OutfitRepositoryId`** | whether it is the suit; which NPC/instance it was taken from; variation/charset; that *every* change emits one event (no counter-example in 4 changes, no S2 cross-check in production) |
+
+Current-outfit reconstruction from the stream is therefore supported by the corpus: *latest of (`StartingSuit`, `Disguise`) in the attempt*, with `contract.started` as the pre-rise statement of the initial outfit. The gap that cannot be closed from existing evidence: a change that emits no `Disguise` (none seen; B0's "recovery without S1" finding is a reason to keep the question open, not evidence of a disguise gap).
+
+**Q2 — What does compromised mean?**
+
+Glacier states: *disguise definition X is blown* (`DisguiseBlown.Value` = the worn id, both cases). It does not state the scope — whether the compromise attaches to the definition for the rest of the session, to the current wear only, or to the witnesses — nor who blew it. The co-occurring `Spotted`/`Witnesses` (same `Timestamp`) and the ambient escalation to `Arrest` are correlations observable in the stream, not fields of the event. Prior art: Peacock keeps `disguisesRuined` as a **set keyed by outfit id**, added on `DisguiseBlown` and removed on `BrokenDisguiseCleared` — that is, per definition, surviving disguise changes. The B0 evidence is **consistent with, but cannot distinguish**, per-definition from per-wear scope, because no disguise change happened while a compromise was outstanding. The safe representation is the one that is correct under either reading: a set of compromised definition ids with the sequence that opened each entry and, when seen, the one that cleared it.
+
+**Q3 — What does clearing mean?**
+
+Glacier states: *disguise definition X is no longer blown* (`BrokenDisguiseCleared.Value` = the previously blown id, both cases). Observed mechanism, two cases plus B1's name-only match: the clear followed the `Kill` of the last actor named in `Witnesses` since the compromise, by 9 to 222 ms; pacifying those same actors — all three in case 1, with `SituationContained` — did **not** clear. That is a hypothesis about the engine's rule from three instances, recorded as such; the Relay event must carry only "cleared", not "cleared because the witnesses died". Unknown after a clear: whether the id can be blown again (same id twice — never seen), whether other clearing paths exist (witness loses track, time, scripted), whether changing disguise clears or hides the state.
+
+Semantics matrix:
+
+| Fact | Direct source | Safe normalization | Possible BEAM derivation (labelled derived) | Unsupported inference |
+|---|---|---|---|---|
+| outfit at session start, suit or not | `contract.started` (validated) | already on the wire | initial `worn` for the paired attempt | — |
+| outfit at intro end | `StartingSuit` | `disguise.equipped` with `engine_event: "StartingSuit"` | in-attempt anchor for `worn`; cross-check against the paired session's starting disguise (mismatch → anomaly) | that it is the suit (only `contract.started` says so) |
+| outfit changed to X | `Disguise` | `disguise.equipped` with `engine_event: "Disguise"` | `worn := X`; `disguises_used` (distinct definition ids); change count | source NPC, instance, variation; whether X is a suit (derive only as "equals the session's starting id *and* that was `is_hitman_suit`", labelled) |
+| X compromised | `DisguiseBlown` | `disguise.compromised` | add X to `compromised`; "worn disguise is compromised" iff `worn == X` and no later clear | who blew it; that *any* compromise is outstanding when none was observed (absence ≠ clean) |
+| X no longer compromised | `BrokenDisguiseCleared` | `disguise.compromise_cleared` | remove X from `compromised`, keep the history entry | the reason (witness death is a hypothesis); that other disguises are clear |
+| current disguise at an outcome | `Kill`/`Pacify` `OutfitRepositoryId` (not normalized) | none in B3 | future consistency check if `actor.*` v2 ever carries it | — |
+
+### 30.4 Identity and display names
+
+**What the id is.** All four events carry a `ZRepositoryID` of an outfit *definition*. In the SDK (`relay/m2` headers, not read at runtime by Relay): `ZContentKitManager::m_repositoryGlobalOutfitKits` is `TMap<ZRepositoryID, TEntityRef<ZGlobalOutfitKit>>`; `ZGlobalOutfitKit` has `m_sCommonName`, `m_sTitle`, `m_rNameTextResource` (localized), `m_pParentOutfit`, `m_aCharSets` (variation collections), `m_bHeroDisguiseAvailable`; the player's state side is `ZHitman5::m_InitialOutfitId`, `m_rOutfitKit`, `m_nOutfitVariation`; NPCs carry `ZActor::m_OutfitRepositoryID` and `m_nOutfitVariation`; `ZPlayerRegistry::m_OutfitId` also exists. So the telemetry id names the definition (the "kit"); **charset/variation and the source instance are not in the telemetry.** Two NPCs wearing the same kit are indistinguishable by this id, and taking either produces the same `Disguise` value — which is also why the engine's own compromise bookkeeping (and Peacock's) is per definition. Actor repository-id semantics (section 20: 30 generic collisions among 338 actors) do not transfer: for actors a shared id was a limitation on instance identity; for disguises the definition *is* the subject.
+
+**Stability.** `874c4c48…` was the starting outfit in all five sessions across two game processes and two days (B0 ×2 payloads, B2 ×3 payloads); the two NPC outfits each recurred identically across their blown/cleared pair. Stable within a build; nothing is known about other builds, and no claim is made.
+
+**Names.** No disguise event carries a readable name, and none of `Level_Setup_Events`, `ChallengeCompleted` or the challenge name string resolves an outfit id. Resolution would require an engine read: either the outfit kit map above (`m_sCommonName`/`m_sTitle`, or the localized `ZTextLine`), or the repository walk the Editor and Randomizer mods perform (`ZRepositoryItemEntity` dynamic objects with `Title`/`CommonName`/`Name` keys). Both are S2-class reads (section 21) on an engine object, requiring their own justification, boundary review and probe; neither is proposed for B3. **B3 carries ids only.** A BEAM-side display map (ids → names, explicitly non-authoritative, filled from a later probe or by hand) is an M3 presentation concern and not part of this design. The summary prints the id, abbreviated, exactly as it prints actor repository ids today.
+
+### 30.5 Occurrence events versus BEAM-maintained state
+
+| Criterion | A — explicit occurrence events only (`disguise.equipped` / `disguise.compromised` / `disguise.compromise_cleared`), no derived state | B — the same events plus a BEAM-derived per-attempt disguise view |
+|---|---|---|
+| Fidelity to the source | each Relay event = one engine occurrence with one id; nothing stronger than the payload | same events; the view adds *labelled* derivation |
+| Replayability (M4) | complete: the history is the events | complete: the view is a fold over the events and can be rebuilt |
+| Initial state | `contract.started` + `StartingSuit`: present as events | `worn` starts `:not_observed` until the first in-attempt assertion; the paired session's starting disguise is shown as a separate evidence line |
+| Compromise scope | not represented | set keyed by definition id (correct under either scope reading); "worn is compromised" only when the ids coincide |
+| Reconnect / observation loss | events stop | view freezes as "last known", like the attempt itself |
+| Unknowns | implicit | explicit: `not_observed`, "no compromise observed" (never "clean") |
+| M2 exit criterion (summary from events) | the summary would list events | the summary can say "worn X from #k; compromised #m, cleared #n; last known worn Y; outstanding compromise: none observed" — the useful sentence |
+| Cost | 4 table rows, 1 event struct, 3 Relay event types, BEAM validation | + one fold in `Lifecycle`, summary lines, tests |
+
+**Recommendation: B**, as B1 did for outcomes (events first-class on the attempt; counts and state derived in BEAM and labelled). The events are the protocol; the view is BEAM's reading of them and never crosses back into the events. Native does nothing beyond mapping four string payloads.
+
+### 30.6 Proposed events (all **proposed**; nothing accepted)
+
+One event struct natively (`DisguiseEvent { engine_event, kind, disguise_repository_id, contract_session_id?, engine_timestamp_s? }`), three Relay event types, four table rows:
+
+| Glacier name | Relay event | `engine_event` | Gating |
+|---|---|---|---|
+| `StartingSuit` | `disguise.equipped` v1 | `"StartingSuit"` | attempt-gated |
+| `Disguise` | `disguise.equipped` v1 | `"Disguise"` | attempt-gated |
+| `DisguiseBlown` | `disguise.compromised` v1 | `"DisguiseBlown"` | attempt-gated |
+| `BrokenDisguiseCleared` | `disguise.compromise_cleared` v1 | `"BrokenDisguiseCleared"` | attempt-gated |
+
+Common payload (all three types):
+
+| Field | Source | Required | Type / rule |
+|---|---|---|---|
+| `source` | — | yes | `"engine_telemetry"` |
+| `engine_event` | `Name` | yes | one of the four names above; a consumer that cares whether an `equipped` was a change or the intro-end assertion reads this |
+| `disguise_repository_id` | `Value` | **yes, non-empty string** (the subject) | string, verbatim; not validated as a GUID (the engine's format is evidence, not a contract) |
+| `contract_session_id` | envelope | optional (as on `actor.*`) | string |
+| `engine_timestamp_s` | envelope `Timestamp` | optional | number |
+
+Not carried: a `kind` field (the event type is the kind), `is_hitman_suit` (no source states it for a change; deriving it from id equality is BEAM's labelled job), the challenge, `Spotted`/`Witnesses` ids, ambient, actor names. Malformed (counted per name, logged, not published, no sequence consumed): `Value` not a string, empty string; any `Value` object/array/number for these names. `_DONTSEND` on any of the four names: the section 18 policy applies unchanged (none observed). No duplicate-emitter policy: one send per occurrence was observed for all four; if a run ever shows two sends with equal `(Name, Timestamp, Value)`, that is a finding to record, not something to suppress natively.
+
+Naming: `disguise.equipped` says what Glacier asserts — the worn outfit is now X — without claiming the player "took" it from someone; `disguise.compromised` / `disguise.compromise_cleared` keep the engine's own blown/cleared pair without the word "blown" and without implying detection scope. Alternatives considered: `disguise.changed` (rejected: a generic name invites folding the three facts into one); `disguise.blown` / `disguise.cleared` (rejected: "cleared" alone reads as "disguise removed"); normalizing `StartingSuit` to a separate `disguise.initial` type (rejected: same fact and shape as `equipped`, distinguished by `engine_event`; one fewer schema). Deferring `StartingSuit` entirely was also considered and is the fallback if review prefers three rows: the cost is that the in-attempt `worn` state would depend on the contract pairing for its initial value, which is a cross-domain derivation the `StartingSuit` row makes unnecessary.
+
+### 30.7 Gating and timing, per event
+
+Evidence: all 17 disguise-event deliveries across the three runs (B0 8, B1 6, B2 3) occurred strictly inside the predicate window — `StartingSuit` 2.3 to 29.8 s after the rise (contract clock 2.28 to 13.0 s), the others mid-mission — none on the frontend, none in a fall frame, none during an unload, none between `ContractFailed` and the fall. The B1 rule "publish only while `Playing()`, otherwise count *outside attempt* and log" therefore discards nothing the corpus contains, and the counter is the instrument that would reveal a surprise. Contrast with B2: contract events were ungated because the corpus showed them outside the window on both edges; the disguise corpus shows the opposite. **All four rows attempt-gated**; no grace window, no native attachment, no queue change.
+
+Startup: the first in-attempt disguise assertion is `StartingSuit`, 2 to 30 s after the rise. Before it, BEAM's `worn` is `:not_observed` for the attempt while the paired session's `starting_disguise_repository_id` (published before or just after the rise) is already known — two evidence lines, shown separately; the view may state "contract.started says 874c…; not yet asserted in the attempt". A consumer that connects mid-attempt (not possible today: there is no replay) would see `worn: :not_observed` until the next `equipped`, which is honest.
+
+Transitions: a `Disguise` captured in a restart's fall frame would drain before the edge (frame-order contract) and publish inside the attempt; a disguise event captured after a fall is not expected (none seen) and would be counted *outside attempt*. The 3.08 s unload delay (section 29) cannot affect an attempt-gated event except by making it *outside attempt*, which the counter shows. After TCP loss the view freezes: "last known worn X; compromise outstanding: Y since #m (last known)". Restart resets the view with the attempt, since the view is per attempt; nothing carries across sessions (the engine's own compromise state is per contract session: a new `ContractSessionId` and a fresh `StartingSuit` were observed on every restart).
+
+### 30.8 Proposed BEAM model and summary
+
+```
+Lifecycle.Attempt.disguise_events  — ordered Disguise occurrences {kind, sequence, timestamp, received_at, payload} (first-class, like outcomes)
+Lifecycle.Attempt.disguise         — derived view, rebuilt by folding disguise_events:
+  worn:            :not_observed | %{repository_id, since_sequence, engine_event}
+  compromised:     %{repository_id => %{since_sequence, cleared_sequence: nil | n}}   (entries are kept after clearing, for history)
+  used:            [repository_id]  (distinct, in first-seen order; "definitions", not "disguises taken")
+  changes:         count of engine_event == "Disguise"
+  anomalies:       [{:starting_suit_mismatch, starting_suit_id, contract_session_starting_id},
+                    {:cleared_without_compromise, id, sequence},
+                    {:compromised_twice, id, sequence}]      — recorded, nothing rewritten
+Instance.unattributed_disguise_events — any disguise event received with no open attempt (not expected; never attached by adjacency)
+```
+
+Rules: `equipped` sets `worn`; `compromised` adds or re-opens an entry (a second compromise of an open entry is an anomaly, not a second entry); `compromise_cleared` closes the matching open entry (none open → anomaly, event kept); nothing is derived from `mission.stopped`, TCP close, outcomes, `Spotted`, ambient or time. `Events.validate` accepts the three types at v1 with the fields above (Relay names only). `MissionSession` routes them like outcomes. Summary, per attempt, observed then derived:
+
+```
+    disguises (engine telemetry): starting 874c4c48… (hitman suit; from contract.started); asserted #k @13.0s (StartingSuit);
+      changed → 2018db77… #p @202.1s; compromised #q @222.9s, cleared #r @393.8s; changed → 992cc7b6… #s @497.8s; compromised #t @615.0s, cleared #u @624.1s
+    disguise state (BEAM-derived): last known worn 992cc7b6… (since #s); 2 changes, 3 definitions used; compromise outstanding: none observed
+```
+
+or `disguises (engine telemetry): none observed` / `disguise state (BEAM-derived): not observed`, and after observation loss `… (last known; observation lost)`. Wording rules: never "clean", "undetected" or "Silent Assassin"; never "suit" for a changed disguise unless the id equals the session's starting id and `is_hitman_suit` was true, and then as "(equals the starting suit id)"; the compromise reason is never stated.
+
+### 30.9 Bounded implementation plan (not authorized)
+
+Native (`relay/m2`, from `9f746cad`, one root cause per commit): **B3-R1** `DisguiseEvent` in `RelayEvent.h`, serialization, one `RelayAdapter::Publish(const DisguiseEvent&)` overload choosing the event type by kind, four `k_Sources` rows (AttemptGated, new `Family::Disguise…` values), `NormalizeDisguise` using the existing string-`Value` reader (non-empty string, envelope passthrough), `Result.disguise` member, fixture `B0Disguise.h` (the 8 recorded payloads, identifiers redacted), `DisguiseTelemetryTests.cpp`. **B3-R2** `RelayFrame::Process`: publish `s_Normalized.disguise` on the attempt-gated branch beside `event` (no new branch logic; the gate is the existing one), `RelayFrameTests` additions. **B3-R3** wire probe step `b3` replaying B0 session 1's order (`ContractStart`, rise, `StartingSuit`, `Disguise`, `DisguiseBlown`, three `Pacify`, `Kill`, `BrokenDisguiseCleared`, `Disguise`, `DisguiseBlown`, two `Kill`, `BrokenDisguiseCleared`, `ContractFailed`, fall) through the real normalizer and adapter. Expected zero-line changes: `TelemetryIntake.cpp` (its name gate already defers to `IsSupportedSourceName`), `TelemetryQueue.h`, `TcpRelaySink.*`, `MissionObserver.*`; same single detour; inertness table as B2.
+
+BEAM (`main`, from `e51deca`): **B3-R4** `Events.validate` for the three types. **B3-R5** `Lifecycle` disguise events + fold, `Summary` lines, `MissionSession` log notes, fixture `b3_probe_envelopes.ndjson`, tests. Gate as B2: clean build, 0 relay warnings, 25/25 native, 5× Elixir, standalone wire native↔BEAM 0 mismatches, inertness table, new DLL hash recorded — then stop for runtime authorization.
+
+### 30.10 Test plan (real captured payloads; cases needing new evidence marked)
+
+Native: the 8 B0 payloads → exact Relay JSON (four `equipped` incl. both `StartingSuit`, two `compromised`, two `compromise_cleared`); envelope session id and timestamp carried; malformed: `Value` object (the `ContractStart` payload under a disguise name), array (`Spotted`'s), number, empty string, missing `Value`; `_DONTSEND` set on a disguise name → counted, not normalized (synthetic flag on a real payload); unsupported neighbour names (`Spotted`, `Witnesses`, `Trespassing`) still counted and never published; repeated valid occurrence (the same `Disguise` payload twice) → two events (no dedup); frame order: a disguise event captured in the fall frame publishes before `mission.stopped`; one captured while not playing → *outside attempt*, no sequence; ungated contract rows unaffected (B2 tests pass unchanged). **New evidence needed:** a `Disguise` carrying the suit id; a second `DisguiseBlown` for an open compromise — no fixture is invented for either.
+
+Elixir: validation (required/typed, unknown version rejected, `disguise.changed` unknown); the B0 session-1 script → `worn` after each step, `compromised` open then cleared, `used` = 3 ids, `changes` = 2; `StartingSuit` id equal to the paired session's starting id (no anomaly) and a synthetic mismatch (anomaly, nothing rewritten); clear without compromise → anomaly, event kept; disguise event with no open attempt → unattributed; restart → the new attempt starts `:not_observed`; TCP close → last known, no clearing, no "clean"; summary wording (absence of "clean"/"Silent Assassin"/"suit" for a non-starting id); replay: folding `disguise_events` reproduces `disguise` exactly (property over the fixture and the B1-style orderings); listener end-to-end with the native `b3` envelopes.
+
+### 30.11 Standalone and controlled runtime validation (proposed; the run requires its own authorization)
+
+Standalone: `GlacierRelayWireProbe 4747 sleep:1500,b3,sleep:800` → BEAM receives the full session-1 order with contiguous sequences; native `published` lines equal BEAM's reconstructed events field for field; the fixture is committed.
+
+Controlled run (setup as B2, same pre-flight, hash rollback; BEAM first; VS after the menu gate): 1. menu (no telemetry expected); 2. fresh Paris, wait for the intro cut to end — expect `disguise.equipped` (`StartingSuit`, `874c…`) a few seconds after `mission.playing`, inside attempt 1, and the BEAM cross-check against `contract.started` passing; 3. take one NPC disguise — expect one `disguise.equipped` (`Disguise`); 4. get spotted in it until the ambient escalates — expect `disguise.compromised` with the worn id; **5. change to a second disguise while the compromise is outstanding** (new evidence: does a `Disguise` arrive, and does the first id stay compromised); **6. return to the suit via a wardrobe or the starting outfit if available** (new evidence: `Disguise` with the suit id, or nothing); 7. eliminate the witness(es) by a kill — expect `disguise.compromise_cleared` for the id that was blown (and record whether the clear references the blown id even though a different outfit is worn); 8. restart — expect the new attempt to begin `:not_observed`, then `StartingSuit`; 9. exit to menu; 10. quit. Record for each disguise event: frame offset from the nearest `Spotted`/`Witnesses`/`Kill`, the ambient value, the ids. Pass: every `captured` disguise name appears exactly once in BEAM as the mapped event with the native values, attached to the attempt open at the time; `outside attempt 0`, `dropped 0`, `malformed 0`; the derived view after each step equals what the operator did; B1/B2 behaviour unchanged (contract pairing, actor outcomes if any); no `ERROR`/`FAULT`; rollback by hash. Semantic discrepancies to write down rather than fix: a change with no `Disguise`; a `Disguise` with an unexpected id; a compromise whose id is not the worn one; a clear with no preceding compromise; two sends per occurrence. Abort: any native `ERROR`/`FAULT`, a queue drop, or a frame-rate complaint from the operator — stop, capture, roll back.
+
+### 30.12 Open questions, probe need, smallest next stage
+
+| Question | Blocks B3 implementation? | How it is answered |
+|---|---|---|
+| Does changing disguise while compromised keep the old id compromised (per-definition scope)? | no — the keyed-set representation is correct either way | step 5 of the controlled run |
+| Does returning to the suit emit `Disguise` with the suit id? | no — the normalizer maps whatever arrives | step 6 |
+| Other clearing paths (witness escapes, time, scripted)? | no — only "cleared" is carried | later runs; recorded as unknown |
+| Can the same id be blown twice? | no — anomaly path exists | later runs |
+| Outfit display names | no — ids only in B3 | a separately justified S2 read or an M3 map |
+| Does every change emit exactly one `Disguise`? | no | the production counters plus operator notes in the run; an S2 cross-read is not proposed |
+
+**Is another research probe required before implementation? No.** All four shapes are in the B0 corpus at full fidelity; the ordering is replicated in B1; the only unknowns are transition cases the normalizer does not need to understand, which the B3 controlled run itself can produce. The production adapter still cannot capture a new raw shape (`telemetry_log = raw` is not implemented); if a disguise event ever arrives malformed, the `malformed_by_name` counter and the logged detail will say which field, and a probe-branch capture can follow.
+
+**Smallest next implementation stage, if approved:** B3-R1 through B3-R5 above — four attempt-gated table rows mapping string payloads to `disguise.equipped` / `disguise.compromised` / `disguise.compromise_cleared` v1, BEAM validation, the per-attempt derived disguise view and summary lines, fixtures from the 8 B0 payloads, the `b3` wire step — followed by the gate, and only then a controlled run under its own authorization. B4 (items), B5 (objectives), B6 (player state; `Trespassing` and `HoldingIllegalWeapon` remain there), detection/witness events, and any name resolution are out of scope and untouched.
+
+Stop here for architectural review. **B3 implementation and runtime await review.**

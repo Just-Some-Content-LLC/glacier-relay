@@ -105,6 +105,14 @@ Dataset: the B1 native log (`%TEMP%\glacier-m0\hitmen\b1-run1\relay-20261007-035
 
 B1 intake decisions: 12 captured (`Kill`, `Pacify`), 124 unsupported, 23 `dont_send` (all `ChallengeCompleted`), 0 unreadable, 0 truncated. Nothing with `_DONTSEND` appeared on any other name.
 
+## Observed in B2 (2026-10-08 production run, `telemetry_log = names`)
+
+Dataset: the B2 native log (`%TEMP%\glacier-m0\hitmen\b2-run1\relay-20261008-192015-85348.log`, SHA-256 `fc043698…6490`, `M2_TELEMETRY.md` section 29): 41 `OnEventSent` deliveries, 9 names, three Paris sessions (fresh load, restart, exit to menu, fresh load, direct quit) in which the operator performed no gameplay action. **No new name.** Seen: `Level_Setup_Events` 15, `OpportunityStageEvent` 6, `StartingSuit` 3, `OpportunityEvents` 3, `IntroCutEnd` 3, `HeroSpawn_Location` 3, `AmbientChanged` 3, `ContractStart` 3 (captured), `ContractFailed` 2 (captured). 0 `_DONTSEND`. Engine indices 5, 20, 31, 36 never reached the hook (41 of 45). A direct quit from inside the third session emitted nothing at the hook before the process ended (section 29).
+
+### Observation: disguise events (B3 archaeology, `M2_TELEMETRY.md` section 30)
+
+`StartingSuit`, `Disguise`, `DisguiseBlown` and `BrokenDisguiseCleared` share one shape — `Value` is a non-empty string holding an outfit **definition** repository id — with one emission per occurrence and no `XboxGameMode` twin. `StartingSuit` is emitted in the same frame as `IntroCutEnd`, 2 to 30 s after the predicate rise (contract clock 2.28 s / 13.01 s in B0), restating `ContractStart.Disguise`; it is not at contract clock 0. `DisguiseBlown` carries the id most recently stated by `Disguise` and shares its `Timestamp` with a `Spotted`; `BrokenDisguiseCleared` carries the same id and, in all three observed instances (B0 ×2, B1 ×1 by name), followed the `Kill` of the last actor named in `Witnesses` by 9 to 222 ms — pacifying those actors did not clear it. `Kill`/`Pacify` `OutfitRepositoryId` agreed with the latest `Disguise` value in 16/16 B0 outcomes. No readable outfit name appears anywhere in the stream.
+
 ### Observation: `eventIndex` is not contiguous
 
 The `eventIndex` argument of `OnEventSent` skipped 9 values in B1's first attempt (5, 20, 21, 106, 119, 130, 131, 143, 144 of 1..154) and value 5 in B0; the intake's `seen` counter equals the number of indices actually delivered (154 − 9 = 145), so the hook lost nothing: the engine advances its index on paths that never call `OnEventSent`. **`eventIndex` is not a Relay continuity or loss signal.** It is kept on the raw observation for log correlation only. Relay's own envelope `sequence` is the continuity mechanism for normalized Relay events, and BEAM's gap detection is computed from it alone.
