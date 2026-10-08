@@ -23,7 +23,9 @@ defmodule GlacierRelay.Disguise do
     invalidates the previous interval's standing, cleared or not); (4) else `:not_observed`.
   - `standing_cut` — why the interval is unreliable and what it said before the cut (shown, not
     asserted).
-  - `history` — attempt-level completeness from the same gap and interruption evidence.
+  - `history` — attempt-level completeness from the same gap and interruption evidence, bounded
+    on the stream by the attempt's stop or, for a superseded attempt, by the rise that superseded
+    it (`{:superseded, by, at_sequence}`); later attempts' gaps never reach an earlier attempt.
 
   It never says "clean", never carries a standing across a change, never infers who noticed or
   why a compromise cleared, and never resolves an id to a name.
@@ -47,7 +49,10 @@ defmodule GlacierRelay.Disguise do
     history_reasons =
       Enum.map(gaps, fn {expected, got} -> {:gap, expected, got} end) ++
         Enum.map(interruptions, fn {:interruption, at, reason, _} -> {:interruption, at, reason} end) ++
-        if(attempt.mission == :superseded, do: [:superseded], else: [])
+        if(attempt.mission == :superseded,
+          do: [{:superseded, attempt.superseded_by, attempt.superseded_at}],
+          else: []
+        )
 
     %{
       initial: folded.initial,
@@ -213,9 +218,17 @@ defmodule GlacierRelay.Disguise do
   # -- evidence from outside the disguise events ----------------------------------------------
 
   # Gaps are recorded on the instance as {expected, got}, newest first, detected at `got`. One
-  # belongs to this attempt when it was detected after the rise and no later than the stop.
+  # belongs to this attempt when it was detected after the rise and no later than the attempt's
+  # end on the stream: its stop, or — for a superseded attempt, whose stop was never observed —
+  # the rise that superseded it (a gap detected at that rise is this attempt's evidence; gaps
+  # detected later belong to later attempts). An open attempt has no upper bound.
   defp gaps_in_attempt(gaps, %Attempt{playing: %{sequence: lo}} = attempt) do
-    hi = attempt.stopped && attempt.stopped.sequence
+    hi =
+      cond do
+        attempt.stopped -> attempt.stopped.sequence
+        attempt.mission == :superseded -> attempt.superseded_at
+        true -> nil
+      end
 
     gaps
     |> Enum.reverse()

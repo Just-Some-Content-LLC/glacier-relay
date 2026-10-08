@@ -105,6 +105,8 @@ defmodule GlacierRelay.Lifecycle do
 
     `mission` is `:playing` (open; last known state), `:stopped` (closed by `mission.stopped`) or
     `:superseded` (another `mission.playing` arrived while this was open; its end was not observed).
+    A superseded attempt records `superseded_at`, the sequence of the rise that superseded it: the
+    boundary of its evidence on the stream, which is not a stop and fabricates none.
     `interruptions` lists the times the instance's connection closed while this attempt was open,
     each with `after_sequence`, the last sequence the instance had received at that moment; they
     are transport evidence and leave `mission` untouched.
@@ -126,6 +128,7 @@ defmodule GlacierRelay.Lifecycle do
       :stopped_scene,
       mission: :playing,
       superseded_by: nil,
+      superseded_at: nil,
       interruptions: [],
       # Actor outcomes in stream order (M2 B1).
       outcomes: [],
@@ -298,8 +301,12 @@ defmodule GlacierRelay.Lifecycle do
           {instance.attempts, []}
 
         open ->
-          {replace_last(instance.attempts, %{open | mission: :superseded, superseded_by: number}),
-           [{:superseded, open.number, number}]}
+          {replace_last(instance.attempts, %{
+             open
+             | mission: :superseded,
+               superseded_by: number,
+               superseded_at: observation.sequence
+           }), [{:superseded, open.number, number}]}
       end
 
     attempt = %Attempt{

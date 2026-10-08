@@ -422,7 +422,7 @@ defmodule GlacierRelay.Summary do
 
   defp render_history_reason({:gap, expected, got}), do: "gap #{expected}→#{got}"
   defp render_history_reason({:interruption, at, reason}), do: "observation lost #{fmt(at)} (#{inspect(reason)})"
-  defp render_history_reason(:superseded), do: "superseded"
+  defp render_history_reason({:superseded, by, at}), do: "superseded by attempt #{by} at ##{at}"
 
   # "suit" only as a labelled id equality with the paired session's starting suit.
   defp suit_note(id, %{starting_disguise_repository_id: id, is_hitman_suit: true}), do: " (equals the starting suit id)"

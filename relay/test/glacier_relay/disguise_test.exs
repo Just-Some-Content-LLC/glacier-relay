@@ -122,6 +122,8 @@ defmodule GlacierRelay.DisguiseTest do
       playing: attempt.playing,
       stopped: attempt.stopped,
       mission: attempt.mission,
+      superseded_by: attempt.superseded_by,
+      superseded_at: attempt.superseded_at,
       interruptions: attempt.interruptions,
       disguise_events: attempt.disguise_events,
       contract_session_id: attempt.contract_session_id
@@ -608,8 +610,10 @@ defmodule GlacierRelay.DisguiseTest do
 
     test "a superseded attempt reports it in its history" do
       {inst, _} = fold([playing(1), change(2, @outfit_a), playing(3)])
-      assert view(inst, 1).history == {:incomplete, [:superseded]}
+      assert view(inst, 1).history == {:incomplete, [{:superseded, 2, 3}]}
+      assert hd(inst.attempts).superseded_at == 3 and hd(inst.attempts).stopped == nil
       assert view(inst, 2).history == :complete
+      assert text(inst) =~ "history broken: superseded by attempt 2 at #3"
     end
   end
 
@@ -634,6 +638,79 @@ defmodule GlacierRelay.DisguiseTest do
                initial: :not_observed, worn: :not_observed, compromise_episodes: [], worn_standing: :not_observed,
                standing_reason: nil, standing_cut: nil, used: [], changes: 0, history: :complete, notes: [], anomalies: [], occurrences: 0
              }
+    end
+  end
+
+  describe "regression: a superseded attempt is bounded by the rise that superseded it" do
+    # Review finding (2026-10-08): gaps_in_attempt/2 bounded history only by attempt.stopped, so a
+    # superseded attempt (stopped == nil) acquired every later gap on the instance.
+    test "the reported reproduction: the boundary gap stays, a later gap does not arrive" do
+      {inst, _} = fold([playing(1), change(2, @outfit_a), comp(3, @outfit_a), playing(5), change(6, @outfit_b), comp(9, @outfit_b)])
+      assert inst.gaps == [{7, 9}, {4, 5}]
+      [a1, _a2] = inst.attempts
+      assert a1.mission == :superseded and a1.stopped == nil and a1.superseded_by == 2 and a1.superseded_at == 5
+
+      d1 = view(inst, 1)
+      assert d1.history == {:incomplete, [{:gap, 4, 5}, {:superseded, 2, 5}]}
+      assert d1.worn_standing == :unknown
+      assert d1.standing_cut == %{cut: {:gap, 4, 5}, standing_before: :compromised}
+      assert from_facts(inst, 1) == d1
+
+      d2 = view(inst, 2)
+      assert d2.history == {:incomplete, [{:gap, 7, 9}]}
+      assert d2.standing_cut == %{cut: {:gap, 7, 9}, standing_before: :not_observed}
+      assert from_facts(inst, 2) == d2
+    end
+
+    test "supersession without a boundary gap: evidence up to the rise is intact; standing is last known" do
+      {inst, _} = fold([playing(1), change(2, @outfit_a), comp(3, @outfit_a), playing(4), change(5, @outfit_b), comp(8, @outfit_b)])
+      d1 = view(inst, 1)
+      assert d1.history == {:incomplete, [{:superseded, 2, 4}]}
+      assert d1.worn_standing == :compromised and d1.standing_cut == nil
+      assert view(inst, 2).history == {:incomplete, [{:gap, 6, 8}]}
+      assert from_facts(inst, 1) == d1
+    end
+
+    test "chained supersessions: each attempt keeps only the gaps up to its own boundary" do
+      {inst, _} =
+        fold([playing(1), change(2, @outfit_a), playing(3), change(4, @outfit_b), playing(6), change(7, @outfit_a), comp(10, @outfit_a)])
+
+      assert inst.gaps == [{8, 10}, {5, 6}]
+      assert view(inst, 1).history == {:incomplete, [{:superseded, 2, 3}]}
+      assert view(inst, 1).worn_standing == :not_observed
+      assert view(inst, 2).history == {:incomplete, [{:gap, 5, 6}, {:superseded, 3, 6}]}
+      assert view(inst, 2).standing_cut == %{cut: {:gap, 5, 6}, standing_before: :not_observed}
+      assert view(inst, 3).history == {:incomplete, [{:gap, 8, 10}]}
+      for n <- 1..3, do: assert(from_facts(inst, n) == view(inst, n))
+    end
+
+    test "ordinary stopped attempts are bounded by their stop as before" do
+      {inst, _} = fold([playing(1), change(2, @outfit_a), stopped(3), playing(4), change(5, @outfit_b), comp(8, @outfit_b)])
+      assert view(inst, 1).history == :complete and view(inst, 1).worn_standing == :not_observed
+      assert view(inst, 2).history == {:incomplete, [{:gap, 6, 8}]}
+
+      # A gap detected exactly at the stop is the stopped attempt's. One detected at the next rise,
+      # after a stop, lies between the attempts: it is instance-level evidence (instance.gaps) and
+      # belongs to neither attempt's history. (After a supersession the same position is the
+      # superseded attempt's, because that attempt was still open.)
+      {inst, _} = fold([playing(1), change(2, @outfit_a), stopped(4), playing(6)])
+      assert view(inst, 1).history == {:incomplete, [{:gap, 3, 4}]}
+      assert view(inst, 2).history == :complete
+      assert inst.gaps == [{5, 6}, {3, 4}]
+    end
+
+    test "extending later attempts leaves earlier derived views unchanged" do
+      base = [playing(1), change(2, @outfit_a), comp(3, @outfit_a), playing(5)]
+      {inst, _} = fold(base)
+      frozen = view(inst, 1)
+
+      extensions = [change(6, @outfit_b), comp(9, @outfit_b), clear(10, @outfit_b), stopped(12), playing(14), change(15, @outfit_a), comp(18, @outfit_a)]
+
+      Enum.reduce(extensions, inst, fn e, acc ->
+        {acc, _} = fold([e], acc)
+        assert view(acc, 1) == frozen
+        acc
+      end)
     end
   end
 
