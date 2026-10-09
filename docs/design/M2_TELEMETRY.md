@@ -2018,7 +2018,7 @@ A pass makes B4 a candidate for acceptance review on the observed build; it does
 
 **Stop here for implementation review. Nothing in this section was deployed, loaded or run against the game.**
 
-## 40. B4 controlled runtime experiment (2026-10-09, 05:00Z to 05:09Z) — all three item names crossed the typed intake; PASS on the section 39 criteria; not yet accepted
+## 40. B4 controlled runtime experiment (2026-10-09, 05:00Z to 05:09Z) — all three item names crossed the typed intake; PASS on the section 39 criteria (accepted in section 41)
 
 Authorization: the operator confirmed readiness and authorized the single §39 experiment (one run). Frozen artifacts, verified before installation: SDK build source `12ea5586` (head `183a6612`, generators only; `Src`/`CMakeLists.txt` identical), **DLL `07a71fc2cf684a43086bbc60683c93de857d800e76122bd09b9ed74eb2e9d02c`** (build tree, then the installed copy, same hash), glacier-relay `014128b` (BEAM `c10c939`). Evidence: `%TEMP%\glacier-m0\hitmen\b4-run1\` (`sha256.txt`: native log `relay-20261009-050104-17888.log` `e23c642f…`, `beam.log` `d69c5d77…`, `beam-final-state.txt` `d0ff1704…`, `beam-events.ndjson` `f9c46cba…`, `native-beam-compare.txt` `09707c1a…`, `operator-actions.txt` `4ed14e33…`, `watch-native.out`, `mods.ini.before/relay`, `retail-{before,installed,after}.sha256`).
 
@@ -2044,7 +2044,7 @@ Fresh Paris (`mission.playing #1` 05:03:18Z, `contract.started #2`, session `251
 
 ### Criterion 2 — reconciliation from the instruments
 
-Per-name `telemetry seen` lines (40 lines, indices 1–45 with 5, 29, 31, 35, 37 never presented — engine-side skips, as in every run): captured `ItemPickedUp` 7, `ItemThrown` 2, `ItemRemovedFromInventory` 2, `StartingSuit` 1, `ContractStart` 1, `ContractFailed` 1 = **14**; unsupported 26 (`Level_Setup_Events` 7, `HoldingIllegalWeapon` 7, `setpieces` 5, `OpportunityStageEvent` 2, `Trespassing`, `OpportunityEvents`, `IntroCutEnd`, `HeroSpawn_Location`, `AmbientChanged` 1 each); `dont_send` 0, `unreadable` 0. Counters line at `attempt ended` (before `ContractFailed` was captured): `seen 39, captured 13, unsupported 26, dont_send 0, unreadable 0, truncated 0; queue pushed 13, dropped 0; normalized 13, malformed 0, outside attempt 0, ungated published 1` — **captured 13 = normalized 13 + malformed 0**, and the one further capture after it (`ContractFailed`, index 45) was normalized and published as `#16`. Per name, `not normalized` lines 0 and `no open mission attempt` lines 0, so normalized = captured for every name; **normalized 14 = published 14 (12 attempt-gated + 2 ungated) + outside-attempt 0**; `published` lines: `item.picked_up` 7, `item.thrown` 2, `item.removed_from_inventory` 2, `disguise.equipped` 1, `contract.started` 1, `contract.ended` 1, plus `mission.playing`/`mission.stopped` = 16 envelopes; `tcp sink: sent` 16; **published 16 = received 16** (BEAM 16 lines, 0 rejected, gaps `[]`, 11 item facts on attempt 1, 0 unattributed). Pending 0 (every captured observation was published before the quit), dropped 0, `queue full` lines 0. Operator action count versus events: the operator reported 2 pickups (briefcase, weapon from the case), 1 throw, 1 re-pickup, 3 pickups (wrench, crowbar, axe), 1 throw, 1 pickup of a different axe = 7 pickups, 2 throws; the stream has 7 `ItemPickedUp`, 2 `ItemThrown`, 2 `ItemRemovedFromInventory`. The only discrepancy is the *order* of the first two pickups (pistol captured before briefcase); each throw was captured as a removal + a throw pair (2/2 here, identical `Timestamp`, consecutive indices), consistent with B0's observation and still not a rule. **Met.**
+Per-name `telemetry seen` lines (40 lines over indices 1–45; indices 5, 29, 31, 35 and 37 were not presented to the detour — as in every run; what they represented is not inferred): captured `ItemPickedUp` 7, `ItemThrown` 2, `ItemRemovedFromInventory` 2, `StartingSuit` 1, `ContractStart` 1, `ContractFailed` 1 = **14**; unsupported 26 (`Level_Setup_Events` 7, `HoldingIllegalWeapon` 7, `setpieces` 5, `OpportunityStageEvent` 2, `Trespassing`, `OpportunityEvents`, `IntroCutEnd`, `HeroSpawn_Location`, `AmbientChanged` 1 each); `dont_send` 0, `unreadable` 0. Counters line at `attempt ended` (before `ContractFailed` was captured): `seen 39, captured 13, unsupported 26, dont_send 0, unreadable 0, truncated 0; queue pushed 13, dropped 0; normalized 13, malformed 0, outside attempt 0, ungated published 1` — **captured 13 = normalized 13 + malformed 0**, and the one further capture after it (`ContractFailed`, index 45) was normalized and published as `#16`. Per name, `not normalized` lines 0 and `no open mission attempt` lines 0, so normalized = captured for every name; **normalized 14 = published 14 (12 attempt-gated + 2 ungated) + outside-attempt 0**; `published` lines: `item.picked_up` 7, `item.thrown` 2, `item.removed_from_inventory` 2, `disguise.equipped` 1, `contract.started` 1, `contract.ended` 1, plus `mission.playing`/`mission.stopped` = 16 envelopes; `tcp sink: sent` 16; **published 16 = received 16** (BEAM 16 lines, 0 rejected, gaps `[]`, 11 item facts on attempt 1, 0 unattributed). Pending 0 (every captured observation was published before the quit), dropped 0, `queue full` lines 0. Operator action count versus events: the operator reported 2 pickups (briefcase, weapon from the case), 1 throw, 1 re-pickup, 3 pickups (wrench, crowbar, axe), 1 throw, 1 pickup of a different axe = 7 pickups, 2 throws; the stream has 7 `ItemPickedUp`, 2 `ItemThrown`, 2 `ItemRemovedFromInventory`. The only discrepancy is the *order* of the first two pickups (pistol captured before briefcase); each throw was captured as a removal + a throw pair (2/2 here, identical `Timestamp`, consecutive indices), consistent with B0's observation and still not a rule. **Met.**
 
 ### Criterion 3 — zeros
 
@@ -2060,19 +2060,175 @@ Exercised live by the script on this build: `mission.playing`/`mission.stopped`,
 
 ### BEAM final summary (attempt 1, verbatim)
 
-`items (engine telemetry): picked up 7 — "The Smoke", Military Briefcase ×2, Wrench, Crowbar, Fire Axe ×2; thrown 2 — Military Briefcase, Fire Axe; removed from inventory 2 — Military Briefcase, Fire Axe; 5 definitions; history intact` — direct counts; nothing paired; the axe's second pickup counted as a second occurrence of the definition, which is all the stream can say (next section).
+`items (engine telemetry): picked up 7 — "The Smoke", Military Briefcase ×2, Wrench, Crowbar, Fire Axe ×2; thrown 2 — Military Briefcase, Fire Axe; removed from inventory 2 — Military Briefcase, Fire Axe; 5 definitions; history intact` — direct counts; nothing paired; the axe's second pickup is a second occurrence of the definition, which is all the stream says (findings, next section).
 
 ### Findings (recorded, not acted on)
 
-1. **First runtime evidence of the item object's intake.** All 11 item occurrences normalized: `Value` copied as an object; `RepositoryId`, `InstanceId`, `ItemName`, `ItemType` as `String`; `OnlineTraits` as an array of strings (the `TArray<ZString>` branch, second event family after `Kill.DamageEvents`); `InstanceId` empty on 11/11 (omitted on the wire, as designed); `Category`/`ActionRewardType` unread and harmless. Whether `RepositoryId` arrived as a `ZString` or a `ZRepositoryID` is **not** distinguishable from a successful normalization (§38.7); the known definitions (wrench `6adddf7e…`, crowbar `01ed6d15…`) equal the B0 strings either way.
-2. **A loadout item appeared in `ItemPickedUp`** (`2e5f1dfd…` `"The Smoke"` `Gun_HardBaller_01`, `[pistol]`) with an **empty** `InstanceId` — B0 had shown the loadout pistol only through `ContractStart.Loadout`/`HoldingIllegalWeapon`/`Kill` with a non-empty instance id. §38.1's "whether a pickup of a loadout item emits `ItemPickedUp` with its instance id" is answered for this case: it emits one *without* the instance id. The pistol pickup was captured 1.9 s before the briefcase pickup although the operator reported taking the briefcase first; which engine action each corresponds to is not established.
-3. **Same definition, different object, indistinguishable on the stream:** the operator threw one fire axe and picked up a different one; both carry `a8bc4325…` and an empty `InstanceId`. The design's refusal to derive "recovered"/instance identity (§38.3, §38.10) is confirmed as necessary, not merely cautious.
+1. **First runtime evidence of the item object's intake.** All 11 item occurrences normalized: `Value` copied as an object; `RepositoryId`, `ItemName`, `ItemType` copied as strings; `OnlineTraits` **copied as an array of strings** — the generic array path can produce this result, and neither the exact engine element type nor the intake branch taken is established by a successful normalization. **All 11 item envelopes omitted `item_instance_id`**; the successful path cannot distinguish a missing `InstanceId` input field from an empty copied string, and no separate input evidence (a raw or shape log) exists for this run, so the live engine value is not stated. `Category`/`ActionRewardType` unread and harmless. Whether `RepositoryId` arrived as a `ZString` or a `ZRepositoryID` is **not** distinguishable either (§38.7); the known definitions (wrench `6adddf7e…`, crowbar `01ed6d15…`) equal the B0 strings either way. (B0's JSON corpus, a different instrument, did show `InstanceId: ""` directly on 24/24; that evidence stands on its own.)
+2. **A loadout item appeared in `ItemPickedUp`** (`2e5f1dfd…` `"The Smoke"` `Gun_HardBaller_01`, `[pistol]`), **published without an instance identifier** — B0 had shown the loadout pistol only through `ContractStart.Loadout`/`HoldingIllegalWeapon`/`Kill`, there with a non-empty instance id in the JSON. §38.1's "whether a pickup of a loadout item emits `ItemPickedUp` with its instance id" is answered for this occurrence only to the extent the path can show: the published event carried none. The pistol pickup was captured 1.9 s before the briefcase pickup although the operator reported taking the briefcase first; the discrepancy is recorded and no cause is assigned.
+3. **Operator observation, kept apart from the stream facts:** the operator reported throwing one fire axe and picking up a different one from the wall. The stream facts are two occurrences of definition `a8bc4325…` (`#13` thrown, `#14` picked up), both published without an instance identifier; nothing on the stream distinguishes or equates the two objects. The design's refusal to derive "recovered"/instance identity (§38.3, §38.10) is confirmed as necessary, not merely cautious.
 4. `item_name` can contain quote characters (`"The Smoke"` is the engine's display string, quotes included); escaped on the wire, decoded intact by BEAM (0 mismatches).
 5. `HoldingIllegalWeapon` ×7 and `Trespassing` ×1 observed unsupported (B6 scope); `ItemDropped`/`ItemDestroyed` **not captured** in this run (no drop was scripted; no locker change).
 6. Engine timestamps print with float32 expansion (`55.21105194091797`), as the §36 live run's did; the B0 corpus text (`176.078949`) came from the engine's own JSON writer. Observation only.
 
 ### What this does and does not establish
 
-Establishes, on build 3.280.0.0 with DLL `07a71fc2…`: the three item names normalize from the live engine payload and publish inside the attempt with the §38.5 fields; native and BEAM agree field for field; counts are direct and reconcile across every stage; the B1–B3 rows that the script touched are unchanged. Does not establish: the exact engine types behind the copied kinds; the semantics of the pistol pickup; anything about `ItemDropped`/`ItemDestroyed`; any instance identity. Unobserved and retained: a removal without a throw beside it; a non-empty `InstanceId` on any item event; a drop; a destroy; a throw that hits an NPC (with ids visible).
+Establishes, on build 3.280.0.0 with DLL `07a71fc2…`: the three item names normalize from the live engine payload and publish inside the attempt with the §38.5 fields; native and BEAM agree field for field; counts are direct and reconcile across every stage; the B1–B3 rows that the script touched are unchanged. Does not establish: the exact engine types or intake branches behind the copied kinds; the live `InstanceId` input (all 11 envelopes omitted it); the semantics of the pistol pickup or of the pickup-order discrepancy; anything about `ItemDropped`/`ItemDestroyed`; any instance identity. Unobserved **through this B4 runtime path** and retained: a removal without a throw beside it; an item envelope carrying `item_instance_id`; a drop; a destroy; a throw that hits an NPC (with ids visible). Already present in B0's corpus (a different instrument): `InstanceId: ""` written directly on 24/24 item payloads; the loadout pistol's non-empty instance id on other events.
 
-**B4 is a candidate for acceptance review. Nothing here accepts it; M2 remains incomplete.**
+**B4 was a candidate for acceptance review at the time of this record; section 41 records the acceptance. M2 remains incomplete.**
+
+## 41. B4 acceptance review (2026-10-09) — accepted for its bounded M2 scope on the observed build; M2 remains incomplete
+
+Review decision, recorded in substance: **B4 is accepted for its bounded M2 scope on build 3.280.0.0** — `item.picked_up`, `item.thrown` and `item.removed_from_inventory` v1; independent occurrences (nothing paired, merged or deduplicated); definition-based summaries (direct counts per `item_repository_id`, with the engine's display strings and traits carried as evidence); optional instance identifiers when the engine provides one; and the shared bounded-history model (`AttemptHistory`, the `63184c4` guarantees for both the disguise and the item views). **M2 remains incomplete.**
+
+### Evidence the acceptance rests on
+
+- **Offline (§39):** clean build with 0 relay warnings; native tests 25/25 (the 24 recorded B0 payloads, the seven definition ids through the production `RepositoryId` renderer, optional-field, malformed, `_DONTSEND`, repeated-occurrence, independent removal/throw, unsupported-neighbour, frame-drain and fall-frame cases); imports/exports identical to the accepted B3 checkpoint; Elixir 159 then 161 tests ×5 (validation, the B0 session through `Lifecycle`, gaps/interruptions/supersession with the `63184c4` regressions repeated for items, replay equivalence, wording, the B4 wire fixture decoded, folded and delivered over TCP); standalone wire comparison 45/45 with 0 field mismatches, twice (before and after the `item_instance_id` tightening, same binary). Coverage boundary as stated in §39: downstream consumers plus the shared renderer; never `TelemetryIntake::Copy`.
+- **Runtime (§40):** **11 live item occurrences across five definitions** (`ItemPickedUp` 7, `ItemThrown` 2, `ItemRemovedFromInventory` 2 — all three supported names), every one captured, normalized, published and received; **16/16 envelope comparison, 0 field mismatches**; malformed 0, dropped 0, pending 0, outside-attempt 0, rejected 0, gaps `[]`; 0 WARN/ERROR/FAULT; cleanup mechanical and reported (BEAM stopped by RPC with the exact PID; game restored to M0, listing and hashes identical, 26/26).
+
+### Accepted checkpoint (refs kept distinct)
+
+| What | Ref |
+|---|---|
+| DLL build source | ZHMModSDK `relay/m2` **`12ea55860a9fe82c84b36b133cca182f0500e96d`** |
+| SDK repository head | `183a6612` — adds the fixture generators only (`Tests/Fixtures/Generators/`); `Src` and `CMakeLists.txt` identical to the build source |
+| `GlacierRelay.dll` SHA-256 (build tree and installed copy, §40) | **`07a71fc2cf684a43086bbc60683c93de857d800e76122bd09b9ed74eb2e9d02c`** |
+| BEAM | glacier-relay **`c10c939`** (`item_instance_id` present must be non-empty) on `a8e7621` |
+| Runtime record | glacier-relay **`19ff080`** (§40) |
+
+The accepted B3 checkpoint (SDK `84b93778`, DLL `61fe5538…`, preserved in `b3-accepted-artifacts\`) stands beside it; the B4 DLL supersedes it as the current production candidate because it contains the B3 rows unchanged (imports/exports identical; the B3 rows exercised live in §40 only for `StartingSuit` and the lifecycle, offline for the rest).
+
+### What acceptance does not establish
+
+- **Instance identity.** No item envelope has carried `item_instance_id` through this runtime path (all 11 omitted it); the path cannot distinguish a missing input field from an empty copied string. B0's corpus, a different instrument, wrote `InstanceId: ""` directly on 24/24 item payloads and a non-empty instance id for the loadout pistol on other events; that evidence is retained as B0's, not as B4 runtime evidence.
+- **Inventory state, holding, ownership.** Not derived; not derivable from occurrences.
+- **Recovery of the same object.** Two occurrences of one definition say nothing about whether they concern one object (the §40 operator observation of a different axe stands beside the stream, not in it).
+- **A universal removal/throw relationship.** Observed beside each other in B0 (6/6), B1/B3 (by name and order), §40 (2/2); still an observation, not a rule; nothing is paired.
+- **`ItemDropped` / `ItemDestroyed`.** Unsupported; counted by name; their payload and subject need the separately authorized §38.9 diagnostic.
+- **Exact engine types** of any item field (a successful normalization establishes contract compatibility only, §38.7).
+
+### Unobserved, by provenance
+
+Through the B4 runtime path (§40): a removal without a throw beside it; an envelope with `item_instance_id`; a drop; a destroy; a throw that hits an NPC with ids visible; `Category` non-null. Already evidenced in B0 only: the item JSON shape with `InstanceId: ""`, `Category: null`, `ActionRewardType: "AR_None"` on 24/24; throws followed by `Pacify`/`Kill` with matching `KillItemRepositoryId` (3 of 6).
+
+### What remains for M2
+
+B5 objectives (§42, archaeology and design), B6 player state, B7 summary v2 and the completion decision; the roadmap's exit criterion is unchanged.
+
+## 42. B5 design — objective telemetry: archaeology and design only (not authorized for implementation)
+
+Scope: archaeology of the objective-related names in the `OnEventSent` stream and a design proposal for the smallest evidenced Relay vocabulary. Nothing here is implemented, built, deployed or run. Inputs: the B0 corpus (`b0-run1`, the only payloads), the names-only production logs (B1 §26, B3 §32, §34, §36, §40), the SDK headers on `relay/m2`, and the policies already decided (§18 `_DONTSEND`; §27 contract lifecycle owned by B2; §30.3 prior-art rule). §22's row "B5 — Objectives (`ObjectiveCompleted`; plus whatever a completed mission emits) — needs the completion run" is re-examined, not inherited.
+
+### 42.1 Evidence, kept in three classes
+
+**A. Captured payload evidence (B0 only; the engine's JSON writer).** Exactly **one** `ObjectiveCompleted` in 204 sent events — session 1, probe sequence 157, engine index 163, frame 128572:
+
+```
+{"Name":"ObjectiveCompleted","ContractSessionId":"2516109628137904204-c00b2d17-…","ContractId":"00000000-0000-0000-0000-000000000200",
+ "Value":{"Id":"aca8cd5b-e3a3-4a60-b953-c590484f0491","Type":"kill","Category":"primary","ExcludeFromScoring":false},
+ "XboxGameMode":3.000000,"XboxDifficulty":0.000000,"Timestamp":759.401611,"Origin":"gameclient","Id":"34d96c08-…"}
+```
+
+Facts about it: (1) it followed the `Kill` of Viktor Novikov (`IsTarget: true`, actor `052434e7…`, index 162, t=759.388) by **13 ms** and one index; three `_DONTSEND` `ChallengeCompleted` followed it at the same timestamp and 240 ms later; (2) its envelope is the **"Name-first" variant** with top-level `XboxGameMode`/`XboxDifficulty` that B0 also showed on `ContractStart`, `ContractFailed`, `Spotted`, `Witnesses`, `ShotsFired`, `ShotsHit` and the client `ChallengeCompleted` (36 of 204 events) — the intake reads `Name`, `ContractSessionId`, `Timestamp` by key, and `ContractFailed` with this shape normalized in B2, so the envelope fields are readable; (3) `Value.Id` `aca8cd5b-…` equals **none** of: the killed actor's `RepositoryId` (`052434e7…`), its `ActorId`, the `ContractId` (`…0200`), the `ContractSessionId`, the kill item (`e70adb5b…`), the event's own `Id` (`34d96c08…`); (4) `Type: "kill"` and `Category: "primary"` are lowercase strings — not the uppercase enum member names of class C, so if they are enum-derived the writer or the engine lower-cased them; `Kill`'s enums were written as *numbers*, so the writer's behaviour is not uniform; (5) `ExcludeFromScoring: false`; (6) no second `ObjectiveCompleted` in B0: the second target was not killed, the exit was never reached, and session 2 was exited to the menu. **The payload shape is known from one sample.**
+
+**B. Name-only evidence (production runs; no payloads).** B1 (§26): **one** `ObjectiveCompleted`, index 134, 770 ms after the `Kill` burst that included Novikov (`is_target: true`, index 126, explosion) — unsupported, inside the attempt. B3 (§32): 0. §34: 0. §36: 0. §40: 0 (no target was killed). `ObjectiveFailed`, `ObjectiveUpdate`, `ObjectiveActivate` or any other objective name: **never captured** in any run (the B0 taxonomy lists 43 names; none other than `ObjectiveCompleted` names an objective). Both captured occurrences (B0, B1) were **inside the predicate window**, each after a target kill. Nothing has ever been observed at a *completion transition*: no run has completed a mission, so what the stream emits when the last objective completes, at the exit, and around the predicate fall is **not captured** — including whether `ObjectiveCompleted` fires for the exit, whether a `ContractEnd` exists, and the order of those relative to `mission.stopped`. (`ContractEnd` was listed as unobserved by §27 and remains so.)
+
+**C. Static hypotheses (SDK headers; labelled, not evidence of the wire).** `Enums.h`: `IContractObjective_ObjectiveType { KILL=0, SETPIECE=1, CUSTOMKILL=2, CUSTOM=3 }`, `IContractObjective_Category { PRIMARY=0, SECONDARY=1, CONDITION=2 }`, `IContractObjective_State { IN_PROGRESS=0, COMPLETED=1, FAILED=2 }`, `IContractObjective_Type { CONTRACT_OBJ_EVENT_BASED, CONTRACT_OBJ_SM_BASED }`, `EObjectiveType { OBJECTIVE_PRIMARY, OBJECTIVE_SECONDARY, OBJECTIVE_TERTIARY }`. `ZContract.h`: `ZContractsManager::SContractContext` holds `TArray<IContractObjective*> m_aObjectives`, `ZString m_sContractId` and `ZDynamicObject m_contractData` — the engine's own contract context carries a list of objective objects beside the contract data; `IContractObjective` itself is not declared. `Pins.h` (entity pin names, not telemetry names): `ObjectiveActivate`, `ObjectiveCompleted`, `ObjectiveFailed`, `ObjectiveUpdate`, `PrimaryObjectiveCompleted/Failed`, `SecondaryObjectiveCompleted/Failed`, `OnNonTargetObjectiveCompleted`, `OnShowExitObjective`, `*HudDisplayed`. Readings: the observed `Type: "kill"` / `Category: "primary"` match `KILL` / `PRIMARY` by name, which supports the *meaning* of the two fields (objective type and category per the engine's own objective model), not their wire types; the pin set shows that the engine has objective *failure* and *update* notions, which says nothing about whether telemetry names for them exist. **No static path to the telemetry writer's field types exists** (as for items).
+
+### 42.2 What `Value.Id` identifies
+
+Established from class A: it is not an actor id, not an actor or item repository id, not the contract id, not the session id, not the event id. Consistent with class C and with the structure of a Glacier contract (its objectives are listed in the contract data with their own identifiers): **the id of the objective within the contract's definition** — one identifier per objective *as defined*, stable across sessions of the same contract if the hypothesis holds. That is a hypothesis with one sample; what the design can state is only: *an opaque identifier the engine attached to the completed objective, verbatim, not resolved, not a Relay identity, never assumed to be an actor, repository or contract id.* A second B0-like capture of the same contract's target objective would test the stability claim (same `Id` across sessions) and is one purpose of the proposed run.
+
+### 42.3 Occurrence, objective state, mission completion — three different things
+
+- **An `ObjectiveCompleted` occurrence** is the engine's statement that one objective (by `Id`, with its type and category) was completed at that moment. Two have ever been captured, both after a target kill.
+- **Overall objective state** (which objectives exist, which are still in progress or failed) is **not** in the stream as observed: there is no activation, update or failure event captured, no "all objectives" event, and no list. The static `IContractObjective_State` shows the engine has such state; the telemetry has not shown it. BEAM must not derive "N of M objectives" or "all objectives done" from occurrences — M is unknown.
+- **Mission completion** is a separate fact that **no event has evidenced**. `mission.stopped` says only that the predicate fell (§13); `contract.ended` has been seen only for restart and exit (`ContractFailed`); a completion-side contract event (`ContractEnd`?) has never been captured. An objective occurrence, including a final one, is never mission completion, and the summary never says so (the "complete" rule of §30 applies with full force here: the word must not appear in a summary line).
+
+### 42.4 Completion-transition ordering and gating — examined before any gate is proposed
+
+Evidence on ordering: both captured occurrences were mid-mission, inside the attempt (B0: 13 ms after the kill, 400+ s before the restart; B1: within a second of the kill, mid-mission). Evidence on the completion transition: **none** (42.1 B). The item gate (attempt-gated, §38.5) rests on 24 + 11 occurrences all strictly inside the window; the objective evidence is 2 occurrences inside the window and **no observation at the one moment where an objective occurrence is most likely to sit at or after the predicate fall** — the exit. The B2 record is the warning: `ContractFailed` landed *after* the fall on exit-to-menu, and the frame update stalls during unload (§29), so an event emitted at the exit transition can be drained only on the next processed frame, after the edge, when an attempt-gated row counts it as outside-attempt and never publishes it (§30.7).
+
+Therefore the gate is **not** inherited. Options, stated with what each costs:
+
+1. **Attempt-gated (as items).** Publishes the mid-mission occurrences (the evidenced case). A completion-time occurrence that lands after the fall is counted as outside-attempt and logged with its name and index — *not lost as evidence, but not published*. The first run would then establish the ordering from the counter and the warning line, and the gate could be revised with evidence.
+2. **Ungated (as contract lifecycle).** Publishes whenever captured and valid; BEAM correlates by order. Costs: an occurrence after the fall arrives at BEAM with no open attempt and must be kept unattributed (never attached by adjacency), which for an *objective* — an attempt-scoped fact — makes the view awkward; and the choice would be made with zero evidence that the case occurs.
+
+**Proposal:** option 1 for the first implementation, **with the completion run's primary purpose being to observe the transition** (the outside-attempt counter and the `observed with no open mission attempt` line are the instruments; §30.7's two-sided frame-order tests cover both placements). If the run shows an objective occurrence after the fall, the record states it and the gating decision is revisited as a reviewed correction, not fixed forward.
+
+### 42.5 Out of this surface, by prior decision
+
+- **`ChallengeCompleted`** (client, `_DONTSEND: true`; B0 22, B1 23, B3 37, §34 1, §36 1): stays suppressed by the §18 policy; not normalized, counted as `dont_send`. The backend's authoritative `ChallengeCompleted` and every other `OnEventReceived` event (B0 taxonomy: `Progression_XPGain`, `SegmentClosing`, `ContractSessionMarker`, backend `ContractFailed {FailType: "OrphanedSession"}`) are **outside the production surface** (one detour, `OnEventSent` only); no second hook is proposed.
+- **Contract lifecycle stays B2's.** A completion-side contract event, if one exists, belongs to `contract.ended`'s family and to B2's record — this design identifies the gap (completion never observed; `ContractEnd` shape unknown; `reason_kind` has no completion value) and proposes **no** speculative vocabulary for it. If the completion run captures such an event it is recorded under §27/§29's ownership and designed there.
+- **`OpportunityEvents` / `OpportunityStageEvent`** (B0 11 / 5; `{RepositoryId, Event: StageActive|StageInactive, OpportunityStageID}`): opportunity stages are not objectives; out of scope, counted by name.
+
+### 42.6 Proposed first production vocabulary (all proposed; nothing accepted)
+
+One Relay event type, one source name:
+
+| Glacier name | Relay event | Evidence | Gating (42.4) |
+|---|---|---|---|
+| `ObjectiveCompleted` | `objective.completed` v1 | A (1 payload) + B (1 name) | attempt-gated for v1; the run tests it |
+
+Payload:
+
+| Field | Source | Required | Rule |
+|---|---|---|---|
+| `source` | — | yes | `"engine_telemetry"` |
+| `engine_event` | `Name` | yes | `"ObjectiveCompleted"`; provenance |
+| `objective_id` | `Value.Id` | **yes, non-empty string** (the subject) | verbatim; opaque; not validated as a GUID; accepted whether the intake copied a `ZString` or rendered a `ZRepositoryID` |
+| `objective_type` | `Value.Type` | optional; present must be a string | verbatim (`"kill"` observed) |
+| `objective_category` | `Value.Category` | optional; present must be a string | verbatim (`"primary"` observed) |
+| `exclude_from_scoring` | `Value.ExcludeFromScoring` | optional; present must be a bool | verbatim |
+| `contract_session_id`, `engine_timestamp_s` | envelope | optional | as on the other families |
+
+Only the subject is required, as for items (§38.5): with one sample, the field types of `Type`/`Category`/`ExcludeFromScoring` are hypotheses, and a wrong hypothesis must produce a malformed line with the §38.7 per-field detail rather than silently dropping a field the engine did send. Malformed (counted per name, logged with the detail, not published, no sequence): `Value` not an object; `Id` missing, non-string or empty; a present optional field of the wrong kind. Not read: `XboxGameMode`, `XboxDifficulty` (envelope-level, unexplained). `_DONTSEND` policy unchanged. No deduplication: a second occurrence with the same `objective_id` in one attempt is two events (whether that can happen is unknown).
+
+Naming: the wire name says what the engine said — *this objective* was completed. It does not say the mission was; the BEAM summary wording (42.7) keeps the reserved word out of the human-readable line.
+
+### 42.7 BEAM facts and summary — occurrences only
+
+Facts: `Attempt.objective_events` — ordered `{sequence, timestamp, received_at, payload}`, immutable, attached only to the attempt open at receipt (`unattributed_objective_events` otherwise; never by adjacency). Derivation `Objectives.derive/2`, pure, over the facts plus `AttemptHistory`:
+
+```
+completed:        count of objective.completed occurrences
+by_objective:     per objective_id, first-seen order: {occurrences, type?, category?, exclude_from_scoring?}  (first non-empty values)
+objective_ids:    distinct objective_id, first-seen order
+history:          AttemptHistory.history/2 (same bounding as disguise and items; later attempts cannot alter an earlier view)
+```
+
+Explicitly **not derived**: how many objectives the contract has; whether any objective is outstanding or failed; whether the mission was completed; any link between an objective occurrence and an actor outcome (the B0 kill 13 ms earlier is chronology, not a join; a later stage may *label* "same actor as the target killed 13 ms before" as BEAM-side correlation, never as the objective's subject, since `Id` is not the actor); any meaning of `Type`/`Category` beyond the engine's string.
+
+Summary line per attempt, observed facts only, the deferred names not shown:
+
+```
+    objectives (engine telemetry): 1 reported done — kill/primary aca8cd5b… #12 @759.401611s; history intact
+```
+
+With none: `objectives (engine telemetry): none observed in the attempt`. Wording rules: **never** "complete", "completed", "completion", "mission accomplished", "all objectives", "N of M", "remaining"; the engine's `Type`/`Category` strings printed as sent and labelled by the line header; the id shortened as elsewhere. (`objective.completed` is a wire name and never appears in the rendered summary; the facts list may show `engine_event` as provenance in the data map, not in the text.) The existing wording test (`refute =~ ~r/complet/i`) applies to the new line unchanged.
+
+### 42.8 Diagnostics — bounded, escaped, already-copied data
+
+The §38.7 mechanism, reused: a malformed `ObjectiveCompleted` lists each expected key (`Id`, `Type`, `Category`, `ExcludeFromScoring`) with its copied kind, the engine type name only for `Unsupported` values, no string values, type names escaped and capped at 64 bytes. Same limits: copied kinds are not exact engine types; a successful normalization establishes contract compatibility only; a malformed line on this name in a run is a recorded validation failure and the run continues. Discovery results (kinds, type names) are recorded, not acted on in the run.
+
+### 42.9 Tests (proposed) — with the coverage boundary stated
+
+Native, from a fixture of the one B0 payload (`B0Objectives.h`, `UserId`/`SessionId` removed, the Name-first envelope kept verbatim) and synthetic variants: exact Relay JSON; the Name-first envelope's `Timestamp`/`ContractSessionId` read by key; optional fields absent and valid (minimal `{Id}` object); malformed: `Value` a bare string (the disguise shape), array, number, `Null`, `Unsupported`, absent; `Id` missing/empty/`Unsupported('ZRepositoryID')`/number; `Type` number, `Category` `Unsupported('IContractObjective_Category')`, `ExcludeFromScoring` string — each with the per-field detail; `_DONTSEND` on the name (never observed; policy); repeated occurrence with the same `Id` = two events; `ChallengeCompleted` with `_DONTSEND` beside it stays `DontSend`; `ObjectiveFailed`/`ObjectiveUpdate`/`OpportunityEvents` unsupported and counted; **frame order on both sides of the fall frame's drain** (the 42.4 question made explicit: an occurrence queued before the drain publishes before `mission.stopped`; one presented after is outside-attempt, counted and warned, with the warning line carrying name and index); B1–B4 rows unchanged; a formatter-derived `Id` case **only if** the id is ever shown to be a `ZRepositoryID` — until then, the id is a string from the corpus and the case would prove nothing.
+
+**Coverage boundary.** Hand-built and `TestJson` observations exercise the normalizer, serialization, adapter, frame and sink — downstream consumers — and never `TelemetryIntake::Copy`, the Name-first envelope's actual intake (`Inspect` finds keys by name; that it does so for this envelope variant at runtime is evidenced by B2's `ContractFailed`, not by any offline test), the bool branch, or the `Null`/`Unsupported` classification. No production helper beyond the normalizer is shared. The engine field types of `Id`, `Type`, `Category`, `ExcludeFromScoring` are **not covered offline** and are what the run establishes or rejects.
+
+Elixir: validation (subject required; optional typed; unknown versions; `objective.failed`, `objective.updated`, `mission.completed` unknown); the B0 occurrence through `Lifecycle` → count 1, `by_objective` one row, line text; SYN: no occurrence; two occurrences, two ids; the same id twice; after the stop → unattributed; gap / interruption / supersession → history incomplete, counts unchanged; the `63184c4` regressions repeated through `AttemptHistory`; replay equivalence from the bare facts with every external fact supplied by the stream; wording (`complet` never in the rendered text); a listener case with the native wire fixture (after the wire step exists).
+
+### 42.10 Research questions (explicit; none assumed)
+
+1. What the stream emits at a **completion transition**: an `ObjectiveCompleted` for the second target; one for the exit (the `OnShowExitObjective` pin suggests the engine models the exit as an objective; the telemetry has not shown it); a completion-side contract event (`ContractEnd`? shape unknown; B2's); their order relative to the predicate fall; whether `mission.stopped` even occurs on completion in the same way as on exit-to-menu.
+2. Whether `Value.Id` is stable across sessions of the same contract (the 42.2 hypothesis) — testable by killing Novikov in a fresh session and comparing with `aca8cd5b…`.
+3. Whether an objective can complete **without** an actor outcome (a setpiece/custom objective; `Type` values other than `"kill"`); whether `Category` ever reads `"secondary"`/`"condition"`; whether `ExcludeFromScoring` is ever `true`.
+4. Whether `ObjectiveFailed`-like telemetry exists (never captured; the pin exists).
+5. The engine types of the four fields (42.8 would show the kinds on rejection; a §38.9-style shape diagnostic is **not** proposed for this name, because its one sample already normalizes under the proposed rules — the run is the test).
+
+### 42.11 Bounded runtime script (proposed; requires its own authorization after implementation and gate; the operator confirms readiness first)
+
+Fresh Paris → kill Viktor Novikov (expect `Kill` `is_target: true` → `actor.died`, then `ObjectiveCompleted` → `objective.completed` with `Type kill`, `Category primary`; compare `Id` with `aca8cd5b…`) → kill Dalia Margolis (expect a second `objective.completed` with a different `Id`) → proceed to an exit and **complete the mission** → observe everything the transition emits (names, order, placement relative to the fall; the B1 actor rows live) → return to menu → quit. Criteria: both target-kill occurrences captured, normalized, published, received, inside the attempt; the 4-stage reconciliation of §39 per name (captured = normalized + malformed; normalized = published + outside-attempt; published = received), with **any outside-attempt objective occurrence recorded with its index and position as the transition finding, not as a failure** (it is what the run is for); zero malformed on the name; zero drops, rejected envelopes, gaps, mismatches; prior vocabulary classes stated (B1 kills live; B2 restart and B3/B4 rows offline-only unless the script touches them); 0 ERROR/FAULT; rollback by hash. A completion-side contract event, if captured, is recorded as B2's finding (unsupported, counted by name; its shape only if `telemetry_log` ever gains a raw mode — not proposed here). The run does not make `objective.completed` accepted; it establishes or rejects the field hypotheses and answers 42.10's first two questions.
+
+**Stop here for B5 design review. Nothing in this section is implemented, built, deployed or run.**
