@@ -55,7 +55,7 @@ defmodule GlacierRelay.Events do
 
   Same shape for the three. `item_repository_id` names an item *definition* (two wrenches are
   indistinguishable by it); `item_instance_id` is present only when the engine named a non-empty
-  instance. `item_name`, `item_type` and `online_traits` are the engine's strings verbatim, as
+  instance (present and empty is rejected, not read as absent). `item_name`, `item_type` and `online_traits` are the engine's strings verbatim, as
   evidence, never identity. Each occurrence stands alone: a removal and a throw are two events,
   never paired, merged or inferred from one another, and none of them says what is held, what the
   inventory contains or whether an item was recovered.
@@ -281,13 +281,17 @@ defmodule GlacierRelay.Events do
 
   # The same shape for the three item types (design section 38.5). The definition id is the
   # subject: required and non-empty, its form unchecked. Every other item field is optional and
-  # typed when present; the native side omits an empty InstanceId rather than sending "".
+  # typed when present. item_instance_id is the one field where the contract says "absent when
+  # the engine sent an empty string" (the native side omits it), so a present value must be a
+  # non-empty string: an empty, null or non-string value is a contract violation and is rejected,
+  # never read as absence. item_name and item_type may be present and empty; online_traits may be
+  # present and empty.
   defp item_payload(payload) do
     with {:ok, source} <- Envelope.field(payload, "source", &Envelope.non_empty_string?/1),
          {:ok, engine_event} <- Envelope.field(payload, "engine_event", &Envelope.non_empty_string?/1),
          {:ok, item_repository_id} <-
            Envelope.field(payload, "item_repository_id", &Envelope.non_empty_string?/1),
-         {:ok, item_instance_id} <- optional_string(payload, "item_instance_id"),
+         {:ok, item_instance_id} <- optional(payload, "item_instance_id", &Envelope.non_empty_string?/1),
          {:ok, item_name} <- optional_string(payload, "item_name"),
          {:ok, item_type} <- optional_string(payload, "item_type"),
          {:ok, online_traits} <- optional(payload, "online_traits", &string_list?/1),

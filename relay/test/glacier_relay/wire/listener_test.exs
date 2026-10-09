@@ -528,6 +528,27 @@ defmodule GlacierRelay.Wire.ListenerTest do
     :gen_tcp.close(socket)
   end
 
+  test "an item envelope with an empty instance id is rejected on the wire and the next valid envelope still arrives" do
+    id = "empty-instance-id"
+    [playing_line, pickup_line, removed_line] = [Enum.at(@b4, 1), Enum.at(@b4, 3), Enum.at(@b4, 5)] |> Enum.map(&String.replace(&1, @b4_id, id))
+    bad = String.replace(pickup_line, ~s("item_repository_id":"), ~s("item_instance_id":"","item_repository_id":"))
+    assert bad =~ ~s("item_instance_id":"")
+
+    socket = connect()
+    :ok = :gen_tcp.send(socket, playing_line <> "\n" <> bad <> "\n" <> removed_line <> "\n")
+    assert_receive {:relay_event, %{adapter_instance_id: ^id, sequence: 2, event_type: "mission.playing"}}, 1_000
+    assert_receive {:relay_event, %{adapter_instance_id: ^id, sequence: 6, event_type: "item.removed_from_inventory"}}, 1_000
+    refute_received {:relay_event, %{adapter_instance_id: ^id, sequence: 4}}
+
+    instance = MissionSession.state()[id]
+    # The rejected line never reached the model: it is not an item fact, not an absence, and the
+    # only trace is the sequence gap 3→6 (the rejected #4 plus the #5 this test did not send).
+    assert [%Attempt{item_events: [%{type: :removed_from_inventory, sequence: 6}]}] = instance.attempts
+    assert instance.gaps == [{3, 6}]
+    assert GlacierRelay.Items.derive(hd(instance.attempts), instance).removed_from_inventory == 1
+    :gen_tcp.close(socket)
+  end
+
   defp wait_until(fun, attempts \\ 50) do
     cond do
       fun.() -> :ok

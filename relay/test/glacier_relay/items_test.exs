@@ -262,7 +262,6 @@ defmodule GlacierRelay.ItemsTest do
       assert {:ok, %{online_traits: []}} = Events.validate("item.picked_up", 1, wire(:picked_up, @wrench, %{"online_traits" => []}))
 
       for {key, bad} <- [
-            {"item_instance_id", 1},
             {"item_name", true},
             {"item_type", ["CC_Wrench"]},
             {"online_traits", "melee_nonlethal"},
@@ -278,6 +277,26 @@ defmodule GlacierRelay.ItemsTest do
 
       assert {:error, {:missing_field, "source"}} =
                Events.validate("item.picked_up", 1, Map.delete(wire(:picked_up, @wrench), "source"))
+    end
+
+    test "item_instance_id: absent is valid; present must be a non-empty string, never read as absent" do
+      for type <- [:picked_up, :thrown, :removed_from_inventory] do
+        {event_type, _} = type_name(type)
+        assert {:ok, %{item_instance_id: nil}} = Events.validate(event_type, 1, wire(type, @wrench))
+
+        assert {:ok, %{item_instance_id: "9a3f1dbb-6f6e-4d7b-9a51-2f0c1a7b4e21"}} =
+                 Events.validate(event_type, 1, wire(type, @wrench, %{"item_instance_id" => "9a3f1dbb-6f6e-4d7b-9a51-2f0c1a7b4e21"}))
+
+        for bad <- ["", nil, 1, 1.5, true, ["x"], %{"a" => 1}] do
+          assert {:error, {:invalid_field, "item_instance_id"}} =
+                   Events.validate(event_type, 1, wire(type, @wrench, %{"item_instance_id" => bad}))
+        end
+      end
+
+      # The rule is specific to the instance id: empty display strings and an empty trait list
+      # stay valid, as before.
+      assert {:ok, %{item_name: "", item_type: "", online_traits: []}} =
+               Events.validate("item.picked_up", 1, wire(:picked_up, @wrench, %{"item_name" => "", "item_type" => "", "online_traits" => []}))
     end
 
     test "unknown versions and the names that are not vocabulary are rejected" do
