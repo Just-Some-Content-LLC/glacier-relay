@@ -2300,7 +2300,7 @@ Frozen artifacts: SDK `relay/m2` `97946eb1` (DLL build source; no generator-only
 
 **Stop here for implementation review. Nothing in this section was deployed, loaded or run against the game.**
 
-## 44. B5 controlled runtime experiment (2026-10-09, 06:44Z to 07:13Z) — two `ObjectiveCompleted` crossed the typed intake with their payloads; the completion transition observed for the first time; pipeline PASS, vocabulary validated for the observed shape; not accepted
+## 44. B5 controlled runtime experiment (2026-10-09, 06:44Z to 07:13Z) — two `ObjectiveCompleted` crossed the typed intake with their payloads; the completion transition observed for the first time on this route; pipeline PASS, vocabulary validated for the observed shape (accepted in section 45)
 
 Authorization: one controlled run under §43 after the operator confirmed readiness ("ready"). Frozen artifacts, verified before installation with **no drift**: SDK `relay/m2` `97946eb170868aeccc6802c4c953dba5f0d7a409` (clean, equal to origin), **DLL `4e3a0453b041e430b2f8c2b6cdc25499f7739e6c18076c171d43732df6ada098`** (build tree, dated 06:21Z = the §43 gate build; then the installed copy, same hash), glacier-relay `666edb4` (clean, equal to origin, containing BEAM `f5985f2`); preserved checkpoints verified (`b4-accepted-artifacts` 4/4, `b3-accepted-artifacts` 4/4, `b3diag-artifacts` 3/3); Retail 107 files with hashes identical to the post-§40 state; M0 26/26; `mods.ini` `b90b4c5e…`. No rebuild, no implementation change, no additional instrumentation. Evidence: `%TEMP%\glacier-m0\hitmen\b5-run1\` (`sha256.txt`: native log `relay-20261009-064510-75620.log` `3b7acca3…`, `beam.log` `f703916e…`, `beam-final-state.txt` `bb391847…`, `beam-events.ndjson` `4496fa40…`, `native-beam-compare.txt` `c16cbf6d…`, `operator-actions.txt` `6e4c3a8c…`, `watch-native.out`, `mods.ini.*`, `installed-dll.sha256`, `retail-{before,installed,after}.sha256`).
 
@@ -2318,15 +2318,15 @@ BEAM first (`beam.pid` 158257), watcher (`watcher.pid` 158335). Install 06:44:42
 
 Fresh Paris (`mission.playing #1` 06:47:49Z, `contract.started #2`, session `2516107723463793113-3b2aba6d-c825-4392-89b0-864e7f321709`, paired `open_attempt`; `StartingSuit` → `#3` `874c4c48…`). **Before the first target, unscripted actions** (reported after the fact and from the stream): briefcase pickups, a disguise change to `2018db77…` (`#5`), crowbar, propane flasks, a sniper rifle ("Sunsieger 300" `fdd80c99…`, `Sniper_SakoTRG`) picked up twice; operator: *"I pulled out the sniper rifle and shot the security system to disable it"* — stream: **`ItemRemovedFromInventory #11` (rifle) with no `ItemThrown` beside it** (`#12` is a briefcase pickup); name-only `SecuritySystemRecorder`. First target: propane throw (`#14`/`#15`) → `actor.died #16` **Viktor Novikov** (`is_target: true`, `accident`, engine index 71, t=217.108) → `#17` Donovan (guard), `#18` Lauzier pacified → **`objective.completed #19`** (index 77, t=217.286, **178 ms after the kill**; between them `Pacify` 75, `AccidentBodyFound` 76; index 74 not presented): `objective_id` **`aca8cd5b-e3a3-4a60-b953-c590484f0491`**, `kill`, `primary`, `exclude_from_scoring: false`, session and timestamp present. Then: Palace Master Key (`Other_Keycard_A`, traits `["NONE"]`), lead pipe, `actor.pacified #24` McKenzie (`murder`), IAGO Invitation (**`item_type` `eOther_GenericPickup`** — the `e` prefix present this time), change back to the suit (`#27`), three more propane throws; HUD (operator): *"someone was suspicious of me but I was not compromised"* — stream: `Spotted` ×4, `Investigate_Curious`, `Trespassing`, **no `DisguiseBlown`**; *"I passed a frisk"* — stream: `BeingFrisked`, `FriskedSuccess` ×2 (name-only). Second target: propane throw (`#35`/`#36`) → `actor.died #37` **Dalia Margolis** (`is_target: true`, `accident`, index 173, t=970.424) → `#38`–`#41` four non-targets (`accident`) → **`objective.completed #42`** (index 187, t=970.574, 149 ms after the kill; `AccidentBodyFound` 186 between; 184–185 not presented): `objective_id` **`9da41883-4462-47d6-b892-741311dee9a8`**, `kill`, `primary`, `false`. HUD: *"people are searching for me right now but I am heading toward the exit"*; two briefcase pickups (`#43`, `#44`); *"exiting now"*.
 
-**Completion transition (07:08:46Z–07:09:04Z), all name-only, all `unsupported` and counted:** index 219 **`exit_gate`** (07:08:46.476Z), 220 **`ExitInventory`** (07:09:01.467Z), 221 `ShotsFired`, 222 **`ContractEnd`** (07:09:01.718Z — the first time this name has been seen; its payload was not captured, by design), 223 `ChallengeCompleted` (`dont_send`); 218 not presented. **No `ObjectiveCompleted` for the exit** (not captured). HUD: *"the end of level XP stuff already happened and I am on the menu for the next mission"* — during those screens the scene stayed the Paris mission entity at stage 8, loaded, and **the predicate did not fall**: `mission.stopped #45` came at 07:11:38Z, 2 min 37 s after `ContractEnd`, when the operator returned to the main menu. Counters at the fall (the last line; nothing was captured after it): `seen 210, captured 43, unsupported 142, dont_send 25, unreadable 0, truncated 0; queue pushed 43, dropped 0; normalized 43, malformed 0, outside attempt 0, ungated published 3`. Quit → process exited 07:12:34Z; BEAM `disconnected after 45 line(s), 0 rejected`.
+**Completion transition (07:08:46Z–07:09:04Z), name-only:** index 219 **`exit_gate`** (07:08:46.476Z), 220 **`ExitInventory`** (07:09:01.467Z), 221 `ShotsFired` and 222 **`ContractEnd`** (07:09:01.718Z) — these four `unsupported` and counted (`ContractEnd` seen for the first time; its payload not captured, by design, and still unknown) — and 223 `ChallengeCompleted`, **`_DONTSEND`-suppressed** (not unsupported); 218 not presented. **No `ObjectiveCompleted` for the exit** (not captured). HUD: *"the end of level XP stuff already happened and I am on the menu for the next mission"* — during those screens the scene stayed the Paris mission entity at stage 8, loaded, and **the predicate did not fall on this route**: `mission.stopped #45` came at 07:11:38Z, 2 min 37 s after `ContractEnd`, when the operator returned to the main menu. (This Paris run, build 3.280.0.0, this exit and menu route; other routes unobserved.) Counters at the fall (the last line; nothing was captured after it): `seen 210, captured 43, unsupported 142, dont_send 25, unreadable 0, truncated 0; queue pushed 43, dropped 0; normalized 43, malformed 0, outside attempt 0, ungated published 3`. Quit → process exited 07:12:34Z; BEAM `disconnected after 45 line(s), 0 rejected`.
 
 ### Validation against §43
 
 1. **≥1 captured `ObjectiveCompleted` with payload intact at BEAM:** two (`#19`, `#42`), both attached to attempt 1 with `basis: :order_session_match`, `attempt_session` = occurrence session = the paired session; payloads at BEAM equal the native JSON field for field. **Met.**
 2. **Whole-log reconciliation** (the fall's counters were final here, but checked against the seen lines anyway): seen lines 210 = counters `seen 210`; captured per name `ItemPickedUp` 19, `Kill` 7, `ItemRemovedFromInventory` 5, `ItemThrown` 4, `Pacify` 2, **`ObjectiveCompleted` 2**, `Disguise` 2, `StartingSuit` 1, `ContractStart` 1 = **43** = counters `captured 43` = `pushed 43`; `not normalized` lines 0, `no open mission attempt` lines 0, so normalized = captured for every name; **normalized 43 = published 43 (40 gated + 3 ungated) + outside-attempt 0**; plus `mission.playing`/`mission.stopped` = **45 published = 45 `sent` = 45 received = 45 attributed + 0 unattributed**; pending 0, `queue full` 0. For objectives: **captured 2 = normalized 2 + malformed 0; normalized 2 = published 2, outside-attempt 0; published 2 = received 2 = attributed 2 + unattributed 0.** **Met.**
 3. **Zeros:** objective malformations 0, drops 0, rejected 0, gaps `[]`, field mismatches 0. **Met.**
-4. **Closed attempt unchanged:** nothing arrived after `mission.stopped #45`; BEAM's unattributed lists are empty; the attempt-1 objective facts and derived view are those recorded at receipt. `contract.ended` was **not observed** (`ContractEnd`, not `ContractFailed`, was emitted; B2's row does not cover it), so disposition reads `not observed; contract end not seen` — B2's legitimate late-correlation path was not exercised. **Met** (nothing to change; the gap is B2's, below).
-5. **Observations, not rules:** second-target occurrence observed; **two distinct ids**; the first **equal to the historical B0 id `aca8cd5b…`** (one more observation for the stability hypothesis, not proof); exit objective **not captured**; both `kill`/`primary`/`false`.
+4. **Closed attempt unchanged:** the after-stop invariance case was **not exercised live** — nothing arrived after `mission.stopped #45`, BEAM's unattributed lists are empty, and the attempt-1 objective facts and derived view are those recorded at receipt; the offline coverage of §43 (after-stop, after-fall, contradiction, replay) stands as the evidence for that behaviour. Likewise, live attribution exercised the **matching-session** path only (`:order_session_match` ×2); the unpaired, contradicting and no-open-attempt paths were exercised offline. `contract.ended` was **not observed** (`ContractEnd`, not `ContractFailed`, was emitted; B2's row does not cover it), so disposition reads `not observed; contract end not seen` — B2's legitimate late-correlation path was not exercised. **Met for what the run could show.**
+5. **Observations, not rules:** second-target occurrence observed; **two distinct ids**; the first **equal to the historical B0 id `aca8cd5b…`** — a match across two observations (B0 2026-10-07, this run), which does not prove stability and does not join the id to an actor; exit objective **not captured**; both `kill`/`primary`/`false`.
 6. **Grouped metadata:** two rows, each one occurrence; `objective_type`/`objective_category` are the first observed strings (`kill`, `primary`); `exclude_from_scoring` observed `false` on both (not absent); conflicts none (nothing to resolve).
 7. 0 ERROR/FAULT; rollback by hash. **Met.**
 
@@ -2336,20 +2336,162 @@ Prior vocabulary, by class: live in this run — lifecycle, `contract.started`, 
 
 ### Findings (recorded, not acted on)
 
-1. **A completed mission does not fall the predicate** while the end-of-level screens and the next-mission menu are shown; the mission scene stays loaded at stage 8. The fall came only on returning to the main menu, 157 s after `ContractEnd`. Attempt duration 1429.4 s therefore includes the post-mission screens. Both objective occurrences and everything completion-side were inside the attempt; the ungated row's after-the-fall path was not exercised live (covered offline, §43).
+1. **On this Paris run, build 3.280.0.0, and this exit/menu route, completing the mission did not fall the predicate** while the end-of-level screens and the next-mission menu were shown; the mission scene stayed loaded at stage 8. The fall came only on returning to the main menu, 157 s after `ContractEnd`. The attempt duration of 1429.4 s therefore **includes the post-mission screens and is not active-play duration**. Other exit/menu routes (restart from the end screen, replanning, a different location) are unobserved. Both objective occurrences and everything completion-side were inside the attempt; the ungated row's after-the-fall path was not exercised live because nothing arrived after the fall (covered offline, §43).
 2. **Completion-side names (name-only):** `exit_gate`, `ExitInventory`, `ContractEnd` — none captured with a payload (unsupported by design); `ContractEnd` is B2's completion-side gap, now evidenced as a name. No `ContractFailed`; no `contract.ended`; no `ObjectiveCompleted` for the exit.
 3. **Objective occurrences followed each target kill by 178 ms and 149 ms**, with an `AccidentBodyFound` (and once a `Pacify`) between — chronology, not a join; which actor each objective concerned is not in the occurrence.
-4. **New names for the taxonomy (name-only):** `BeingFrisked`, `FriskedSuccess`, `SecuritySystemRecorder`, `AllPacifiedHidden`, `exit_gate`, `ExitInventory`, `ContractEnd`. `ItemDropped` ×12 (never with a payload), `ItemStashed`/`Guard_FoundItem` ×2 each.
+4. **Names captured name-only in this run.** New to the taxonomy: `BeingFrisked`, `FriskedSuccess`, `exit_gate`, `ExitInventory`, `ContractEnd` (never captured with a payload). Recurrences: `SecuritySystemRecorder` (a B0 payload exists: `{event: "destroyed", recorder: 2956087656}`; also by name in B1 and B3) and `AllPacifiedHidden` (by name in B1; never with a payload). `ItemDropped` ×12 (never with a payload), `ItemStashed`/`Guard_FoundItem` ×2 each (B0 payloads exist).
 5. **Items (B4, beside the scope):** a removal with no throw beside it (sniper rifle, `#11`) — the §41 unobserved case, now observed once; `item_type` `eOther_GenericPickup` keeps the `e` prefix (the §38.1 "names without the `e` prefix" reading has a counter-example); trait `"NONE"` on two definitions; all 28 item envelopes omitted `item_instance_id`.
 6. HUD observations (not compromised; frisk passed; searching) matched the stream's name-only chronology (`Spotted`, `Investigate_Curious`, no `DisguiseBlown`; `BeingFrisked`/`FriskedSuccess`) — operator evidence beside the stream, not derived from it.
 7. Indices not presented to the detour: 5, 24, 25, 65, 68, 74, 177, 184, 185, 200, 201, 202, 218 (what they represented is not inferred).
 
 ### Unresolved questions
 
-Whether `Value.Id` is stable across sessions (one more match for Novikov's objective; Margolis's `9da41883…` has one observation); what `ContractEnd`, `exit_gate` and `ExitInventory` carry (name-only; a payload needs separately authorized instrumentation and is B2's/B6's design question); whether an `ObjectiveCompleted` ever occurs for an exit (not captured here); non-`kill` objective types; the engine field types (a successful normalization shows contract compatibility only); whether the predicate falls on completion if the player leaves the end screens by another route.
+Whether `Value.Id` is stable across sessions (Novikov's objective id matched across two observations; Margolis's `9da41883…` has one); what `ContractEnd`, `exit_gate` and `ExitInventory` carry (name-only; a payload needs separately authorized instrumentation — `ContractEnd` is tracked as B2 follow-up in section 46.9); whether an `ObjectiveCompleted` ever occurs for an exit (not captured here); non-`kill` objective types; the engine field types (a successful normalization shows contract compatibility only); whether the predicate falls on completion when the player leaves the end screens by another route.
 
 ### Cleanup (mechanical, nothing signalled)
 
 `run-cleanup.sh b5-run1`: RPC `:init.stop` (launcher 158257 and watcher 158335 had already exited; port 4747 free); `GlacierRelay.dll` removed; `mods.ini` restored (`b90b4c5e…`); listing identical (107), hashes identical, **M0 26/26**; no relay artifact under `mods/`. Game at M0.
 
-**Stop here for acceptance review. B5 is not accepted by this record; M2 remains incomplete.**
+**B5 was a candidate for acceptance review at the time of this record; section 45 records the acceptance. M2 remains incomplete.**
+
+## 45. B5 acceptance review (2026-10-09) — accepted for its bounded objective-occurrence scope on the observed build; M2 remains incomplete
+
+Review decision, recorded in substance: **B5 is accepted for its bounded objective-occurrence scope on build 3.280.0.0** — the implemented occurrence contract (`objective.completed` v1: one ungated row, `objective_id` required and opaque, `objective_type`/`objective_category`/`exclude_from_scoring` optional and typed; attribution fixed at receipt with stream order selecting the open attempt and an established contradicting contract session vetoing; display grouping with first-observed metadata and unresolved conflicts; history through the shared `AttemptHistory`), the two live `kill`/`primary`/`false` payloads with matching-session attribution (§44), and the offline-tested uncertainty and replay behaviour (§43). **M2 remains incomplete.**
+
+### Evidence the acceptance rests on
+
+- **Offline (§43):** clean build with 0 relay warnings; native tests 25/25 (the recorded payload, synthetic variants, per-field diagnostics, ungated frame order on both sides of the fall with the payload intact, before-rise and after-stop publication, the other families' gates unchanged); imports/exports identical to the accepted B4 checkpoint; Elixir 188 ×5 (validation; grouping with `false`/`true`/absent/conflicting; attribution before a rise, after a stop, unpaired, sessionless, ambiguous, matching, contradicting; decision fixed at receipt with replay; closed attempt unchanged; gaps/interruptions/supersession; replay equivalence; wording; the B5 wire fixture over TCP; a rejected envelope followed by a processed one); standalone wire 16/16 with 0 field mismatches, twice, with the four attribution placements as designed.
+- **Runtime (§44):** two live `ObjectiveCompleted` normalized, published and received with payloads intact, both attached by order with a matching session (`:order_session_match`), ids `aca8cd5b…` (a match across two observations with B0) and `9da41883…`; 45/45 envelopes, 0 field mismatches; captured 43 = normalized 43 + malformed 0; outside-attempt 0, dropped 0, rejected 0, gaps `[]`; 0 WARN/ERROR/FAULT; cleanup mechanical and reported (RPC stop; DLL removed; `mods.ini` restored; 107 files and hashes identical; M0 26/26; port free).
+
+### Accepted checkpoint (refs kept distinct)
+
+| What | Ref |
+|---|---|
+| Native build source and SDK head | ZHMModSDK `relay/m2` **`97946eb170868aeccc6802c4c953dba5f0d7a409`** |
+| `GlacierRelay.dll` SHA-256 (build tree and installed copy, §44) | **`4e3a0453b041e430b2f8c2b6cdc25499f7739e6c18076c171d43732df6ada098`** — **preserve a copy before any future rebuild** |
+| BEAM | glacier-relay **`f5985f2`** |
+| Runtime checkout | glacier-relay **`666edb4`** (contains `f5985f2`) |
+| Runtime record | glacier-relay **`b519d31`** (§44) |
+
+The accepted B3 (`84b93778` / `61fe5538…`) and B4 (`12ea5586` / `07a71fc2…`) checkpoints stand beside it, preserved in `b3-accepted-artifacts\` and `b4-accepted-artifacts\`; the B5 DLL contains their rows unchanged (imports/exports identical; B1, B3 `StartingSuit`/`Disguise`, B4 rows exercised live in §44, the rest offline).
+
+### What acceptance does not establish
+
+- **Objective-state completeness** (how many objectives a contract has; outstanding or failed ones) or **mission completion** — never derived; `mission.stopped` is the predicate's fall only, and on the observed route it did not fall on completion.
+- **The identifier's namespace or general stability** — `objective_id` stays opaque; the match of `aca8cd5b…` across two observations is two observations.
+- **Engine field types** — a successful normalization establishes contract compatibility only.
+- **Exit objectives** (not captured), **non-kill types** (not captured), **live after-fall or non-matching attribution** (nothing arrived after the fall; only matching sessions occurred live — the other paths are offline-tested).
+- **`ContractEnd`** — a name only; its payload is unknown and it is not a validated terminal event (B2 follow-up, §46.9).
+
+### Unobserved, by provenance
+
+Through the B5 runtime path (§44): an occurrence after the fall; an unattributed occurrence; an exit objective; a non-`kill` type; a second observation of `9da41883…`; another exit/menu route. Already evidenced in B0 (a different instrument): the one Name-first payload with `XboxGameMode`/`XboxDifficulty` members (unread).
+
+### What remains for M2
+
+B6 player state (§46, archaeology and design), B7 summary v2 (carrying the first-observed summary-label improvement: labelling grouped type/category as "first observed" in the rendered line) and the completion decision; the roadmap's exit criterion is unchanged.
+
+## 46. B6 design — player state: archaeology and design only (not authorized for implementation)
+
+Scope: archaeology of the player-state names in the `OnEventSent` stream — `Trespassing`, `HoldingIllegalWeapon`, `Hero_Health`, `Hero_Dead` — and a design proposal for the smallest evidenced Relay vocabulary. Nothing here is implemented, built, deployed or run. Inputs: the B0 corpus (payloads), the names-only production logs (B1 §26, B3 §32, §34, §36, §40, §44), the typed-runtime evidence of prior families, the SDK headers on `relay/m2`, and the prior-art notes (`ACTOR_OUTCOME_ARCHAEOLOGY.md`; §30.3: a third-party reading of the stream is not evidence about the engine). Detection (`Spotted`, `Witnesses`, `Investigate_*`), witness, frisk (`BeingFrisked`, `FriskedSuccess`) and rating-related names (`SecuritySystemRecorder`, `Unnoticed_*`, `NoticedKill`) are **outside B6's production scope** unless separately proposed and reviewed.
+
+### 46.1 Evidence, kept in five classes
+
+**A. Captured payloads (B0 only; the engine's JSON writer).**
+
+| Name | B0 count | `Value` as written | Chronology |
+|---|---|---|---|
+| `Trespassing` | 2 | `{IsTrespassing: true, RoomId: 6.000000}` (index 15, t=166.198) then `{IsTrespassing: false, RoomId: 3.000000}` (index 19, t=202.179) | the `false` came 25 ms after the first `Disguise` (202.104): consistent with a disguise ending the trespass, not proof |
+| `HoldingIllegalWeapon` | 4 | `{IsHoldingIllegalWeapon: true, WeaponEquipped: {IsPerceivedAsWeapon: true, InstanceId: "9a3f1dbb-…", ItemType: "Gun_HardBaller_01", ItemName: "ICA19 Silverballer", RepositoryId: "e70adb5b-…", OnlineTraits: ["pistol"], Category: null, ActionRewardType: "AR_None"}}` (indices 65, 67) and `{IsHoldingIllegalWeapon: false}` (66, 73) — **the `false` form carries no `WeaponEquipped`** | pairs 476.6→477.6 and 485.5→491.9 s; the item object is the B4 shape plus `IsPerceivedAsWeapon`, with a **non-empty** `InstanceId` (the loadout pistol) |
+| `Hero_Health` | 0 | — | — |
+| `Hero_Dead` | 0 | — | — |
+
+Shape facts: both `Trespassing` and the `true` form of `HoldingIllegalWeapon` are objects with a boolean subject; `RoomId` prints as a number with six decimals (the writer's float form; the engine type is unknown — integer-like values 6 and 3); `WeaponEquipped` is a nested object of the item shape. **Two payloads per name is thin evidence**; `RoomId`'s meaning (a room index? an entity id?) is not established.
+
+**B. Name-only evidence (production runs).** `Trespassing`: B1 2, B3 6, §34 3, §36 3, §40 1, §44 8. `HoldingIllegalWeapon`: B1 6, B3 9, §34 2, §36 2, §40 7, §44 22. **`Hero_Health`: B3 5 (§32) — the only run in which it appeared**, during the unscripted combat: index 257 between `ChallengeCompleted` and a `Kill` (23:30:09Z), then 358/359/362/363 interleaved with `Spotted`/`Witnesses` in the last 1.1 s before the operator quit from inside the mission (23:31:53–54Z); 0 in every other run. Its payload has never been captured. **`Hero_Dead`: never captured by name in any run** (no run has had 47 die). All `Trespassing`/`HoldingIllegalWeapon` names fell inside the predicate window in every run (the §44 run included 22 `HoldingIllegalWeapon` names with the predicate up throughout).
+
+**C. Typed-runtime evidence.** None for any of the four names — no payload has crossed the typed intake. Nearest facts: booleans copied from `ContractStart.IsHitmanSuit` (B2, §29); nested objects copied (`ContractStart` unread fields; the B4 item object, §40); numbers copied as `float64` (`Kill.ActorId`, `KillType`, B1). Whether `RoomId` arrives as a float or an integer type, and whether `WeaponEquipped` copies as an object, are hypotheses.
+
+**D. Static hypotheses (SDK headers; labelled).** `ZHitman5.h`: `class ZHM5Health { TCheatProtect<float> m_fHitPoints; TCheatProtect<float> m_fMaxHitPoints; }` at `ZHitman5::m_pHealth` — the engine models player health as two floats (hit points and a maximum), **cheat-protected**; this says nothing about what `Hero_Health` telemetry carries or on what scale. `Enums.h`: `ZHM5HitmanHealthModifier_EHealthValue { eHealth0 = 0, eHealth10 = 10, …, eHealth50 = 50, … }` and `_EHealthDrainType { eRemoveHealthInstantly, eDecreaseHealthToValue }` — a modifier entity works in steps of ten, suggesting a 0–100 convention somewhere, **not** that the telemetry uses it; `ZTrespassingSituation_ESituationState { SS_Main, SS_StandDown, SS_Escalate }`, `AIET_Trespassing_Strike_1..3`, `EGC_TrespassWarn1..3` — the engine has an escalating trespass situation the two-valued telemetry does not show; `EDP_ArrestEscalateIllegalWeapon`, `DT_SeeIllegalWeapon`, `CT_IllegalWeaponPickedUp/Dropped`. No telemetry writer is declared; no static path to the field types.
+
+**E. Prior art (not evidence about the engine).** `ACTOR_OUTCOME_ARCHAEOLOGY.md` §6 lists the player as "not an actor (`ZHitman5`); `ActorType = Hitman`, `Hero_Health` events" and the taxonomy's "expected on the stream per prior art: `ContractEnd`, `ContractLoad`, `Hero_Dead`". `ContractEnd` has since been seen by name (§44); `Hero_Dead` and `ContractLoad` have not. Prior art also suggests `Hero_Health` carries a health value; the B3 chronology (five occurrences in 1.1 s of combat before a quit) is consistent with a value-change event but establishes neither its shape nor its scale.
+
+### 46.2 What is an occurrence, what is last-observed state, what is current state
+
+- **An occurrence** is one engine statement: "trespassing is now `true` in room 6", "holding an illegal weapon is now `false`", "health changed" (shape unknown). Occurrences are facts, attached by order.
+- **Last-observed state** is the most recent occurrence's value for a subject within an attempt — a derived reading, valid only as "the last thing the engine said", with its sequence.
+- **Current state** is **not derivable**: the stream carries transitions, not a periodic assertion. Nothing asserts the state at the rise (no "initial" occurrence as `StartingSuit` gives disguise — **missing initial observation** is the normal case: the attempt starts with `:not_observed`, not `false`), and a gap, interruption or supersession inside the attempt breaks the chain. The BEAM derivation therefore reports *last observed* with its position and an explicit **uncertainty** (46.6), never "is trespassing" / "is holding".
+- **Player death and mission outcome** are never inferred — not from a predicate fall (B2/§44: the fall is a scene transition), not from TCP loss (§13: observation lost), not from missing telemetry, and not from an assumed health scale (46.1 D is a hypothesis). `Hero_Dead` would be an engine statement, if it exists; until captured it is a name to count.
+
+### 46.3 Proposed smallest evidenced vocabulary (all proposed; nothing accepted)
+
+Two production rows now; two research candidates.
+
+| Glacier name | Relay event | Evidence | Status |
+|---|---|---|---|
+| `Trespassing` | `player.trespassing` v1 | A (2 payloads) + B (23 names) | proposed |
+| `HoldingIllegalWeapon` | `player.illegal_weapon` v1 | A (4 payloads, two forms) + B (48 names) | proposed |
+| `Hero_Health` | — | B only (5 names, one run); **payload unknown** | research candidate; bounded diagnostic first (46.8) |
+| `Hero_Dead` | — | prior art only; never captured | research candidate; name counted |
+
+`player.trespassing` v1: `source`, `engine_event`, **`trespassing` (bool, required — the subject)**, `room_id` (optional; present must be a number — the engine's value verbatim, not interpreted as a room name or entity), `contract_session_id`?, `engine_timestamp_s`?.
+
+`player.illegal_weapon` v1: `source`, `engine_event`, **`holding` (bool, required — the subject)**, `weapon` (optional object, expected only when `holding` is `true`; absent in the `false` form): `{item_repository_id (required non-empty string), item_instance_id? (omitted when empty, as B4), item_name?, item_type?, online_traits?, perceived_as_weapon? (bool)}` — the B4 item rules reused, with `Category`/`ActionRewardType` unread. A `true` occurrence **without** `WeaponEquipped` is valid (carried without `weapon`), not malformed: the engine's omission is evidence, not a defect. A present `WeaponEquipped` that is not an object, or whose `RepositoryId` is missing/empty/non-string, is malformed.
+
+Malformed (per name, logged with the §38.7 per-field detail over the expected keys, not published, no sequence): `Value` not an object; the boolean subject missing or not a bool; `RoomId` present and not a number; `WeaponEquipped` present and not an object, or its item fields of the wrong kind. `_DONTSEND` policy unchanged. No deduplication: repeated `true` occurrences are repeated occurrences.
+
+### 46.4 Publication gating, justified per row
+
+- **`Trespassing` → attempt-gated.** Evidence: 23 names, all inside the predicate window; it is an in-mission state and nothing suggests emission at the edges. The cost of a gate is a lost occurrence at the fall; the §40/§44 observation that the predicate falls only on leaving to the main menu makes a trespass occurrence after the fall implausible on the observed routes, and the outside-attempt counter would show it.
+- **`HoldingIllegalWeapon` → attempt-gated.** Same evidence class (48 names, all inside); same reasoning.
+- **`Hero_Health` (future row) → to be decided from the diagnostic**, with the death-transition question explicit: if the engine emits the last health change and a `Hero_Dead` at the death transition, and if death ends the mission scene (unobserved: §44 showed completion does not fall the predicate on its route, but death may behave differently — restart screen, "mission failed" flow), those occurrences may land on or after the fall. An attempt gate would keep only name/index for them; ungated publication (as `objective.completed`) would preserve them for BEAM to attribute or keep unattributed. **Until a death run shows the ordering, no gate is proposed for these two names**; the diagnostic (46.8) runs with them unsupported and counted, and the run's name/index chronology around the death is the evidence for the decision.
+
+### 46.5 Diagnostics — bounded, escaped, already-copied data
+
+The §38.7 mechanism, reused per row: `Trespassing` over `IsTrespassing`, `RoomId`; `HoldingIllegalWeapon` over `IsHoldingIllegalWeapon`, `WeaponEquipped` and, when the latter is an object, its item keys. Limits as §38.7/§42.8: copied kinds and `Unsupported` type names only; a successful normalization establishes contract compatibility, not engine types; a malformed line is a recorded validation failure and the run continues.
+
+### 46.6 Conservative BEAM derivation
+
+Facts: `Attempt.player_state_events` — ordered occurrences `{type :trespassing | :illegal_weapon, sequence, timestamp, received_at, payload}`, attached by order to the open attempt (both rows attempt-gated, so an occurrence with no open attempt is unexpected and kept unattributed as the other families do). Derivation `PlayerState.derive/2`, pure, per subject:
+
+```
+trespassing:    %{last: :not_observed | %{value: bool, sequence, room_id?, engine_timestamp_s?},
+                  occurrences: n, transitions: n (value differs from the previous occurrence's),
+                  standing: :not_observed | :last_observed | :unknown}
+illegal_weapon: %{last: :not_observed | %{holding: bool, sequence, weapon?: {item_repository_id, item_name?, …}},
+                  occurrences: n, transitions: n, standing: as above}
+cuts:           the earliest gap/interruption position inside the attempt (AttemptHistory bounding) — after it, standing is :unknown
+history:        AttemptHistory.history/2
+```
+
+Rules, in order (the B3 pattern, §30.8): (1) no occurrence for the subject → `:not_observed` (the attempt began with no assertion; **not `false`**); (2) a gap or interruption after the last occurrence → `standing :unknown` with the last value shown as "before the cut" (the engine may have said something that was not delivered); (3) otherwise `:last_observed` — the last value, labelled as the last thing the engine said at `#seq`, never as "current". Supersession bounds the view at the superseding rise; later attempts never change it. Nothing is derived across attempts; nothing is derived from the item or disguise families (a `HoldingIllegalWeapon false` is not read as a drop; a `Trespassing false` is not read as a disguise effect). No "time spent trespassing": timestamps are observations, intervals between transitions are not computed in v1.
+
+Summary lines, per attempt:
+
+```
+    player state (engine telemetry): trespassing — last observed true in room 6 #12 @166.2s (3 occurrences, 2 transitions); illegal weapon — last observed not holding #31 @491.9s, last held ICA19 Silverballer e70adb5b… #29 (4 occurrences); history intact
+    player state (engine telemetry): none observed in the attempt
+```
+
+Wording: "last observed", never "is trespassing"/"is armed"/"holding" as a present-tense claim (the B4 rule forbids "holding" as a derived state word; here it appears only inside the engine's own phrase "last observed … holding"/"not holding" — to be reviewed against the item regex before implementation; "armed"/"illegal" as derived adjectives are not used); after a cut: `unknown (gap 5→7 after the last occurrence; before it: true)`. Never "safe", "clean", "dead", "alive", "died" for the player.
+
+### 46.7 Tests (proposed) — with the coverage boundary
+
+Native: the six B0 payloads (fixture `B0PlayerState.h`, generated with provenance) → exact Relay JSON (`room_id` numbers as the engine wrote them, `weapon` object on the `true` form with `item_instance_id` present and non-empty, absent on the `false` form); `true` without `WeaponEquipped` valid; malformed: non-object, subject missing/non-bool/`Unsupported('bool')`, `RoomId` string, `WeaponEquipped` string/array, nested `RepositoryId` empty, each with the per-field detail; `_DONTSEND`; repeats; neighbours (`Spotted`, `Witnesses`, `BeingFrisked`, `FriskedSuccess`, `SecuritySystemRecorder`, `Hero_Health`, `Hero_Dead`) unsupported and counted; frame order with the attempt gate on both sides of the fall (an occurrence after the drain is outside-attempt, counted, warned — the chosen cost); B1–B5 rows unchanged. **Boundary:** hand-built/`TestJson` observations exercise the normalizer and downstream only — never `TelemetryIntake::Copy`, its bool/number/nested-object branches or `Inspect`; the shared `RepositoryId` renderer may be exercised for the nested `RepositoryId` (permissible; establishes nothing about the engine's type); the engine types of every field are not covered offline.
+
+Elixir: validation (subject required bool; `room_id` number; `weapon` object rules; `false` distinct from absent); the B0 occurrences through `Lifecycle`; SYN: missing initial observation → `:not_observed`; repeats; transitions count; a gap after the last occurrence → `:unknown` with the pre-cut value; a gap before it → `:last_observed`; interruption; supersession bounded; replay equivalence from the bare facts with every external fact supplied; wording (the reserved words of every family); listener case with the wire fixture.
+
+### 46.8 Research candidates — `Hero_Health`, `Hero_Dead`: the smallest separately authorized observation-only diagnostic
+
+Payload shapes unknown; `Hero_Dead`'s existence unconfirmed. Before any production row: the §38.9 diagnostic (allowlisted `Value` copy through the existing, unused `CopyValue`; one escaped, bounded shape line per occurrence — keys in order, kinds, `Unsupported` type names, string values up to a bound, numbers as copied; no normalizer row, no publication, no sequence, no BEAM change; no new hook) under a `telemetry_log = shapes:Hero_Health,Hero_Dead` setting, in **a run in which 47 is hurt and then dies** (a death run; the B6 roadmap row already names it). It would answer: `Hero_Health`'s keys and the scale of its value (if a number; **not assumed to be 0–100**); whether `Hero_Dead` exists on `OnEventSent` and what it carries; the death-transition chronology (names and order around the death, the predicate's behaviour on death, whether `ContractFailed`/`ContractEnd`/something else follows); and whether `Hero_Health` occurs outside combat. The same diagnostic run could carry `ItemDropped`/`ItemDestroyed` (§38.9) and `ContractEnd` (46.9) in its allowlist if the authorization says so — one bounded setting, several names, one run; their design remains separate.
+
+### 46.9 B2 follow-up, tracked separately: `ContractEnd` payload discovery
+
+`ContractEnd` was seen by name once (§44, index 222, 7.4 s after `exit_gate`, during the completion transition, inside the attempt). Its payload is unknown; it is **not** added as a completion source and its name is **not** read as a validated terminal event. Smallest evidence needed: one captured shape (the 46.8 diagnostic with `ContractEnd` allowlisted, on a completion run) showing its keys and kinds — in particular whether it carries a session id and a reason/outcome field — and the chronology relative to `exit_gate`, `ExitInventory`, the objective occurrences and the predicate. Only then is a B2 design question posed: whether `contract.ended` gains a completion-side source (a `reason_kind` value, a separate type, or nothing), decided in B2's record (§27/§29), not here.
+
+### 46.10 Bounded runtime proposals (each requires its own authorization after review; the operator confirms readiness first)
+
+1. **Production run (after B6 implementation and gate):** fresh Paris → enter a trespass zone (expect `Trespassing true`), leave it (expect `false`), draw the loadout pistol in public (expect `HoldingIllegalWeapon true` with `weapon`), holster it (expect `false`), exit to menu, quit. Vocabulary validation requires ≥1 captured occurrence of each row normalized, published and received with its payload; zero samples for a row are inconclusive for that row. Observations to record, not rules: `RoomId` values; a `true` without `WeaponEquipped`; the `false` form's shape. Reconciliation as §39; closed-attempt invariance; prior-vocabulary classes; cleanup.
+2. **Diagnostic death run (46.8; separate):** shapes only; 47 is hurt, then dies; the chronology around the death recorded as names and shapes; nothing published; no vocabulary decided from it until reviewed.
+
+**Stop here for B6 design review. Nothing in this section is implemented, built, deployed or run.**
