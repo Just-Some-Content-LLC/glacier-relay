@@ -59,6 +59,17 @@ defmodule GlacierRelay.Events do
   evidence, never identity. Each occurrence stands alone: a removal and a throw are two events,
   never paired, merged or inferred from one another, and none of them says what is held, what the
   inventory contains or whether an item was recovered.
+
+  Objectives (M2 B5, design section 42), normalized from Glacier's own telemetry; one occurrence:
+
+  - `objective.completed` v1: Glacier reported that one objective was completed ("ObjectiveCompleted").
+
+  `objective_id` is the engine's identifier for the objective, opaque: not a Relay identity and not
+  assumed to be an actor, repository, item, contract or session id. `objective_type`,
+  `objective_category` and `exclude_from_scoring` are carried when present (`false` included).
+  The occurrence says nothing about other objectives, objective state or mission completion, and
+  nothing about which actor it concerned. It is published ungated, so it may arrive with no open
+  attempt; `Lifecycle` attributes it from stream order with the session as a veto only.
   """
 
   alias GlacierRelay.Wire.Envelope
@@ -75,6 +86,7 @@ defmodule GlacierRelay.Events do
   @item_picked_up "item.picked_up"
   @item_thrown "item.thrown"
   @item_removed_from_inventory "item.removed_from_inventory"
+  @objective_completed "objective.completed"
   @reason_kinds ["restart", "exit_to_menu", "other"]
   @equipped_kinds ["initial", "change"]
 
@@ -90,6 +102,7 @@ defmodule GlacierRelay.Events do
   def item_picked_up, do: @item_picked_up
   def item_thrown, do: @item_thrown
   def item_removed_from_inventory, do: @item_removed_from_inventory
+  def objective_completed, do: @objective_completed
 
   @doc "Event types that are actor outcomes."
   def actor_outcome?(type), do: type in [@actor_died, @actor_pacified]
@@ -103,6 +116,9 @@ defmodule GlacierRelay.Events do
 
   @doc "Event types that are item occurrences."
   def item_event?(type), do: type in [@item_picked_up, @item_thrown, @item_removed_from_inventory]
+
+  @doc "Event types that are objective occurrences."
+  def objective_event?(type), do: type == @objective_completed
 
   @spec validate(String.t(), pos_integer(), map()) :: {:ok, map()} | {:error, term()}
   def validate(@mission_playing, 1, payload),
@@ -123,6 +139,8 @@ defmodule GlacierRelay.Events do
   def validate(type, 1, payload) when type in [@item_picked_up, @item_thrown, @item_removed_from_inventory],
     do: item_payload(payload)
 
+  def validate(@objective_completed, 1, payload), do: objective_payload(payload)
+
   def validate(type, version, _payload)
       when type in [
              @mission_playing,
@@ -136,7 +154,8 @@ defmodule GlacierRelay.Events do
              @disguise_compromise_cleared,
              @item_picked_up,
              @item_thrown,
-             @item_removed_from_inventory
+             @item_removed_from_inventory,
+             @objective_completed
            ],
       do: {:error, {:unsupported_schema_version, type, version}}
 
@@ -306,6 +325,32 @@ defmodule GlacierRelay.Events do
          item_name: item_name,
          item_type: item_type,
          online_traits: online_traits,
+         contract_session_id: contract_session_id,
+         engine_timestamp_s: engine_timestamp_s
+       }}
+    end
+  end
+
+  # objective.completed v1 (design section 42.6): the opaque id is the subject, required and
+  # non-empty; the three descriptive fields are optional and typed when present. exclude_from_scoring
+  # must be a boolean when present (false is a value, never absence).
+  defp objective_payload(payload) do
+    with {:ok, source} <- Envelope.field(payload, "source", &Envelope.non_empty_string?/1),
+         {:ok, engine_event} <- Envelope.field(payload, "engine_event", &Envelope.non_empty_string?/1),
+         {:ok, objective_id} <- Envelope.field(payload, "objective_id", &Envelope.non_empty_string?/1),
+         {:ok, objective_type} <- optional_string(payload, "objective_type"),
+         {:ok, objective_category} <- optional_string(payload, "objective_category"),
+         {:ok, exclude_from_scoring} <- optional(payload, "exclude_from_scoring", &is_boolean/1),
+         {:ok, contract_session_id} <- optional_string(payload, "contract_session_id"),
+         {:ok, engine_timestamp_s} <- optional(payload, "engine_timestamp_s", &is_number/1) do
+      {:ok,
+       %{
+         source: source,
+         engine_event: engine_event,
+         objective_id: objective_id,
+         objective_type: objective_type,
+         objective_category: objective_category,
+         exclude_from_scoring: exclude_from_scoring,
          contract_session_id: contract_session_id,
          engine_timestamp_s: engine_timestamp_s
        }}

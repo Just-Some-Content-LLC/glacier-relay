@@ -549,6 +549,70 @@ defmodule GlacierRelay.Wire.ListenerTest do
     :gen_tcp.close(socket)
   end
 
+  # -- B5: objectives over the wire ----------------------------------------------------------
+
+  @b5 File.read!("test/b5_probe_envelopes.ndjson") |> String.split("\n", trim: true)
+  @b5_id "3894ff3e-8fb7-416a-a3d8-1c734c93a2cd"
+  @b5_session_a "2516109628137904204-c00b2d17-08b1-4949-9f9d-5f68b691f40f"
+  @b5_session_b "2516109618691980006-9666b5ad-6a4f-44bb-b5fb-ff86bb3a8d76"
+
+  test "the B5 native envelopes arrive in order; objectives are attributed at receipt with their reasons, beside the accepted vocabulary" do
+    socket = connect()
+    :ok = :gen_tcp.send(socket, Enum.join(@b5, "\n") <> "\n")
+    assert_receive {:relay_event, %{sequence: 16, event_type: "contract.ended"}}, 1_000
+
+    instance = MissionSession.state()[@b5_id]
+    assert instance.gaps == []
+    assert [%Attempt{objective_events: first} = a1, %Attempt{objective_events: second} = a2] = instance.attempts
+    assert Enum.map(first, &{&1.sequence, &1.attribution.basis, &1.attribution.attempt_session}) == [{5, :order_session_match, @b5_session_a}]
+    assert Enum.map(second, &{&1.sequence, &1.attribution.basis, &1.attribution.attempt_session}) == [{11, :order, nil}, {14, :order_session_match, @b5_session_b}]
+    assert a2.contract_session_id == @b5_session_b and a2.contract_paired_by == :open_attempt
+
+    assert Enum.map(instance.unattributed_objective_events, &{&1.sequence, &1.attribution.basis, &1.attribution.occurrence_session}) == [
+             {9, :no_open_attempt, @b5_session_a},
+             {13, :session_contradiction, @b5_session_a}
+           ]
+    assert [%{kind: :objective_session_contradiction, sequence: 13, open_attempt: 2}] = instance.anomalies
+
+    # The occurrence published after the fall (#9) arrived with its payload intact.
+    stray = Enum.find(instance.unattributed_objective_events, &(&1.sequence == 9))
+    assert stray.payload.objective_id == "aca8cd5b-e3a3-4a60-b953-c590484f0491" and stray.payload.exclude_from_scoring == false
+    assert stray.payload.engine_timestamp_s == 759.401611
+
+    # The accepted vocabulary in the same stream is unchanged by the new row.
+    assert Enum.map(a1.outcomes, & &1.sequence) == [4]
+    assert Enum.map(a1.item_events, & &1.sequence) == [6]
+    assert Enum.map(a1.disguise_events, & &1.sequence) == [3]
+    assert a1.disposition == :restarted and a2.disposition == :exited_to_menu
+    assert %{completed: 1} = GlacierRelay.Objectives.derive(a1, instance)
+    assert %{completed: 2, objective_ids: ["aca8cd5b-e3a3-4a60-b953-c590484f0491", "5f0d2c1e-3b7a-4c9d-8e21-6a4b9c0d1e2f"]} = GlacierRelay.Objectives.derive(a2, instance)
+
+    text = MissionSession.summary_text()
+    assert text =~ "objectives (engine telemetry): 1 reported done — kill/primary aca8cd5b… #5 @759.401611s; history intact"
+    assert text =~ "objective kill/primary aca8cd5b… #9 @759.401611s with no open attempt"
+    assert text =~ "objective kill/primary aca8cd5b… #13 @759.401611s with session 25161096… contradicting the open attempt's session 25161096…; not attached"
+    refute text =~ ~r/complet|accomplish|all objectives|remaining|clean|undetected|safe|silent assassin/i
+    :gen_tcp.close(socket)
+  end
+
+  test "a rejected objective envelope leaves nothing behind and the next valid envelope on the connection is processed" do
+    id = "rejected-objective"
+    [playing_line, objective_line, item_line] = [Enum.at(@b5, 1), Enum.at(@b5, 4), Enum.at(@b5, 5)] |> Enum.map(&String.replace(&1, @b5_id, id))
+    bad = String.replace(objective_line, ~s("exclude_from_scoring":false), ~s("exclude_from_scoring":"false"))
+    assert bad =~ ~s("exclude_from_scoring":"false")
+
+    socket = connect()
+    :ok = :gen_tcp.send(socket, playing_line <> "\n" <> bad <> "\n" <> item_line <> "\n")
+    assert_receive {:relay_event, %{adapter_instance_id: ^id, sequence: 2, event_type: "mission.playing"}}, 1_000
+    assert_receive {:relay_event, %{adapter_instance_id: ^id, sequence: 6, event_type: "item.picked_up"}}, 1_000
+    refute_received {:relay_event, %{adapter_instance_id: ^id, sequence: 5}}
+
+    instance = MissionSession.state()[id]
+    assert [%Attempt{objective_events: [], item_events: [%{sequence: 6}]}] = instance.attempts
+    assert instance.unattributed_objective_events == [] and instance.gaps == [{3, 6}]
+    :gen_tcp.close(socket)
+  end
+
   defp wait_until(fun, attempts \\ 50) do
     cond do
       fun.() -> :ok

@@ -55,6 +55,15 @@ defmodule GlacierRelay.Lifecycle do
     attached the same way (`item_events`), each occurrence on its own; with no open attempt they are
     unattributed. Nothing is paired, deduplicated or read as an inventory here or anywhere:
     `Items.derive/2` counts the facts on demand, with the same bounded history evidence.
+  - Objective occurrences (`objective.completed`, M2 B5) are published ungated and may arrive with
+    no open attempt. **Attribution is fixed at receipt** and recorded on the occurrence as BEAM
+    metadata (`attribution`), separate from the engine payload: stream order selects the open
+    attempt; if that attempt has an established contract session and the occurrence carries a
+    different one, the session **vetoes** the attachment and the occurrence is kept unattributed with
+    reason `{:session_contradiction, …}` (and an anomaly); with no open attempt the reason is
+    `:no_open_attempt`. A closed attempt is never selected by session, timestamp or proximity, and a
+    recorded decision is never re-evaluated against later pairing state (an occurrence attached by
+    order to an attempt that was paired afterwards keeps its attachment and its recorded basis).
   """
 
   alias GlacierRelay.Wire.Envelope
@@ -89,6 +98,20 @@ defmodule GlacierRelay.Lifecycle do
     plus stream position. Facts only: nothing here is derived, and no occurrence refers to another.
     """
     defstruct [:type, :sequence, :timestamp, :received_at, :payload]
+  end
+
+  defmodule ObjectiveOccurrence do
+    @moduledoc """
+    One objective occurrence as the engine recorded it (via the native normalizer), plus BEAM's
+    attribution decision, fixed at receipt. `payload` is the validated engine payload. `attribution`
+    is BEAM metadata: `%{attempt: number | nil, basis: basis, attempt_session: id | nil,
+    occurrence_session: id | nil}` where `basis` is `:order` (open attempt, no session evidence to
+    compare — the attempt had no established session or the occurrence none), `:order_session_match`
+    (open attempt whose established session equals the occurrence's), `:no_open_attempt`, or
+    `:session_contradiction` (open attempt whose established session differs: vetoed, unattributed).
+    `attempt_session` is the open attempt's paired session *as it was when the decision was made*.
+    """
+    defstruct [:sequence, :timestamp, :received_at, :payload, :attribution]
   end
 
   defmodule ContractSession do
@@ -153,7 +176,9 @@ defmodule GlacierRelay.Lifecycle do
       # Disguise occurrences in stream order (M2 B3): facts, never derived state.
       disguise_events: [],
       # Item occurrences in stream order (M2 B4): facts, never derived state.
-      item_events: []
+      item_events: [],
+      # Objective occurrences in stream order (M2 B5), each with its attribution fixed at receipt.
+      objective_events: []
     ]
   end
 
@@ -184,7 +209,10 @@ defmodule GlacierRelay.Lifecycle do
               # Disguise occurrences with no open attempt (M2 B3): kept, never attached by adjacency.
               unattributed_disguise_events: [],
               # Item occurrences with no open attempt (M2 B4): kept, never attached by adjacency.
-              unattributed_item_events: []
+              unattributed_item_events: [],
+              # Objective occurrences not attached (M2 B5): no open attempt, or the open attempt's
+              # session contradicted the occurrence's. Each carries its reason; never attached later.
+              unattributed_objective_events: []
   end
 
   def new(id), do: %Instance{id: id}
@@ -223,6 +251,9 @@ defmodule GlacierRelay.Lifecycle do
 
         GlacierRelay.Events.item_event?(envelope.event_type) ->
           record_item(instance, envelope, received_at)
+
+        GlacierRelay.Events.objective_event?(envelope.event_type) ->
+          record_objective(instance, envelope, received_at)
       end
 
     {%{instance | last_event: envelope}, notes ++ more}
@@ -639,6 +670,72 @@ defmodule GlacierRelay.Lifecycle do
            instance
            | attempts:
                replace_last(instance.attempts, %{open | item_events: open.item_events ++ [occurrence]})
+         }, []}
+    end
+  end
+
+  # -- objectives (M2 B5) --------------------------------------------------------------------
+
+  # Attribution, fixed here and never revisited (design section 42.7): stream order selects the
+  # open attempt; the occurrence's contract session is a veto, never a lookup.
+  defp record_objective(instance, envelope, received_at) do
+    open = current_attempt(instance)
+    occurrence_session = envelope.payload[:contract_session_id]
+
+    {attempt_number, basis, attempt_session} =
+      case open do
+        nil ->
+          {nil, :no_open_attempt, nil}
+
+        %Attempt{contract_session_id: nil} = a ->
+          {a.number, :order, nil}
+
+        %Attempt{contract_session_id: established} = a ->
+          cond do
+            is_nil(occurrence_session) -> {a.number, :order, established}
+            occurrence_session == established -> {a.number, :order_session_match, established}
+            true -> {nil, :session_contradiction, established}
+          end
+      end
+
+    occurrence = %ObjectiveOccurrence{
+      sequence: envelope.sequence,
+      timestamp: envelope.timestamp,
+      received_at: received_at,
+      payload: envelope.payload,
+      attribution: %{
+        attempt: attempt_number,
+        basis: basis,
+        attempt_session: attempt_session,
+        occurrence_session: occurrence_session
+      }
+    }
+
+    case basis do
+      :no_open_attempt ->
+        {%{instance | unattributed_objective_events: instance.unattributed_objective_events ++ [occurrence]},
+         [{:unattributed_objective_event, envelope.sequence, :no_open_attempt}]}
+
+      :session_contradiction ->
+        anomaly = %{
+          kind: :objective_session_contradiction,
+          sequence: envelope.sequence,
+          open_attempt: open.number,
+          attempt_session: attempt_session,
+          occurrence_session: occurrence_session
+        }
+
+        {%{
+           instance
+           | unattributed_objective_events: instance.unattributed_objective_events ++ [occurrence],
+             anomalies: instance.anomalies ++ [anomaly]
+         },
+         [{:unattributed_objective_event, envelope.sequence, {:session_contradiction, open.number, attempt_session, occurrence_session}}]}
+
+      _ ->
+        {%{
+           instance
+           | attempts: replace_last(instance.attempts, %{open | objective_events: open.objective_events ++ [occurrence]})
          }, []}
     end
   end

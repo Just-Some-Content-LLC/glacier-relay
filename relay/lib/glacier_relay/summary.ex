@@ -5,8 +5,8 @@ defmodule GlacierRelay.Summary do
   infers a gameplay outcome. Each line says what was observed, and "not observed" where it wasn't.
   """
 
-  alias GlacierRelay.{Disguise, Items, Lifecycle}
-  alias GlacierRelay.Lifecycle.{Attempt, Connection, ContractSession, DisguiseOccurrence, Instance, ItemOccurrence, Outcome}
+  alias GlacierRelay.{Disguise, Items, Lifecycle, Objectives}
+  alias GlacierRelay.Lifecycle.{Attempt, Connection, ContractSession, DisguiseOccurrence, Instance, ItemOccurrence, ObjectiveOccurrence, Outcome}
 
   @doc "Summary data, one map per instance, oldest attempt first."
   @spec build(%{String.t() => Instance.t()}) :: [map()]
@@ -64,6 +64,9 @@ defmodule GlacierRelay.Summary do
         Enum.map(instance.unattributed_disguise_events, &disguise_occurrence/1),
       # Item occurrences with no open attempt (M2 B4): kept visible, never attached.
       unattributed_item_events: Enum.map(instance.unattributed_item_events, &item_occurrence/1),
+      # Objective occurrences not attached (M2 B5): no open attempt, or vetoed by a contradicting
+      # session; each with the reason it recorded at receipt.
+      unattributed_objective_events: Enum.map(instance.unattributed_objective_events, &objective_occurrence/1),
       # Contract lifecycle (M2 B2): every session Glacier reported, paired or not, plus what
       # could not be correlated and every observable discrepancy.
       contract_sessions: Enum.map(instance.contract_sessions, &contract_session/1),
@@ -125,7 +128,30 @@ defmodule GlacierRelay.Summary do
       disguise: Disguise.derive(attempt, instance),
       # Items (M2 B4): the occurrences as facts, then the direct counts per definition.
       item_events: Enum.map(attempt.item_events, &item_occurrence/1),
-      items: Items.derive(attempt, instance)
+      items: Items.derive(attempt, instance),
+      # Objectives (M2 B5): the occurrences as facts with their recorded attribution, then the
+      # display grouping.
+      objective_events: Enum.map(attempt.objective_events, &objective_occurrence/1),
+      objectives: Objectives.derive(attempt, instance)
+    }
+  end
+
+  defp objective_occurrence(%ObjectiveOccurrence{} = o) do
+    p = o.payload
+
+    %{
+      sequence: o.sequence,
+      timestamp: o.timestamp,
+      source: p.source,
+      engine_event: p.engine_event,
+      objective_id: p.objective_id,
+      objective_type: p.objective_type,
+      objective_category: p.objective_category,
+      exclude_from_scoring: p.exclude_from_scoring,
+      contract_session_id: p.contract_session_id,
+      engine_timestamp_s: p.engine_timestamp_s,
+      # BEAM metadata, separate from the payload: the decision fixed at receipt.
+      attribution: o.attribution
     }
   end
 
@@ -297,9 +323,14 @@ defmodule GlacierRelay.Summary do
         "  item #{render_item_occurrence(o)} with no open attempt"
       end)
 
+    unattributed_objectives =
+      Enum.map(s.unattributed_objective_events, fn o ->
+        "  objective #{render_objective_occurrence(o)} #{render_unattributed_reason(o.attribution)}"
+      end)
+
     anomalies = Enum.map(s.anomalies, &("  anomaly: " <> render_anomaly(&1)))
 
-    [header] ++ connections ++ attempts ++ strays ++ unattributed ++ unattributed_disguise ++ unattributed_items ++ unpaired ++ unmatched_ends ++ anomalies
+    [header] ++ connections ++ attempts ++ strays ++ unattributed ++ unattributed_disguise ++ unattributed_items ++ unattributed_objectives ++ unpaired ++ unmatched_ends ++ anomalies
   end
 
   defp render_attempt(a) do
@@ -343,8 +374,78 @@ defmodule GlacierRelay.Summary do
             Enum.map(outcomes, &("    " <> render_outcome(&1)))
       end
 
-    [line] ++ render_attempt_contract(a) ++ outcome_lines ++ render_attempt_disguise(a) ++ render_attempt_items(a)
+    [line] ++ render_attempt_contract(a) ++ outcome_lines ++ render_attempt_disguise(a) ++ render_attempt_items(a) ++ render_attempt_objectives(a)
   end
+
+  # One line per attempt (M2 B5, design section 42.7): the objective occurrences the engine reported,
+  # grouped per id for display with the first observed type/category, the scoring flag only when
+  # observed, and later differing observations shown; then the history. Words that never appear:
+  # complete, completed, completion, accomplished, all objectives, N of M, remaining. Nothing here
+  # is objective state or mission outcome.
+  defp render_attempt_objectives(a) do
+    d = a.objectives
+
+    if d.occurrences == 0 do
+      ["    objectives (engine telemetry): none observed in the attempt"]
+    else
+      by_seq = Map.new(a.objective_events, &{&1.sequence, &1})
+
+      rows =
+        Enum.map_join(d.by_objective, ", ", fn row ->
+          occurrences =
+            Enum.map_join(row.sequences, " ", fn seq ->
+              o = by_seq[seq]
+              at = if o.engine_timestamp_s, do: " @#{o.engine_timestamp_s}s", else: ""
+              "##{seq}#{at}"
+            end)
+
+          "#{render_objective_label(row)} #{short(row.objective_id)} #{occurrences}" <>
+            render_scoring(row.exclude_from_scoring) <> render_conflicts(row.conflicts)
+        end)
+
+      history =
+        case d.history do
+          :complete -> "history intact"
+          {:incomplete, reasons} -> "history broken: " <> Enum.map_join(reasons, ", ", &render_history_reason/1)
+        end
+
+      ["    objectives (engine telemetry): #{d.completed} reported done — #{rows}; #{history}"]
+    end
+  end
+
+  defp render_objective_label(%{objective_type: t, objective_category: c}) do
+    case {t, c} do
+      {nil, nil} -> "objective"
+      {t, nil} -> t
+      {nil, c} -> "?/#{c}"
+      {t, c} -> "#{t}/#{c}"
+    end
+  end
+
+  defp render_scoring(true), do: " (not scored)"
+  defp render_scoring(_), do: ""
+
+  defp render_conflicts([]), do: ""
+
+  defp render_conflicts(list) do
+    " (later observations differ: " <>
+      Enum.map_join(list, ", ", fn c -> "##{c.sequence} #{render_conflict_field(c.field)} #{inspect(c.observed)}" end) <> ")"
+  end
+
+  defp render_conflict_field(:objective_type), do: "type"
+  defp render_conflict_field(:objective_category), do: "category"
+  defp render_conflict_field(:exclude_from_scoring), do: "scoring excluded"
+
+  defp render_objective_occurrence(o) do
+    at = if o.engine_timestamp_s, do: " @#{o.engine_timestamp_s}s", else: ""
+    label = render_objective_label(%{objective_type: o.objective_type, objective_category: o.objective_category})
+    "#{label} #{short(o.objective_id)} ##{o.sequence}#{at}"
+  end
+
+  defp render_unattributed_reason(%{basis: :no_open_attempt}), do: "with no open attempt"
+
+  defp render_unattributed_reason(%{basis: :session_contradiction} = x),
+    do: "with session #{short(x.occurrence_session)} contradicting the open attempt's session #{short(x.attempt_session)}; not attached"
 
   # One line per attempt (M2 B4, design section 38.6): direct counts of the item occurrences
   # Glacier reported, each type broken down per definition in first-seen order, with the engine's
@@ -591,6 +692,11 @@ defmodule GlacierRelay.Summary do
 
   defp render_anomaly(%{kind: :contract_end_ambiguous} = x),
     do: "contract.ended ##{x.sequence} matched #{length(x.open_sessions)} open sessions with id #{x.contract_session_id}; kept unmatched"
+
+  defp render_anomaly(%{kind: :objective_session_contradiction} = x),
+    do:
+      "objective event ##{x.sequence} named session #{x.occurrence_session} while attempt #{x.open_attempt} was paired with " <>
+        "#{x.attempt_session}; kept unattributed, not attached to any attempt"
 
   defp render_anomaly(other), do: inspect(other)
 
