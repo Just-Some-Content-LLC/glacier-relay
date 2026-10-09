@@ -33,7 +33,7 @@ Not observed but expected on the stream per prior art: `ContractEnd`, `ContractL
 | Name | Count | `Value` shape | Suitable | M2 relevance | Confidence | Needs evidence |
 |---|---|---|---|---|---|---|
 | `Trespassing` | 2 | `{IsTrespassing, RoomId}` | later | medium | high | — |
-| `HoldingIllegalWeapon` | 4 | `{IsHoldingIllegalWeapon, [WeaponEquipped{…item…}]}` | later | medium | high | — |
+| `HoldingIllegalWeapon` | 4 | `{IsHoldingIllegalWeapon, WeaponEquipped: {IsPerceivedAsWeapon, …item shape with a non-empty InstanceId…}}` (one object, not an array; corrected in section 38) | later (B6) | medium | high | — |
 | `Agility_Start` | 2 | `""` | no | low | medium | — |
 | `Hero_Health`, `Hero_Dead` | 0 | (prior art only) | — | high when observed | none | a run in which 47 is hurt / dies |
 
@@ -41,19 +41,20 @@ Not observed but expected on the stream per prior art: `ContractEnd`, `ContractL
 
 | Name | Count | `Value` shape | Suitable | M2 relevance | Confidence | Needs evidence |
 |---|---|---|---|---|---|---|
-| `Disguise` | 2 | `str` (outfit repository id) | **yes** | high | high | outfit name resolution (repository lookup, as `GetActorName` does) |
-| `DisguiseBlown` | 2 | `str` (outfit) | yes | high | high | — |
-| `BrokenDisguiseCleared` | 2 | `str` (outfit) | yes | medium | high | — |
-| `StartingSuit` | 2 | `str` | yes | medium | high | — |
+| `Disguise` | 2 | `str` (outfit repository id) in the B0 JSON; **engine type `ZRepositoryID`** (sections 34–36) | **yes — normalized (B3 accepted, section 37)** | high | high | outfit name resolution (repository lookup, as `GetActorName` does) — not proposed |
+| `DisguiseBlown` | 2 | `str` (outfit) in JSON; engine `ZRepositoryID` | yes — normalized (B3) | high | high | — |
+| `BrokenDisguiseCleared` | 2 | `str` (outfit) in JSON; engine `ZRepositoryID` | yes — normalized (B3) | medium | high | which outfit it names at a change (section 36: the newly equipped one, once) |
+| `StartingSuit` | 2 | `str` in JSON; engine `ZRepositoryID` | yes — normalized (B3) | medium | high | — |
 
 ## Item / inventory
 
 | Name | Count | `Value` shape | Suitable | M2 relevance | Confidence | Needs evidence |
 |---|---|---|---|---|---|---|
-| `ItemPickedUp` | 12 | `{InstanceId, ItemType, ItemName, RepositoryId, OnlineTraits[], Category, ActionRewardType}` | **yes** | high | high | `ItemType` can be `"Unrecognized Item type"` (crowbar) — name/traits still present |
-| `ItemRemovedFromInventory` | 6 | same item shape | yes | medium | high | — |
-| `ItemThrown` | 6 | same item shape | yes | medium | high | — |
-| `ItemDropped` | 0 | (prior art) | — | medium | none | — |
+| `ItemPickedUp` | 12 | `{InstanceId: "" (12/12), ItemType: str, ItemName: str, RepositoryId: str, OnlineTraits: [str], Category: null (12/12), ActionRewardType: "AR_None" (12/12)}` — JSON rendering; **engine field types unknown** | **yes** (B4 design, `M2_TELEMETRY.md` section 38) | high | high (shape) / none (types) | `ItemType` can be `"Unrecognized Item type"` (crowbar) — name/traits still present; `InstanceId` is empty for every world item |
+| `ItemRemovedFromInventory` | 6 | same JSON shape; **6/6 share the identical `Timestamp` with an `ItemThrown`** of the same id, emitted first | yes (B4) | medium | high | a removal without a thrown twin (never observed) |
+| `ItemThrown` | 6 | same JSON shape; every throw is a Removed+Thrown pair | yes (B4) | medium | high | — |
+| `ItemDropped` | 0 (B0); names only: B3 7, section 36 3 | **never captured with a payload**; precedes a locker/suit `Disguise` by ≈250 ms in 5/7 changes (0/2 when nothing was held, section 34) | B4 row with a hypothesized shape | medium | none | its payload (first B4 run) |
+| `ItemDestroyed` | 0 (B0); names only: B3 1 | **never captured with a payload**; once, in unscripted combat | B4 row with a hypothesized shape | low | none | its payload and cause |
 | `ItemStashed`, `Guard_FoundItem` | 1 / 1 | `{ActorId, RepositoryId, ActorName, ItemId, ItemTypeId}` (the NPC who stashed/found) | later | low–medium | medium | — |
 
 ## Objectives / challenges
@@ -114,6 +115,8 @@ Dataset: the B2 native log (`%TEMP%\glacier-m0\hitmen\b2-run1\relay-20261008-192
 `StartingSuit`, `Disguise`, `DisguiseBlown` and `BrokenDisguiseCleared` share one shape — `Value` is a non-empty string holding an outfit **definition** repository id — with one emission per occurrence and no `XboxGameMode` twin. `StartingSuit` is emitted in the same frame as `IntroCutEnd`, 2 to 30 s after the predicate rise (contract clock 2.28 s / 13.01 s in B0), restating `ContractStart.Disguise`; it is not at contract clock 0. `DisguiseBlown` carries the id most recently stated by `Disguise` and shares its `Timestamp` with a `Spotted`; `BrokenDisguiseCleared` carries the same id and, in all three observed instances (B0 ×2, B1 ×1 by name), followed the `Kill` of the last actor named in `Witnesses` by 9 to 222 ms — pacifying those actors did not clear it. `Kill`/`Pacify` `OutfitRepositoryId` agreed with the latest `Disguise` value in 16/16 B0 outcomes. No readable outfit name appears anywhere in the stream.
 
 **B3 runtime (2026-10-08, `M2_TELEMETRY.md` section 32):** on the production typed intake, the copied `Value` of all four names failed the String requirement (9/9 captured occurrences rejected as `Value is not a string`); the string shape above is the B0 probe's `ZDynamicObject_ToString` JSON rendering, not the engine type. The type-discovery experiment (section 34, 2026-10-09) read the copied kind as `Unsupported` with engine type **`ZRepositoryID`** for all four names (6/6 samples). New names observed (production, names only): `ItemDropped` (7), `ItemDestroyed` (1), `Hero_Health` (5).
+
+**B3 correction and acceptance (2026-10-09, `M2_TELEMETRY.md` sections 35–37):** the intake renders the exact reflection type `ZRepositoryID` as the dashed lowercase id; the controlled run of section 36 captured, normalized and published all four names (5 occurrences, 2 outfit definitions) with the ids equal to this corpus's strings for the same outfits, the `StartingSuit` id equal to the live `ContractStart.Disguise`, and — new chronology with ids — a `BrokenDisguiseCleared` at an outfit change naming the **newly equipped** outfit (`874c4c48…`), 26 ms after the `Disguise`. B3 is accepted for that bounded scope on this build; persistence, witness clearing and the ids of section 34's change-time pair remain unobserved. **Lesson recorded for every later vocabulary:** a JSON string in this corpus does not establish an engine `ZString`; field types are established only by the typed intake at runtime.
 
 ### Observation: `eventIndex` is not contiguous
 
