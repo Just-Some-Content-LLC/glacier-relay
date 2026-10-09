@@ -51,6 +51,10 @@ defmodule GlacierRelay.Lifecycle do
     outcomes, and kept there as immutable facts (`disguise_events`); with no open attempt they are
     unattributed. Nothing about the worn outfit or its compromise is stored here: `Disguise.derive/2`
     reads it from the facts on demand, with the attempt's gap and interruption evidence.
+  - Item occurrences (`item.picked_up`, `item.thrown`, `item.removed_from_inventory`, M2 B4) are
+    attached the same way (`item_events`), each occurrence on its own; with no open attempt they are
+    unattributed. Nothing is paired, deduplicated or read as an inventory here or anywhere:
+    `Items.derive/2` counts the facts on demand, with the same bounded history evidence.
   """
 
   alias GlacierRelay.Wire.Envelope
@@ -76,6 +80,15 @@ defmodule GlacierRelay.Lifecycle do
     position. Facts only: nothing here is derived.
     """
     defstruct [:type, :kind, :sequence, :timestamp, :received_at, :payload]
+  end
+
+  defmodule ItemOccurrence do
+    @moduledoc """
+    One item occurrence as the engine recorded it (via the native normalizer). `type` is
+    `:picked_up`, `:thrown` or `:removed_from_inventory`; everything else is the validated payload
+    plus stream position. Facts only: nothing here is derived, and no occurrence refers to another.
+    """
+    defstruct [:type, :sequence, :timestamp, :received_at, :payload]
   end
 
   defmodule ContractSession do
@@ -138,7 +151,9 @@ defmodule GlacierRelay.Lifecycle do
       contract_candidates: [],
       disposition: :not_observed,
       # Disguise occurrences in stream order (M2 B3): facts, never derived state.
-      disguise_events: []
+      disguise_events: [],
+      # Item occurrences in stream order (M2 B4): facts, never derived state.
+      item_events: []
     ]
   end
 
@@ -167,7 +182,9 @@ defmodule GlacierRelay.Lifecycle do
               # Observable discrepancies in the correlated evidence (id mismatch, ambiguity, ...).
               anomalies: [],
               # Disguise occurrences with no open attempt (M2 B3): kept, never attached by adjacency.
-              unattributed_disguise_events: []
+              unattributed_disguise_events: [],
+              # Item occurrences with no open attempt (M2 B4): kept, never attached by adjacency.
+              unattributed_item_events: []
   end
 
   def new(id), do: %Instance{id: id}
@@ -203,6 +220,9 @@ defmodule GlacierRelay.Lifecycle do
 
         GlacierRelay.Events.disguise_event?(envelope.event_type) ->
           record_disguise(instance, envelope, received_at)
+
+        GlacierRelay.Events.item_event?(envelope.event_type) ->
+          record_item(instance, envelope, received_at)
       end
 
     {%{instance | last_event: envelope}, notes ++ more}
@@ -587,6 +607,38 @@ defmodule GlacierRelay.Lifecycle do
                  open
                  | disguise_events: open.disguise_events ++ [occurrence]
                })
+         }, []}
+    end
+  end
+
+  # -- items (M2 B4) -------------------------------------------------------------------------
+
+  defp record_item(instance, envelope, received_at) do
+    type =
+      cond do
+        envelope.event_type == GlacierRelay.Events.item_picked_up() -> :picked_up
+        envelope.event_type == GlacierRelay.Events.item_thrown() -> :thrown
+        true -> :removed_from_inventory
+      end
+
+    occurrence = %ItemOccurrence{
+      type: type,
+      sequence: envelope.sequence,
+      timestamp: envelope.timestamp,
+      received_at: received_at,
+      payload: envelope.payload
+    }
+
+    case current_attempt(instance) do
+      nil ->
+        {%{instance | unattributed_item_events: instance.unattributed_item_events ++ [occurrence]},
+         [{:unattributed_item_event, envelope.sequence}]}
+
+      open ->
+        {%{
+           instance
+           | attempts:
+               replace_last(instance.attempts, %{open | item_events: open.item_events ++ [occurrence]})
          }, []}
     end
   end

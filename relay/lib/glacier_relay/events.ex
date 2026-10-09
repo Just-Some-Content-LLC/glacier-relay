@@ -45,6 +45,20 @@ defmodule GlacierRelay.Events do
   three says who noticed, whether a compromise persists across a later outfit change, or anything
   about the worn outfit other than what the engine stated at that moment; `Disguise.derive/2`
   says what BEAM reads into them and how uncertain that reading is.
+
+  Items (M2 B4, design section 38), normalized from Glacier's own telemetry; one occurrence each:
+
+  - `item.picked_up` v1: Glacier recorded that the player picked up an item ("ItemPickedUp").
+  - `item.thrown` v1: Glacier recorded that the player threw one ("ItemThrown").
+  - `item.removed_from_inventory` v1: Glacier recorded that it removed one from the player's
+    inventory ("ItemRemovedFromInventory"; the engine's phrase, kept — not `item.removed`).
+
+  Same shape for the three. `item_repository_id` names an item *definition* (two wrenches are
+  indistinguishable by it); `item_instance_id` is present only when the engine named a non-empty
+  instance. `item_name`, `item_type` and `online_traits` are the engine's strings verbatim, as
+  evidence, never identity. Each occurrence stands alone: a removal and a throw are two events,
+  never paired, merged or inferred from one another, and none of them says what is held, what the
+  inventory contains or whether an item was recovered.
   """
 
   alias GlacierRelay.Wire.Envelope
@@ -58,6 +72,9 @@ defmodule GlacierRelay.Events do
   @disguise_equipped "disguise.equipped"
   @disguise_compromised "disguise.compromised"
   @disguise_compromise_cleared "disguise.compromise_cleared"
+  @item_picked_up "item.picked_up"
+  @item_thrown "item.thrown"
+  @item_removed_from_inventory "item.removed_from_inventory"
   @reason_kinds ["restart", "exit_to_menu", "other"]
   @equipped_kinds ["initial", "change"]
 
@@ -70,6 +87,9 @@ defmodule GlacierRelay.Events do
   def disguise_equipped, do: @disguise_equipped
   def disguise_compromised, do: @disguise_compromised
   def disguise_compromise_cleared, do: @disguise_compromise_cleared
+  def item_picked_up, do: @item_picked_up
+  def item_thrown, do: @item_thrown
+  def item_removed_from_inventory, do: @item_removed_from_inventory
 
   @doc "Event types that are actor outcomes."
   def actor_outcome?(type), do: type in [@actor_died, @actor_pacified]
@@ -80,6 +100,9 @@ defmodule GlacierRelay.Events do
   @doc "Event types that are disguise occurrences."
   def disguise_event?(type),
     do: type in [@disguise_equipped, @disguise_compromised, @disguise_compromise_cleared]
+
+  @doc "Event types that are item occurrences."
+  def item_event?(type), do: type in [@item_picked_up, @item_thrown, @item_removed_from_inventory]
 
   @spec validate(String.t(), pos_integer(), map()) :: {:ok, map()} | {:error, term()}
   def validate(@mission_playing, 1, payload),
@@ -97,6 +120,9 @@ defmodule GlacierRelay.Events do
   def validate(type, 1, payload) when type in [@disguise_compromised, @disguise_compromise_cleared],
     do: disguise_payload(payload, :without_kind)
 
+  def validate(type, 1, payload) when type in [@item_picked_up, @item_thrown, @item_removed_from_inventory],
+    do: item_payload(payload)
+
   def validate(type, version, _payload)
       when type in [
              @mission_playing,
@@ -107,7 +133,10 @@ defmodule GlacierRelay.Events do
              @contract_ended,
              @disguise_equipped,
              @disguise_compromised,
-             @disguise_compromise_cleared
+             @disguise_compromise_cleared,
+             @item_picked_up,
+             @item_thrown,
+             @item_removed_from_inventory
            ],
       do: {:error, {:unsupported_schema_version, type, version}}
 
@@ -244,6 +273,35 @@ defmodule GlacierRelay.Events do
          kind: kind,
          engine_event: engine_event,
          disguise_repository_id: disguise_repository_id,
+         contract_session_id: contract_session_id,
+         engine_timestamp_s: engine_timestamp_s
+       }}
+    end
+  end
+
+  # The same shape for the three item types (design section 38.5). The definition id is the
+  # subject: required and non-empty, its form unchecked. Every other item field is optional and
+  # typed when present; the native side omits an empty InstanceId rather than sending "".
+  defp item_payload(payload) do
+    with {:ok, source} <- Envelope.field(payload, "source", &Envelope.non_empty_string?/1),
+         {:ok, engine_event} <- Envelope.field(payload, "engine_event", &Envelope.non_empty_string?/1),
+         {:ok, item_repository_id} <-
+           Envelope.field(payload, "item_repository_id", &Envelope.non_empty_string?/1),
+         {:ok, item_instance_id} <- optional_string(payload, "item_instance_id"),
+         {:ok, item_name} <- optional_string(payload, "item_name"),
+         {:ok, item_type} <- optional_string(payload, "item_type"),
+         {:ok, online_traits} <- optional(payload, "online_traits", &string_list?/1),
+         {:ok, contract_session_id} <- optional_string(payload, "contract_session_id"),
+         {:ok, engine_timestamp_s} <- optional(payload, "engine_timestamp_s", &is_number/1) do
+      {:ok,
+       %{
+         source: source,
+         engine_event: engine_event,
+         item_repository_id: item_repository_id,
+         item_instance_id: item_instance_id,
+         item_name: item_name,
+         item_type: item_type,
+         online_traits: online_traits,
          contract_session_id: contract_session_id,
          engine_timestamp_s: engine_timestamp_s
        }}

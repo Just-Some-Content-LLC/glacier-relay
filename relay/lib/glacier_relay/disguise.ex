@@ -26,11 +26,13 @@ defmodule GlacierRelay.Disguise do
   - `history` — attempt-level completeness from the same gap and interruption evidence, bounded
     on the stream by the attempt's stop or, for a superseded attempt, by the rise that superseded
     it (`{:superseded, by, at_sequence}`); later attempts' gaps never reach an earlier attempt.
+    The bounding is `AttemptHistory` (shared with the item view since M2 B4).
 
   It never says "clean", never carries a standing across a change, never infers who noticed or
   why a compromise cleared, and never resolves an id to a name.
   """
 
+  alias GlacierRelay.AttemptHistory
   alias GlacierRelay.Lifecycle.{Attempt, DisguiseOccurrence, Instance}
 
   @type standing :: :not_observed | :compromised | :cleared | :unknown
@@ -39,20 +41,12 @@ defmodule GlacierRelay.Disguise do
   @spec derive(Attempt.t(), Instance.t()) :: map()
   def derive(%Attempt{} = attempt, %Instance{} = instance) do
     events = attempt.disguise_events
-    gaps = gaps_in_attempt(instance.gaps, attempt)
+    gaps = AttemptHistory.gaps_in_attempt(instance.gaps, attempt)
     interruptions = Enum.map(attempt.interruptions, &{:interruption, &1.at, &1.reason, &1.after_sequence})
 
     folded = Enum.reduce(events, initial_state(), &fold/2)
 
     {standing, reason, cut} = standing(folded, events, gaps, interruptions)
-
-    history_reasons =
-      Enum.map(gaps, fn {expected, got} -> {:gap, expected, got} end) ++
-        Enum.map(interruptions, fn {:interruption, at, reason, _} -> {:interruption, at, reason} end) ++
-        if(attempt.mission == :superseded,
-          do: [{:superseded, attempt.superseded_by, attempt.superseded_at}],
-          else: []
-        )
 
     %{
       initial: folded.initial,
@@ -65,7 +59,7 @@ defmodule GlacierRelay.Disguise do
       standing_cut: cut,
       used: Enum.reverse(folded.used),
       changes: folded.changes,
-      history: if(history_reasons == [], do: :complete, else: {:incomplete, history_reasons}),
+      history: AttemptHistory.history(attempt, instance.gaps),
       notes: Enum.reverse(folded.notes),
       anomalies: Enum.reverse(folded.anomalies) ++ contract_anomaly(folded, attempt, instance),
       occurrences: length(events)
@@ -216,24 +210,6 @@ defmodule GlacierRelay.Disguise do
   end
 
   # -- evidence from outside the disguise events ----------------------------------------------
-
-  # Gaps are recorded on the instance as {expected, got}, newest first, detected at `got`. One
-  # belongs to this attempt when it was detected after the rise and no later than the attempt's
-  # end on the stream: its stop, or — for a superseded attempt, whose stop was never observed —
-  # the rise that superseded it (a gap detected at that rise is this attempt's evidence; gaps
-  # detected later belong to later attempts). An open attempt has no upper bound.
-  defp gaps_in_attempt(gaps, %Attempt{playing: %{sequence: lo}} = attempt) do
-    hi =
-      cond do
-        attempt.stopped -> attempt.stopped.sequence
-        attempt.mission == :superseded -> attempt.superseded_at
-        true -> nil
-      end
-
-    gaps
-    |> Enum.reverse()
-    |> Enum.filter(fn {_expected, got} -> got > lo and (is_nil(hi) or got <= hi) end)
-  end
 
   # The paired contract session's starting disguise is a session-level statement correlated by
   # order; it never initializes `worn`, but a differing in-attempt initial is worth recording.

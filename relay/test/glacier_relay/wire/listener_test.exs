@@ -480,6 +480,54 @@ defmodule GlacierRelay.Wire.ListenerTest do
     :gen_tcp.close(socket)
   end
 
+  # -- B4: items over the wire ---------------------------------------------------------------
+
+  @b4 File.read!("test/b4_probe_envelopes.ndjson") |> String.split("\n", trim: true)
+  @b4_id "31c81c1e-071d-4ff4-8dd2-462b9b97900c"
+
+  test "the B4 native envelopes arrive in order; item occurrences attach by order and are counted directly, beside the accepted vocabulary" do
+    socket = connect()
+    :ok = :gen_tcp.send(socket, Enum.join(@b4, "\n") <> "\n")
+    assert_receive {:relay_event, %{sequence: 45, event_type: "contract.ended"}}, 1_000
+
+    instance = MissionSession.state()[@b4_id]
+    assert instance.gaps == [] and instance.unattributed_item_events == [] and instance.unattributed_disguise_events == []
+    assert [%Attempt{item_events: first} = a1, %Attempt{item_events: []} = a2] = instance.attempts
+    assert length(first) == 24
+    assert Enum.map(first, & &1.type) |> Enum.frequencies() == %{picked_up: 12, thrown: 6, removed_from_inventory: 6}
+    assert Enum.map(first, & &1.sequence) == [4, 6, 7, 8, 11, 12, 14, 15, 18, 19, 20, 22, 23, 24, 27, 28, 29, 30, 32, 33, 35, 36, 37, 38]
+
+    items = GlacierRelay.Items.derive(a1, instance)
+    assert %{picked_up: 12, thrown: 6, removed_from_inventory: 6, history: :complete} = items
+    assert length(items.definitions_used) == 7
+    assert GlacierRelay.Items.derive(a2, instance).occurrences == 0
+
+    # The accepted vocabulary in the same stream is unchanged by the new rows.
+    assert Enum.map(a1.disguise_events, & &1.sequence) == [3, 5, 9, 17, 21, 25, 26]
+    assert Enum.map(a1.outcomes, & &1.sequence) == [10, 13, 16, 31, 34]
+    assert %{worn_standing: :cleared, changes: 2, history: :complete} = GlacierRelay.Disguise.derive(a1, instance)
+    assert a1.disposition == :restarted and a2.disposition == :exited_to_menu
+
+    text = MissionSession.summary_text()
+    assert text =~ "items (engine telemetry): picked up 12 — Wrench ×3, Crowbar ×3, Emetic Rat Poison, Lead Pipe, Kitchen Knife ×2, Cleaver, Propane Flask; thrown 6 — Wrench ×2, Crowbar, Lead Pipe, Kitchen Knife, Propane Flask; removed from inventory 6 — Wrench ×2, Crowbar, Lead Pipe, Kitchen Knife, Propane Flask; 7 definitions; history intact"
+    assert text =~ "items (engine telemetry): none observed in the attempt"
+    refute text =~ ~r/inventory contents|holding|carried|owns|recovered|throws|clean|undetected|safe|silent assassin|complet/i
+    :gen_tcp.close(socket)
+  end
+
+  test "an item event with no open attempt over the wire stays unattributed" do
+    orphan = Enum.at(@b4, 6) |> String.replace(@b4_id, "orphan-item")
+    socket = connect()
+    :ok = :gen_tcp.send(socket, orphan <> "\n")
+    assert_receive {:relay_event, %{adapter_instance_id: "orphan-item", event_type: "item.thrown"}}, 1_000
+
+    instance = MissionSession.state()["orphan-item"]
+    assert instance.attempts == []
+    assert [%{type: :thrown, sequence: 7}] = instance.unattributed_item_events
+    assert MissionSession.summary_text() =~ "item thrown 6adddf7e… #7 @209.153168s with no open attempt"
+    :gen_tcp.close(socket)
+  end
+
   defp wait_until(fun, attempts \\ 50) do
     cond do
       fun.() -> :ok

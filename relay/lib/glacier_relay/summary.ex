@@ -5,8 +5,8 @@ defmodule GlacierRelay.Summary do
   infers a gameplay outcome. Each line says what was observed, and "not observed" where it wasn't.
   """
 
-  alias GlacierRelay.{Disguise, Lifecycle}
-  alias GlacierRelay.Lifecycle.{Attempt, Connection, ContractSession, DisguiseOccurrence, Instance, Outcome}
+  alias GlacierRelay.{Disguise, Items, Lifecycle}
+  alias GlacierRelay.Lifecycle.{Attempt, Connection, ContractSession, DisguiseOccurrence, Instance, ItemOccurrence, Outcome}
 
   @doc "Summary data, one map per instance, oldest attempt first."
   @spec build(%{String.t() => Instance.t()}) :: [map()]
@@ -62,6 +62,8 @@ defmodule GlacierRelay.Summary do
       # Disguise occurrences with no open attempt (M2 B3): kept visible, never attached.
       unattributed_disguise_events:
         Enum.map(instance.unattributed_disguise_events, &disguise_occurrence/1),
+      # Item occurrences with no open attempt (M2 B4): kept visible, never attached.
+      unattributed_item_events: Enum.map(instance.unattributed_item_events, &item_occurrence/1),
       # Contract lifecycle (M2 B2): every session Glacier reported, paired or not, plus what
       # could not be correlated and every observable discrepancy.
       contract_sessions: Enum.map(instance.contract_sessions, &contract_session/1),
@@ -120,7 +122,29 @@ defmodule GlacierRelay.Summary do
       disposition: attempt.disposition,
       # Disguise (M2 B3): the occurrences as facts, then BEAM's labelled reading of them.
       disguise_events: Enum.map(attempt.disguise_events, &disguise_occurrence/1),
-      disguise: Disguise.derive(attempt, instance)
+      disguise: Disguise.derive(attempt, instance),
+      # Items (M2 B4): the occurrences as facts, then the direct counts per definition.
+      item_events: Enum.map(attempt.item_events, &item_occurrence/1),
+      items: Items.derive(attempt, instance)
+    }
+  end
+
+  defp item_occurrence(%ItemOccurrence{} = o) do
+    p = o.payload
+
+    %{
+      type: o.type,
+      sequence: o.sequence,
+      timestamp: o.timestamp,
+      source: p.source,
+      engine_event: p.engine_event,
+      item_repository_id: p.item_repository_id,
+      item_instance_id: p.item_instance_id,
+      item_name: p.item_name,
+      item_type: p.item_type,
+      online_traits: p.online_traits,
+      contract_session_id: p.contract_session_id,
+      engine_timestamp_s: p.engine_timestamp_s
     }
   end
 
@@ -268,9 +292,14 @@ defmodule GlacierRelay.Summary do
         "  disguise #{render_disguise_occurrence(o)} with no open attempt"
       end)
 
+    unattributed_items =
+      Enum.map(s.unattributed_item_events, fn o ->
+        "  item #{render_item_occurrence(o)} with no open attempt"
+      end)
+
     anomalies = Enum.map(s.anomalies, &("  anomaly: " <> render_anomaly(&1)))
 
-    [header] ++ connections ++ attempts ++ strays ++ unattributed ++ unattributed_disguise ++ unpaired ++ unmatched_ends ++ anomalies
+    [header] ++ connections ++ attempts ++ strays ++ unattributed ++ unattributed_disguise ++ unattributed_items ++ unpaired ++ unmatched_ends ++ anomalies
   end
 
   defp render_attempt(a) do
@@ -314,7 +343,66 @@ defmodule GlacierRelay.Summary do
             Enum.map(outcomes, &("    " <> render_outcome(&1)))
       end
 
-    [line] ++ render_attempt_contract(a) ++ outcome_lines ++ render_attempt_disguise(a)
+    [line] ++ render_attempt_contract(a) ++ outcome_lines ++ render_attempt_disguise(a) ++ render_attempt_items(a)
+  end
+
+  # One line per attempt (M2 B4, design section 38.6): direct counts of the item occurrences
+  # Glacier reported, each type broken down per definition in first-seen order, with the engine's
+  # display names as it sent them and the id where it sent none; then the history. Nothing is
+  # paired. The deferred vocabulary (drops, destroys) is not shown at all. Words that never appear
+  # here: inventory contents, holding, carried, owns, recovered, lost, throws.
+  defp render_attempt_items(a) do
+    i = a.items
+
+    if i.occurrences == 0 do
+      ["    items (engine telemetry): none observed in the attempt"]
+    else
+      per_type =
+        Enum.map_join([{:picked_up, "picked up"}, {:thrown, "thrown"}, {:removed_from_inventory, "removed from inventory"}], "; ", fn {type, label} ->
+          "#{label} #{Map.fetch!(i, type)}#{render_item_breakdown(i.by_definition, type)}"
+        end)
+
+      definitions = "#{length(i.definitions_used)} definition#{plural(length(i.definitions_used))}"
+
+      history =
+        case i.history do
+          :complete -> "history intact"
+          {:incomplete, reasons} -> "history broken: " <> Enum.map_join(reasons, ", ", &render_history_reason/1)
+        end
+
+      ["    items (engine telemetry): #{per_type}; #{definitions}; #{history}"]
+    end
+  end
+
+  defp render_item_breakdown(rows, type) do
+    case Enum.filter(rows, &(Map.fetch!(&1, type) > 0)) do
+      [] ->
+        ""
+
+      used ->
+        " — " <>
+          Enum.map_join(used, ", ", fn row ->
+            n = Map.fetch!(row, type)
+            "#{render_item_label(row)}#{if n > 1, do: " ×#{n}", else: ""}"
+          end)
+    end
+  end
+
+  # The engine's display string as sent, or the short id when it sent none.
+  defp render_item_label(%{item_name: name}) when is_binary(name) and name != "", do: name
+  defp render_item_label(%{item_repository_id: id}), do: short(id)
+
+  defp render_item_occurrence(o) do
+    at = if o.engine_timestamp_s, do: " @#{o.engine_timestamp_s}s", else: ""
+
+    what =
+      case o.type do
+        :picked_up -> "picked up"
+        :thrown -> "thrown"
+        :removed_from_inventory -> "removed from inventory"
+      end
+
+    "#{what} #{short(o.item_repository_id)} ##{o.sequence}#{at}"
   end
 
   # Two lines per attempt (M2 B3): the disguise occurrences Glacier reported, in order, then the
