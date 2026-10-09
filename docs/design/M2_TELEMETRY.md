@@ -1584,3 +1584,42 @@ Cleanup is mechanical: `%TEMP%\glacier-m0\hitmen\run-cleanup.sh <evidence-dir>` 
 With the kinds known, the smallest production change is a single new branch in `TelemetryIntake::Copy` for the observed type (for a GUID type: read the 16 bytes and render the dashed form through the SDK's own `ZGuid::ToString` or an engine-independent formatter, yielding `Kind::String`), plus a fixture whose values are built from that type rather than from the JSON corpus, plus the normal gate and a further controlled run. That is a separate proposal; nothing of it exists.
 
 **B3 remains unaccepted; M2 remains incomplete.**
+
+---
+
+## 34. B3 type-discovery experiment (2026-10-09, 00:01Z to 00:16Z) — result: `ZRepositoryID` for all four names
+
+Authorized explicitly as "one bounded type-discovery experiment under §33" on the frozen artifacts: ZHMModSDK `relay/m2` `4a616cf9`, diagnostic `GlacierRelay.dll` SHA-256 `ac6b784ae18299c4d4724c3129525c9fe8ed5113886c946c0f154d28258a4a4e` (verified in the build tree and again on the installed copy — distinct from the B3 DLL `c045f92a…`), glacier-relay `2145594`. No implementation change or rebuild. Purpose: read the copied kind and engine type of the rejected disguise `Value` for each of the four names; not a persistence validation. **This experiment authorizes no intake conversion, no rerun and no B3 acceptance.**
+
+### Result
+
+| Source name | Samples | Event index | Copied kind | Engine type name (untruncated) | Exact diagnostic line |
+|---|---|---|---|---|---|
+| `StartingSuit` | 1 | 9 | `Unsupported` | `ZRepositoryID` | `2026-10-09T00:08:02.627Z WARN telemetry 'StartingSuit' (index 9) not normalized: Value is not a string (kind=Unsupported type='ZRepositoryID')` |
+| `Disguise` | 2 | 18, 37 | `Unsupported` | `ZRepositoryID` | `2026-10-09T00:11:37.715Z WARN telemetry 'Disguise' (index 18) not normalized: Value is not a string (kind=Unsupported type='ZRepositoryID')` (and index 37 at 00:13:25.139Z, identical detail) |
+| `DisguiseBlown` | 2 | 33, 39 | `Unsupported` | `ZRepositoryID` | `2026-10-09T00:12:35.559Z WARN telemetry 'DisguiseBlown' (index 33) not normalized: Value is not a string (kind=Unsupported type='ZRepositoryID')` (and index 39 at 00:13:25.367Z, identical detail) |
+| `BrokenDisguiseCleared` | 1 | 38 | `Unsupported` | `ZRepositoryID` | `2026-10-09T00:13:25.367Z WARN telemetry 'BrokenDisguiseCleared' (index 38) not normalized: Value is not a string (kind=Unsupported type='ZRepositoryID')` |
+
+Six diagnostic lines, six rejections, 6/6 `kind=Unsupported type='ZRepositoryID'` (13 bytes, no escaping or truncation applied). **No occurrence normalized unexpectedly.** The section 32/33 hypothesis is now runtime-confirmed on this build for all four names: the engine passes the outfit definition id as the reflection type `ZRepositoryID` (a 16-byte `ZGuid`-derived value), which the intake records by type name and the normalizer rejects. What remains unconfirmed: whether the 16 bytes rendered in dashed form equal the ids the B0 corpus shows (expected, since `ZDynamicObject_ToString` produced those strings from the same values, but not yet observed through Relay's own path), and the byte order/format the SDK's `ZGuid::ToString(GuidFormat::Dashes)` applies versus the engine's JSON writer.
+
+### Setup, gate, sequence
+
+Pre-flight: 107-file listing/hashes identical to the B3 post-cleanup baseline, 26/26 M0, both trees clean, game at M0, port free. BEAM first (00:01:04Z), its `beam.smp` PID 131578 retained in `beam.pid`; watcher PID 131681 in `watcher.pid`. Installed 00:01:12Z; full-tree diff exactly `mods/GlacierRelay.dll` (`ac6b784a…`) and `mods.ini` (`a66a44ed…`). Menu gate: detour at `0x140b6fd50`, `Mod glacierrelay successfully loaded`, adapter **`1355a1fd-035a-4216-8382-f6105563532d`**, TCP connected 00:03:12.518Z, BEAM accepted 00:03:12.558Z, menu to stage 8 with no event, zero frontend telemetry, 0 WARN/ERROR/FAULT; VS attached after the gate.
+
+Relay sequence: `mission.playing #1` (00:07:54.896Z) → `contract.started #2` (00:07:54.926Z; `ContractStart` captured 2 ms after the rise, published next frame — a **fresh-entry** ordering variant: B1/B2/B3 had it before the rise; BEAM paired `:open_attempt`) → nothing further → TCP `:peer_closed` 00:14:31.791Z. **Native↔BEAM 2/2, 0 field mismatches.** Attempt 1 last known playing, end not observed, disposition `:not_observed`; `disguises: none observed in the attempt` (correct: nothing reached the wire).
+
+Script as executed: fresh Paris (sample 1 at intro end, 7.7 s after the rise) → locker disguise ("palace staff", operator) (sample 2) → compromised by three NPCs (sample 3; `Spotted` ×7 → `Witnesses` → `DisguiseBlown` +238 ms) → changed back to the suit (sample 4 at the change; see chronology) → operator was spotted once more accidentally (`Spotted`/`Witnesses` ×3, no further disguise event) → **deviation: quit to desktop from inside the mission instead of exit-to-menu, then quit.** No combat, no kills, no persistence steps.
+
+Chronology at the change-away (ids unknown, recorded as names only): `Disguise` (index 37, 00:13:25.119Z) → `BrokenDisguiseCleared` (38, 00:13:25.357Z) → `DisguiseBlown` (39, 00:13:25.359Z) → `Trespassing` (40, +226 ms). A clear followed two milliseconds later by a blown, both at the change, is new chronology (section 32 saw `Disguise` + `BrokenDisguiseCleared` only). Nothing is concluded about which outfits they name or what the engine's state was.
+
+### Counters and health
+
+No counters line (no predicate fall occurred). From the `seen` lines: seen 51; captured 7 = normalized 1 (`ContractStart`) + malformed 6 (the six diagnostic rejections); unsupported 43 across 12 names; `_DONTSEND` 1 (`ChallengeCompleted`); unreadable 0; truncated 0; queue dropped 0 (no `queue full` warning); outside attempt 0; published 2. Engine indices never delivered: 4, 50 (2 of 53). Native log: 84 lines, **6 WARN (all six diagnostic lines), 0 ERROR, 0 FAULT**; BEAM 0 rejected, the expected close-while-playing warning only. Direct quit: outcome B (fourth observation). Operator: no perceivable performance effect.
+
+### Cleanup (mechanical)
+
+`run-cleanup.sh b3diag-run1`: RPC `:init.stop` sent; `beam.pid` 131578 (`beam.smp`) had already exited; `watcher.pid` 131681 had already exited on the process exit; HITMAN3.exe confirmed gone before any game-file step; `GlacierRelay.dll` removed; `mods.ini` restored from the saved M0 copy (`b90b4c5e…`); 107-file listing and hashes identical to pre-flight; 26/26 M0 hashes; no Relay, Hitmen or probe artifact; port 4747 free. No process was signalled. Evidence (25 files) in `%TEMP%\glacier-m0\hitmen\b3diag-run1\`: native log `relay-20261009-000251-87268.log` (SHA-256 `2b960a9b…`), `beam.log` (`8f078661…`), `beam-final-state.txt` (`534d8192…`), `beam-events.ndjson`, `native-beam-compare.txt`, both loader logs, `mods.ini` before/relay/after-run, `Retail` listings and hashes before/installed/after, `installed-at.txt`, `beam.pid`, `watcher.pid`, the scripts.
+
+### Proposed smallest correction (for review; nothing of it exists)
+
+One branch in `TelemetryIntake::Copy`, Glacier-facing only: when `TypeNameOf(p_Value) == "ZRepositoryID"` (and, if review agrees, `"ZGuid"`), read the 16 bytes at `GetData()` and emit `Kind::String` with the dashed lowercase GUID text. Rendering should be an engine-independent formatter over the four GUID fields (`data1`/`data2`/`data3` little-endian, `data4` bytes) so that the normalizer's tests can cover it without the SDK; the SDK's `ZGuid::ToString(GuidFormat::Dashes)` is the reference for the expected form and can be compared in a native test that builds a `ZGuid` from one of the B0 strings. Then: a native fixture whose disguise `Value`s are built from the 16-byte representation rather than from the JSON corpus (the four B0 ids as GUIDs), the existing normalizer and frame tests unchanged, the gate (clean build, 25/25, wire `b3`), and a controlled run whose pass criterion is that each disguise occurrence publishes with `disguise_repository_id` equal to the id the B0 corpus shows for the same outfit. `Kill`/`Pacify` and `ContractStart` fields are `ZString` and are not touched. Until that is reviewed and run, **B3 remains unaccepted and M2 remains incomplete.**
