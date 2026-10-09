@@ -2017,3 +2017,62 @@ A pass makes B4 a candidate for acceptance review on the observed build; it does
 **Frozen for the proposed run:** SDK build source `12ea5586` (head `183a6612`, test-only delta), DLL `07a71fc2…`, BEAM `c10c939`. Still not deployed, loaded or run; B3 accepted; B4 pending runtime validation and acceptance; M2 incomplete.
 
 **Stop here for implementation review. Nothing in this section was deployed, loaded or run against the game.**
+
+## 40. B4 controlled runtime experiment (2026-10-09, 05:00Z to 05:09Z) — all three item names crossed the typed intake; PASS on the section 39 criteria; not yet accepted
+
+Authorization: the operator confirmed readiness and authorized the single §39 experiment (one run). Frozen artifacts, verified before installation: SDK build source `12ea5586` (head `183a6612`, generators only; `Src`/`CMakeLists.txt` identical), **DLL `07a71fc2cf684a43086bbc60683c93de857d800e76122bd09b9ed74eb2e9d02c`** (build tree, then the installed copy, same hash), glacier-relay `014128b` (BEAM `c10c939`). Evidence: `%TEMP%\glacier-m0\hitmen\b4-run1\` (`sha256.txt`: native log `relay-20261009-050104-17888.log` `e23c642f…`, `beam.log` `d69c5d77…`, `beam-final-state.txt` `d0ff1704…`, `beam-events.ndjson` `f9c46cba…`, `native-beam-compare.txt` `09707c1a…`, `operator-actions.txt` `4ed14e33…`, `watch-native.out`, `mods.ini.before/relay`, `retail-{before,installed,after}.sha256`).
+
+### Verdict, from the evidence
+
+PASS on every §39 criterion (table below). B4 is now a candidate for acceptance review on build 3.280.0.0 for its bounded scope (three names, definition ids, direct counts). It is **not accepted by this record**, and M2's exit criterion is unchanged.
+
+### Setup and pre-flight (all observed)
+
+Refs and trees clean; DLL hash as above; HITMAN not running; port 4747 free; Retail listing 107 files, hashes identical to the post-§36 state; M0 26/26; `mods.ini` `b90b4c5e…`; newest pre-run native log recorded. BEAM first (`beam.pid` 150194, listening 05:00Z), read-only watcher (`watcher.pid` 150268). Install 05:00:08Z: `mods/GlacierRelay.dll` (`07a71fc2…` on the installed copy) and `mods.ini` relay variant (`a66a44ed…`); full-tree diff shows exactly those two differences (108 files).
+
+### Menu gate (05:01Z)
+
+Process 17888; module attached from `retail\mods\GlacierRelay.dll`, built Oct 8 2026 20:33:39 (the §39 gate build); plugin constructed against SDK 4.1.1 (ABI 1); `Init: one detour registered (ZAchievementManagerSimple_OnEventSent, read-only); lifecycle is polled`; adapter `3d7fb09a-9711-4e86-ba1c-338b72677a74`, `telemetry_log names`; TCP connected 05:01:26Z (BEAM connection opened 05:01:26.13Z); MainMenu stage 8; **0 frontend telemetry; 0 WARN/ERROR/FAULT.** Gate passed; the operator was told to proceed.
+
+### Script as executed (operator actions recorded separately; deviations in bold)
+
+Fresh Paris (`mission.playing #1` 05:03:18Z, `contract.started #2`, session `2516107786174700429-31f9b7ea-b011-4e1a-a212-e8b002d3dd90`; `StartingSuit` → `disguise.equipped #3 initial 874c4c48…` @26.56 s). Operator: *"went into the stairwell to pick up my briefcase I stashed before the mission start, and pulled the weapon out of the case"* — **a stashed loadout briefcase, not a world item**; the stream captured `ItemPickedUp` **pistol** `2e5f1dfd…` `"The Smoke"` `Gun_HardBaller_01` `[pistol]` (index 17, t=55.21) → `#4`, then `ItemPickedUp` **briefcase** `83e194ed…` `Military Briefcase` `Unrecognized Item type` `[case]` (index 19, t=57.12) → `#5` — the pistol 1.9 s *before* the briefcase, the reverse of the reported order (recorded, not interpreted). Threw the briefcase at nothing → `ItemRemovedFromInventory` (index 22) → `#6`, `ItemThrown` (index 23) → `#7`, both t=162.51, same id. Picked it up again → `#8` (index 24, t=176.80). Picked up a wrench → `#9` `6adddf7e…` (t=202.96), **a crowbar → `#10` `01ed6d15…`** (t=211.71), **a fire axe → `#11` `a8bc4325…` `CC_Axe` `[melee_lethal, throw_lethal_deprecated]`** (t=221.05); **threw the axe → `#12` removed, `#13` thrown** (indices 39/40, t=243.45); operator: *"I threw the fire axe that was in my hand and picked up a separate axe on the wall. it was a different axe I just picked up"* → `#14` `ItemPickedUp` `a8bc4325…` (index 42, t=246.35). Exit to menu → `mission.stopped #15` 05:08:33Z, counters line, `contract.ended #16` 3.7 s later (`exit_to_menu`, @312.37 s). Quit → process exited 05:08:56Z; BEAM `disconnected after 16 line(s), 0 rejected`.
+
+### Criterion 1 — samples of all three names and both scripted definitions
+
+`ItemPickedUp` 7, `ItemThrown` 2, `ItemRemovedFromInventory` 2 captured, normalized and published. Definition A (briefcase `83e194ed…`): pickup `#5`, removal `#6`, throw `#7`, re-pickup `#8`. Definition B: four further definitions on pickups (`2e5f1dfd…`, `6adddf7e…`, `01ed6d15…`, `a8bc4325…`), one of them (`a8bc4325…`) also on a removal, a throw and a re-pickup. **Met.**
+
+### Criterion 2 — reconciliation from the instruments
+
+Per-name `telemetry seen` lines (40 lines, indices 1–45 with 5, 29, 31, 35, 37 never presented — engine-side skips, as in every run): captured `ItemPickedUp` 7, `ItemThrown` 2, `ItemRemovedFromInventory` 2, `StartingSuit` 1, `ContractStart` 1, `ContractFailed` 1 = **14**; unsupported 26 (`Level_Setup_Events` 7, `HoldingIllegalWeapon` 7, `setpieces` 5, `OpportunityStageEvent` 2, `Trespassing`, `OpportunityEvents`, `IntroCutEnd`, `HeroSpawn_Location`, `AmbientChanged` 1 each); `dont_send` 0, `unreadable` 0. Counters line at `attempt ended` (before `ContractFailed` was captured): `seen 39, captured 13, unsupported 26, dont_send 0, unreadable 0, truncated 0; queue pushed 13, dropped 0; normalized 13, malformed 0, outside attempt 0, ungated published 1` — **captured 13 = normalized 13 + malformed 0**, and the one further capture after it (`ContractFailed`, index 45) was normalized and published as `#16`. Per name, `not normalized` lines 0 and `no open mission attempt` lines 0, so normalized = captured for every name; **normalized 14 = published 14 (12 attempt-gated + 2 ungated) + outside-attempt 0**; `published` lines: `item.picked_up` 7, `item.thrown` 2, `item.removed_from_inventory` 2, `disguise.equipped` 1, `contract.started` 1, `contract.ended` 1, plus `mission.playing`/`mission.stopped` = 16 envelopes; `tcp sink: sent` 16; **published 16 = received 16** (BEAM 16 lines, 0 rejected, gaps `[]`, 11 item facts on attempt 1, 0 unattributed). Pending 0 (every captured observation was published before the quit), dropped 0, `queue full` lines 0. Operator action count versus events: the operator reported 2 pickups (briefcase, weapon from the case), 1 throw, 1 re-pickup, 3 pickups (wrench, crowbar, axe), 1 throw, 1 pickup of a different axe = 7 pickups, 2 throws; the stream has 7 `ItemPickedUp`, 2 `ItemThrown`, 2 `ItemRemovedFromInventory`. The only discrepancy is the *order* of the first two pickups (pistol captured before briefcase); each throw was captured as a removal + a throw pair (2/2 here, identical `Timestamp`, consecutive indices), consistent with B0's observation and still not a rule. **Met.**
+
+### Criterion 3 — zeros
+
+malformed 0; dropped 0; outside-attempt 0 (none expected either: no item event was captured after the fall frame); rejected 0; gaps `[]`; field mismatches **0** on 16/16 (`compare.py`). **Met.**
+
+### Criterion 4 — prior vocabulary, by class
+
+Exercised live by the script on this build: `mission.playing`/`mission.stopped`, `contract.started` (`open_attempt` pairing — the start arrived 32 ms after the rise) / `contract.ended` (exit to menu, 3.7 s after the fall), `StartingSuit` → `disguise.equipped initial` (`874c4c48…` == the paired contract's starting disguise; derived view `worn 874c4c48… (equals the starting suit id) since #3; worn outfit: no compromise observed`). **Not exercised live** — regression coverage for this build comes only from the offline tests and the b4 wire step: `Disguise`/`DisguiseBlown`/`BrokenDisguiseCleared`, `Kill`/`Pacify`, restart ordering. **Met (as stated).**
+
+### Criterion 5
+
+0 ERROR/FAULT; 0 WARN in the native log; BEAM stopped by RPC (`init.stop`; launcher pid 150194 and watcher 150268 had already exited; port 4747 free); DLL removed, `mods.ini` restored; listing identical (107), hashes identical, **M0 26/26**. **Met.**
+
+### BEAM final summary (attempt 1, verbatim)
+
+`items (engine telemetry): picked up 7 — "The Smoke", Military Briefcase ×2, Wrench, Crowbar, Fire Axe ×2; thrown 2 — Military Briefcase, Fire Axe; removed from inventory 2 — Military Briefcase, Fire Axe; 5 definitions; history intact` — direct counts; nothing paired; the axe's second pickup counted as a second occurrence of the definition, which is all the stream can say (next section).
+
+### Findings (recorded, not acted on)
+
+1. **First runtime evidence of the item object's intake.** All 11 item occurrences normalized: `Value` copied as an object; `RepositoryId`, `InstanceId`, `ItemName`, `ItemType` as `String`; `OnlineTraits` as an array of strings (the `TArray<ZString>` branch, second event family after `Kill.DamageEvents`); `InstanceId` empty on 11/11 (omitted on the wire, as designed); `Category`/`ActionRewardType` unread and harmless. Whether `RepositoryId` arrived as a `ZString` or a `ZRepositoryID` is **not** distinguishable from a successful normalization (§38.7); the known definitions (wrench `6adddf7e…`, crowbar `01ed6d15…`) equal the B0 strings either way.
+2. **A loadout item appeared in `ItemPickedUp`** (`2e5f1dfd…` `"The Smoke"` `Gun_HardBaller_01`, `[pistol]`) with an **empty** `InstanceId` — B0 had shown the loadout pistol only through `ContractStart.Loadout`/`HoldingIllegalWeapon`/`Kill` with a non-empty instance id. §38.1's "whether a pickup of a loadout item emits `ItemPickedUp` with its instance id" is answered for this case: it emits one *without* the instance id. The pistol pickup was captured 1.9 s before the briefcase pickup although the operator reported taking the briefcase first; which engine action each corresponds to is not established.
+3. **Same definition, different object, indistinguishable on the stream:** the operator threw one fire axe and picked up a different one; both carry `a8bc4325…` and an empty `InstanceId`. The design's refusal to derive "recovered"/instance identity (§38.3, §38.10) is confirmed as necessary, not merely cautious.
+4. `item_name` can contain quote characters (`"The Smoke"` is the engine's display string, quotes included); escaped on the wire, decoded intact by BEAM (0 mismatches).
+5. `HoldingIllegalWeapon` ×7 and `Trespassing` ×1 observed unsupported (B6 scope); `ItemDropped`/`ItemDestroyed` **not captured** in this run (no drop was scripted; no locker change).
+6. Engine timestamps print with float32 expansion (`55.21105194091797`), as the §36 live run's did; the B0 corpus text (`176.078949`) came from the engine's own JSON writer. Observation only.
+
+### What this does and does not establish
+
+Establishes, on build 3.280.0.0 with DLL `07a71fc2…`: the three item names normalize from the live engine payload and publish inside the attempt with the §38.5 fields; native and BEAM agree field for field; counts are direct and reconcile across every stage; the B1–B3 rows that the script touched are unchanged. Does not establish: the exact engine types behind the copied kinds; the semantics of the pistol pickup; anything about `ItemDropped`/`ItemDestroyed`; any instance identity. Unobserved and retained: a removal without a throw beside it; a non-empty `InstanceId` on any item event; a drop; a destroy; a throw that hits an NPC (with ids visible).
+
+**B4 is a candidate for acceptance review. Nothing here accepts it; M2 remains incomplete.**
