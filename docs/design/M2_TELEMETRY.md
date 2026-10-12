@@ -2551,3 +2551,96 @@ Frozen artifacts: SDK `relay/m2` `c5152848` (DLL build source), **DLL `6047a9a32
 `Hero_Health`/`Hero_Dead` production normalization, player health polling, player death detection (the §46.8 diagnostic remains a separate research authorization, possibly coordinated with the §38.9 and §46.9 candidates); `ContractEnd` normalization; `ItemDropped`/`ItemDestroyed`; witness/detection telemetry; inventory-state reconstruction; any new current-state polling; M3/M4; B7 summary v2.
 
 **Stop here for implementation review. Nothing in this section was deployed, loaded or run against the game.**
+
+## 48. B6 controlled runtime experiment (2026-10-12, 20:44Z to 20:52Z) — both player-state names crossed the typed intake with their payloads, the nested weapon object intact; pipeline PASS, vocabulary validated for the observed shapes; candidate for acceptance
+
+Authorization: the B6 implementation and offline gate (§47) accepted; the first controlled HITMAN run authorized with the §47 frozen artifacts and the experimental discipline of §47 (R1–R5, typed-intake observation, reconciliation, abort conditions, mechanical cleanup, hard stop). Not an acceptance of the vocabulary in advance. **No production code was modified before or during the run.** Evidence: `%TEMP%\glacier-m0\hitmen\b6-run1\` (28 files; `sha256.txt`), native log `relay-20261012-204612-39916.log` (`cdbeb378…`), `beam.log` (`d9bb352e…`), `beam-final-state.txt` (`4199df35…`), `beam-events.ndjson` (`cc1d517d…`), `native-beam-compare.txt` (`0eda291b…`), `operator-actions.txt`, `watch-native.out`, `cleanup.out`. All times UTC.
+
+### Pre-flight (observed; nothing deployed until it passed)
+
+Game `HITMAN3.exe` present, Steam build `24833614` (the appmanifest; the same build as every prior run); all 26 M0 hashes OK; the 107-file `Retail` listing and hashes identical to the B5 post-cleanup baseline (`retail-before.*`); `mods.ini` = M0 (`b90b4c5e…`); the M0 mod population (21 DLLs under `mods\`) unchanged; no Relay, Hitmen or probe artifact under the game root or `mods\`; both repositories clean at the frozen commits (ZHMModSDK `relay/m2` `c5152848`, glacier-relay `main` `8304fa2` with BEAM `802b5fe`); the build tree's `GlacierRelay.dll` re-hashed as **`6047a9a3278fdd725c55bdc16ac47f832436afb2f5a6f2260488a436a6009d65`**; Elixir 1.19.6 / OTP 28; port 4747 free on both sides; Visual Studio open, HITMAN not running. The operator was asked whether ready and said yes before anything changed.
+
+Deployment (20:44:20Z–20:44:31Z): BEAM first (`elixir --sname relay -S mix run --no-halt live_watch.exs`, launcher pid 46990, listener up); then exactly two game-directory changes, verified by a full-tree listing and hash diff to be the only two: `Retail\mods\GlacierRelay.dll` (installed copy hashed `6047a9a3…`, `installed-dll.sha256`) and `mods.ini` with `[glacierrelay]` (byte-identical to the relay variant of every prior run, `a66a44ed…`). No `glacierrelay.ini` (defaults `tcp`, 4747, `telemetry_log = names`). No other instrumentation. The native log watcher (`watch-b6.sh`, pid 47095) read-only.
+
+### R1 — menu gate (20:46:16Z to 20:46:34Z): PASS
+
+`HITMAN3.exe` pid 39916. The module attached twice as in every run (the loader's probe then the real load, both `built Oct 12 2026 13:16:23`, the frozen DLL); `plugin constructed … SDK 4.1.1 (ABI 1)`; **`Init: one detour registered (ZAchievementManagerSimple_OnEventSent, read-only); lifecycle is polled`**; `OnEngineInitialized`: adapter instance `6e1b19b6-e265-4016-aa2a-d9a68ab08c9a`, `TcpRelaySink`, protocol 1, queue 256; `tcp sink: connected to 127.0.0.1:4747` at 20:46:34.436Z; BEAM `CONNECTION opened` 127.0.0.1:58324 at 20:46:34.454Z. Main menu at stage 8. 0 WARN/ERROR/FAULT; zero frontend telemetry events seen at the menu; the game stable. The operator was then asked to attach Visual Studio in native debugging mode before loading Paris; the attachment was not confirmed in chat, and no debugger break or exception was reported at any point (the game ran to a clean exit).
+
+### R2 — Paris entry (20:47:57Z to 20:48:13Z): PASS
+
+Menu unload (stage 8 → 0 → 2), Paris `Peacock` load (stage 5, 6, 7), rise at stage 8 at 20:48:12.980Z. `ContractStart` (index 2, captured 20:48:12.846Z during loading) drained in the rise frame: **`contract.started #1`** (session `2516104627224045772-4c0ec3f4-4acb-4e00-b7bc-4fae4aa0096f`, `LOCATION_PARIS`, `mission`, difficulty 2, starting disguise `874c4c48…`, hitman suit) then **`mission.playing #2`** with the same session id on the rise — the `:next_rise` pairing, no anomaly. BEAM identified the connection at the first envelope (20:48:13.014Z) and opened attempt 1. `StartingSuit` (index 10) → `disguise.equipped #3` `initial` `874c4c48…` at 11.3 s, equal to the paired contract's starting suit. No player-state occurrence during initialization (none was assumed).
+
+### R3 — trespassing: both forms observed
+
+| # | Engine | Index | Native published | Payload (as published and as BEAM decoded) |
+|---|---|---|---|---|
+| 4 | `Trespassing` | 17 (captured 20:48:53.252Z) | 20:48:53.264Z | `trespassing: true`, `room_id: 6`, session as above, `engine_timestamp_s` 40.3186 |
+| 5 | `Trespassing` | 20 (captured 20:49:19.710Z) | 20:49:19.719Z | `trespassing: false`, `room_id: 6`, `engine_timestamp_s` 66.7767 |
+
+Both captured → normalized → published → received with every field equal (`compare.py`). Copied kinds, as the successful normalization implies: `IsTrespassing` a bool, `RoomId` a number (a successful normalization establishes compatibility with the Relay contract, not the exact engine types; `RoomId` printed as the integer 6 after fmt's shortest rendering, so float-versus-integer engine type is still not distinguished). **Observation, not a rule:** the `false` carried the same `RoomId` (6) as the `true`; in B0 the `false` carried a different value (3). What the operator entered and what the HUD showed were not narrated (`operator-actions.txt`); the engine stated `true` then, 26.5 s later, `false`.
+
+### R4 — illegal weapon: both forms observed, the nested object intact
+
+| # | Engine | Index | Native published | Payload |
+|---|---|---|---|---|
+| 6 | `HoldingIllegalWeapon` | 21 (captured 20:50:00.406Z) | 20:50:00.415Z | `holding: true`, `weapon: {item_repository_id "fca954f6-40b1-448d-b4a8-0c543e521cc3", item_instance_id "5507116a-52a5-48ca-9746-ca81f29cb4d4", item_name "ICA19 Red Trinity", item_type "Gun_HardBaller_01", online_traits ["pistol"], perceived_as_weapon true}`, `engine_timestamp_s` 107.4627 |
+| 8 | `HoldingIllegalWeapon` | 35 (captured 20:50:18.673Z) | 20:50:18.683Z | `holding: false`, no `weapon`, `engine_timestamp_s` 125.7350 |
+
+**The live `WeaponEquipped` copied as an object with every nested field of the expected kind**: `RepositoryId` a string (whether a copied `ZString` or a rendered `ZRepositoryID` is not distinguishable from a success — the B3 lesson applies, and either path is accepted by design), `InstanceId` a non-empty string, `ItemName`/`ItemType` strings, `OnlineTraits` an array of strings, `IsPerceivedAsWeapon` a bool. Compared with B0's object: same `ItemType` `Gun_HardBaller_01`, same trait `pistol`, same `IsPerceivedAsWeapon`, but a **different definition and instance** (B0: `e70adb5b…` "ICA19 Silverballer" / `9a3f1dbb…`; live: `fca954f6…` "ICA19 Red Trinity" / `5507116a…`) — a loadout difference, not a failure, exactly the case the authorization named. The `false` form carried no `WeaponEquipped`, as in B0 (4/4 across both corpora so far); no `true` without an object and no `false` with one was observed (both remain untested live). Between the draw and the holster the engine emitted `DisguiseBlown` for the suit (index 30 → `disguise.compromised #7` at 122.8 s, 15.3 s after the draw), with `Spotted`/`Witnesses` names around it — a gameplay consequence recorded as stream facts, not interpreted as a cause.
+
+### Unscripted occurrences, captured and published (prior vocabulary live)
+
+`Pacify` (index 63) → `actor.pacified #9` Michel Trier (guard, `InstantTakeDown`, 139.4 s); `Disguise` (66) → `disguise.equipped #10` `change` `992cc7b6…` at 141.49 s and `BrokenDisguiseCleared` (68) → `disguise.compromise_cleared #11` **naming the newly equipped outfit at the same engine timestamp** — the second observation of the change-time pattern first seen in §36, now with ids (BEAM anomaly `{:cleared_without_compromise, "992cc7b6…", 11}` as §30.8 prescribes); `Kill` (76, 84) → `actor.died #12` Clarence Caubert and `#13` Aubert Achin (guards, `bloody_kill`/`murder`, ballistic pistol, `item_repository_id` `fca954f6…` — the same definition id the weapon object named, an id equality across two families' observations, not an inference); `DisguiseBlown` (93) → `disguise.compromised #14` `992cc7b6…` at 150.6 s. The operator did not report these actions in chat; they are stream facts only. B3's derived view: worn `992cc7b6…` since #10, standing compromised (#14), 1 change, 2 definitions, history intact.
+
+### R5 — exit (20:51:14Z to 20:52:07Z): PASS
+
+Scene `loaded false` at stage 8 → **`mission.stopped #15`** at 20:51:14.134Z (attempt 1 closed, duration 181.2 s); the counters line at attempt end; `ContractFailed` (index 99, captured 20:51:17.243Z, 3.1 s after the fall, during the unload at stage 2) → **`contract.ended #16`** `exit_to_menu` at 154.7 s on the contract clock — the B2 exit pattern, disposition `exited to menu`. Menu reached at stage 8 20:51:18.045Z. The operator quit from the menu; BEAM saw the peer close at 20:52:03.943Z (`disconnected after 16 line(s), 0 rejected`); `HITMAN3.exe` exited 20:52:07Z. No occurrence of any attempt-gated name after the fall (outside-attempt 0): nothing to count or report there.
+
+### Reconciliation (all observed)
+
+| Quantity | Value |
+|---|---|
+| Engine indices presented to the detour | 1–99 except **4, 25, 31, 40** (not presented; engine-side, as in every run) — `seen` 92 at attempt end, 95 in all |
+| Captured | 13 at attempt end + `ContractFailed` after it = 14; `unsupported` 74 (19 names, below); `dont_send` 5 (`ChallengeCompleted`); `unreadable` 0; `truncated` 0 |
+| Queue | pushed 13 (+1), **dropped 0** |
+| Normalized / malformed / outside attempt | **14 / 0 / 0**; ungated published 2 (`contract.started`, `contract.ended`) |
+| Published | **16** = 14 telemetry + 2 edges, sequences 1–16 contiguous; every `tcp sink: sent` within 1 ms of publication |
+| Received / rejected / gaps | **16 / 0 / `[]`** |
+| Native ↔ BEAM | **16 vs 16, 0 field mismatches** (`compare.py`; the nested weapon object compared field for field) |
+| Attempt association | all 16 → attempt 1; unattributed outcomes/disguise/items/objectives/player state: 0, 0, 0, 0, 0 |
+| Native log | 172 lines, **0 WARN, 0 ERROR, 0 FAULT**; the only `tcp sink` disconnect line is absent (the process exited with the socket open; BEAM recorded `:peer_closed`) |
+| B6 per name | `Trespassing` captured 2 = normalized 2 = published 2 = received 2; `HoldingIllegalWeapon` captured 2 = normalized 2 = published 2 = received 2 |
+
+Unsupported names, counted and never published (name-only findings): `Spotted` 19, `Witnesses` 14, `Level_Setup_Events` 7, `AmbientChanged` 5, `MurderedBodySeen` 5, `BodyFound` 3, `DeadBodySeen` 3, `Investigate_Curious` 3, **`ItemDestroyed` 3** (indices 74, 92, 94, during combat, with no item pickup/throw captured in the run — relevant to §38.9, payload still unknown), `OpportunityStageEvent` 3, `NoticedKill` 2, `OpportunityEvents` 2, `HeroSpawn_Location` 1, **`Hero_Health` 1** (index 75, 20:50:40.757Z, 0.2 s before the first `Kill` during combat — the second run in which it appears by name; payload still unknown, not investigated per the authorization), `IntroCutEnd` 1, **`NoHunting` 1** (index 67, first sighting, emitted between the `Disguise` change and its `BrokenDisguiseCleared`), `ShotsFired` 1, `ShotsHit` 1, `Unnoticed_Pacified` 1.
+
+### BEAM model validation (`beam-final-state.txt`)
+
+`PlayerState.derive/2` for attempt 1: `trespassing` last `%{value: false, sequence: 5, room_id: 6, engine_timestamp_s: 66.78}`, 2 occurrences, **1 observed value change**, standing `:last_observed`, no cut; `illegal_weapon` last `%{value: false, sequence: 8, weapon: nil}`, `last_weapon` `%{sequence: 6, weapon: {fca954f6…, 5507116a…, "ICA19 Red Trinity", Gun_HardBaller_01, ["pistol"], true}}`, 2 occurrences, 1 observed value change, `:last_observed`, notes `[]`; `history: :complete`; `occurrences: 4`. Order preserved (4, 5, 6, 8); the weapon details preserved on the occurrence and surfaced as the last named weapon; no initial `false` fabricated (both subjects were `:not_observed` until their first occurrence, and the summary before #4 would have said `none observed`); no current-state claim anywhere; no inventory inference from the `false`; one attempt, so cross-attempt inheritance and closed-attempt mutation were not exercisable live (offline-covered); every record intact. Summary line, verbatim:
+
+```
+    player state (engine telemetry): trespassing last observed false at #5 @66.77666473388672s (room_id 6), 2 occurrences, 1 observed value change; illegal weapon last observed false at #8 @125.73497009277344s (last named weapon ICA19 Red Trinity fca954f6… at #6), 2 occurrences, 1 observed value change; history intact
+```
+
+The B1–B5 lines in the same summary are as designed (contract, disposition `exited to menu`, 2 died / 1 pacified with the engine's classifications, the five disguise occurrences and the §30.8 view with its anomaly, items `none observed`, objectives `none observed`). No reserved word anywhere in the text.
+
+### Prior vocabulary regression
+
+Live and intact: mission lifecycle (#2, #15), contract lifecycle (#1, #16, `:next_rise`, exit disposition), disguise initialization (#3) plus a change, two compromises and the change-time clear (#7, #10, #11, #14), actor outcomes (#9, #12, #13). Items and objectives: none observed (no pickup, throw, removal or objective occurred; not a regression). `ChallengeCompleted` stayed `_DONTSEND`-suppressed (5).
+
+### Abort conditions, performance, debugger
+
+None of the abort conditions occurred: no FAULT, no unsafe access, no hook failure, no instability, no module initialization failure; no performance degradation was reported by the operator or visible in the frame-stamped log. No debugger break or exception was reported.
+
+### Cleanup (20:52Z; `cleanup.out`)
+
+Final BEAM state captured over RPC before the stop; BEAM stopped by RPC `:init.stop` (launcher pid 46990 exited); the watcher had exited on the process exit; `GlacierRelay.dll` removed; `mods.ini` restored byte-identical (`b90b4c5e…`); the 107-file listing and hashes identical to pre-flight (`retail-after.*` = `retail-before.*`); M0 hashes 26/26; no relay/hitmen/probe artifact under `mods\`; port 4747 free on WSL and on Windows (0 connections); evidence preserved under `%TEMP%\glacier-m0\hitmen\b6-run1\` with `sha256.txt`.
+
+### Verdicts
+
+- **A. `Trespassing` normalized from the real typed payload:** yes — twice (`true`, `false`), with `RoomId` copied as a number; compatibility with the Relay contract established; exact engine types not identified.
+- **B. `HoldingIllegalWeapon` normalized, including the nested weapon representation:** yes — the `true` form with the full object (six nested fields of the expected kinds, a non-empty instance id) and the `false` form without one; the optional-object path exercised live on both sides. The `true`-without-object and `false`-with-object variants were not observed live (offline-covered).
+- **C. BEAM preserved last-observed values, counts and uncertainty without inventing state:** yes — last values, sequences, metadata, 2/2 occurrences, 1/1 observed changes, `:last_observed` with an intact history; no `false` before the first occurrence; "last observed" wording only; the weapon preserved on its occurrence and as the last named weapon. Uncertainty paths (`:unknown` after a cut) did not arise live (no gap, no interruption) and remain offline-covered.
+- **D. B1–B5 behaviour preserved:** yes — lifecycle, contract, disguise (including the §36 change-time pattern) and actor outcomes live and exact; items and objectives absent by circumstance.
+- **E. Readiness:** **candidate for acceptance for its bounded scope** (two engine-authored occurrence types, each observed live in both boolean forms, with the nested object on the one `true` that carried it; the typed intake, the per-row gate, the counters and the sequence as designed), with these limits stated: one run, one route, one trespass zone, one `RoomId` value (6, twice), one weapon definition; `RoomId`'s meaning and engine type, a `true` without `WeaponEquipped`, a `false` with one, any occurrence outside the predicate window, a gap or interruption inside an attempt, and a second attempt remain unobserved live. No targeted correction is indicated by this run. The acceptance decision is the reviewer's.
+
+**Stop here for architectural review. Nothing further was run; no production code changed; the game is at M0 and hash-verified.**
