@@ -1,0 +1,28 @@
+adapter 9c8f3a75-7054-457c-919d-ee87e77f57d9: 3 event(s), last sequence 3, gaps [], observation never
+  attempt 1: Peacock (assembly:/_PRO/Scenes/Missions/Paris/_Scene_FashionShowHit_01.entity): playing 2026-10-06T22:01:05.881Z (#1), stop not observed; superseded by attempt 2
+    contract (engine telemetry): not observed
+    disposition (BEAM-derived): not observed
+    actor outcomes (engine telemetry): none observed
+    disguises (engine telemetry): none observed in the attempt
+    disguise state (BEAM-derived): worn: not observed; worn outfit: not observed; 0 changes, 0 definitions used; history broken: superseded by attempt 2 at #2
+    items (engine telemetry): none observed in the attempt
+    objectives (engine telemetry): none observed in the attempt
+    player state (engine telemetry): none observed in the attempt
+  attempt 2: Peacock (assembly:/_PRO/Scenes/Missions/Paris/_Scene_FashionShowHit_01.entity): playing 2026-10-06T22:02:18.755Z (#2), stop not observed; superseded by attempt 3
+    contract (engine telemetry): not observed
+    disposition (BEAM-derived): not observed
+    actor outcomes (engine telemetry): none observed
+    disguises (engine telemetry): none observed in the attempt
+    disguise state (BEAM-derived): worn: not observed; worn outfit: not observed; 0 changes, 0 definitions used; history broken: superseded by attempt 3 at #3
+    items (engine telemetry): none observed in the attempt
+    objectives (engine telemetry): none observed in the attempt
+    player state (engine telemetry): none observed in the attempt
+  attempt 3: Octopus (assembly:/_PRO/Scenes/Missions/CoastalTown/Mission01.entity): playing 2026-10-06T22:03:39.406Z (#3), stop not observed; last known playing
+    contract (engine telemetry): not observed
+    disposition (BEAM-derived): not observed
+    actor outcomes (engine telemetry): none observed
+    disguises (engine telemetry): none observed in the attempt
+    disguise state (BEAM-derived): worn: not observed; worn outfit: not observed; 0 changes, 0 definitions used; history intact
+    items (engine telemetry): none observed in the attempt
+    objectives (engine telemetry): none observed in the attempt
+    player state (engine telemetry): none observed in the attempt

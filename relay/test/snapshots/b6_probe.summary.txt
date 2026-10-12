@@ -1,0 +1,21 @@
+adapter 18b902b3-f84d-4b73-9ef8-9c009357cc1b: 22 event(s), last sequence 22, gaps [], observation never
+  attempt 1: Peacock (assembly:/_PRO/Scenes/Missions/Paris/_Scene_FashionShowHit_01.entity): playing 2026-10-12T20:13:05.709Z (#2), stopped 2026-10-12T20:13:07.448Z (#16), duration 1.7 s
+    contract (engine telemetry): session 2516109628137904204-c00b2d17-08b1-4949-9f9d-5f68b691f40f, LOCATION_PARIS, mission, difficulty 2; started #1 @0s; ended #15 by restart ("Contract ended manually: OnRestartLevel") @907.95282s on the contract clock
+    disposition (BEAM-derived, session paired by next_rise): restarted
+    actor outcomes (engine telemetry): 1 died (1 target, 0 non-target; 1 civilian; context murder 1); 1 pacified (0 target, 1 non-target; 1 civilian; context murder 1)
+    #8 pacified Mark Parker (civilian, non-target): pacify/murder melee melee_lethal [CloseCombat] item 6adddf7e-6879-4d51-a7e2-6a25ffdca6ae @223.604233s (engine_telemetry)
+    #13 died Viktor Novikov (civilian, target): kill/murder ballistic pistol [Shoot] item e70adb5b-0646-4f88-bd4a-85bea7a2a654 @759.388428s (engine_telemetry)
+    disguises (engine telemetry): contract.started says 874c4c48… (hitman suit); initial 874c4c48… #3 @13.011781s; change → 2018db77… #6 @202.104156s
+    disguise state (BEAM-derived): worn 2018db77… since #6; worn outfit: no compromise observed; 1 change, 2 definitions used; history intact
+    items (engine telemetry): picked up 1 — Wrench; thrown 0; removed from inventory 0; 1 definition; history intact
+    objectives (engine telemetry): 1 reported done — kill/primary aca8cd5b… #14 @759.401611s; history intact
+    player state (engine telemetry): trespassing last observed false at #7 @202.179184s (room_id 3), 2 occurrences, 1 observed value change; illegal weapon last observed false at #12 @491.880981s (last named weapon ICA19 Silverballer e70adb5b… at #11), 4 occurrences, 3 observed value changes; history intact
+  attempt 2: Peacock (assembly:/_PRO/Scenes/Missions/Paris/_Scene_FashionShowHit_01.entity): playing 2026-10-12T20:13:07.605Z (#17), stopped 2026-10-12T20:13:08.240Z (#21), duration 635 ms
+    contract (engine telemetry): session 2516109618691980006-9666b5ad-6a4f-44bb-b5fb-ff86bb3a8d76, LOCATION_PARIS, mission, difficulty 2; started #18 @0s; ended #22 by exit to menu ("Contract ended manually: User pressed exit to Main menu") @105.089394s on the contract clock
+    disposition (BEAM-derived, session paired by open_attempt): exited to menu
+    actor outcomes (engine telemetry): none observed
+    disguises (engine telemetry): contract.started says 874c4c48… (hitman suit); initial 874c4c48… #19 @2.280066s
+    disguise state (BEAM-derived): worn 874c4c48… (equals the starting suit id) since #19; worn outfit: no compromise observed; 0 changes, 1 definition used; history intact
+    items (engine telemetry): none observed in the attempt
+    objectives (engine telemetry): none observed in the attempt
+    player state (engine telemetry): trespassing not observed; illegal weapon last observed true at #20 @476.573425s (ICA19 Silverballer e70adb5b…), 1 occurrence, 0 observed value changes; history intact

@@ -1,0 +1,13 @@
+adapter 6e1b19b6-e265-4016-aa2a-d9a68ab08c9a: 16 event(s), last sequence 16, gaps [], observation never
+  attempt 1: Peacock (assembly:/_PRO/Scenes/Missions/Paris/_Scene_FashionShowHit_01.entity): playing 2026-10-12T20:48:12.980Z (#2), stopped 2026-10-12T20:51:14.134Z (#15), duration 181.2 s
+    contract (engine telemetry): session 2516104627224045772-4c0ec3f4-4acb-4e00-b7bc-4fae4aa0096f, LOCATION_PARIS, mission, difficulty 2; started #1 @0s; ended #16 by exit to menu ("Contract ended manually: User pressed exit to Main menu") @154.70941162109375s on the contract clock
+    disposition (BEAM-derived, session paired by next_rise): exited to menu
+    actor outcomes (engine telemetry): 2 died (0 target, 2 non-target; 2 guard; context murder 2); 1 pacified (0 target, 1 non-target; 1 guard; context murder 1)
+    #9 pacified Michel Trier (guard, non-target): pacify/murder melee unarmed [InstantTakeDown] @139.37754821777344s (engine_telemetry)
+    #12 died Clarence Caubert (guard, non-target): bloody_kill/murder ballistic pistol [Shoot] item fca954f6-40b1-448d-b4a8-0c543e521cc3 @147.02072143554688s (engine_telemetry)
+    #13 died Aubert Achin (guard, non-target): bloody_kill/murder ballistic pistol [Shoot] item fca954f6-40b1-448d-b4a8-0c543e521cc3 @148.00912475585938s (engine_telemetry)
+    disguises (engine telemetry): contract.started says 874c4c48… (hitman suit); initial 874c4c48… #3 @11.320298194885254s; compromised 874c4c48… #7 @122.7513198852539s; change → 992cc7b6… #10 @141.49205017089844s; cleared 992cc7b6… #11 @141.49205017089844s; compromised 992cc7b6… #14 @150.60952758789062s
+    disguise state (BEAM-derived): worn 992cc7b6… since #10; worn outfit: compromised; 1 change, 2 definitions used; history intact; anomalies: {:cleared_without_compromise, "992cc7b6-4ccf-4ae8-a467-e9b2aabaeeb5", 11}
+    items (engine telemetry): none observed in the attempt
+    objectives (engine telemetry): none observed in the attempt
+    player state (engine telemetry): trespassing last observed false at #5 @66.77666473388672s (room_id 6), 2 occurrences, 1 observed value change; illegal weapon last observed false at #8 @125.73497009277344s (last named weapon ICA19 Red Trinity fca954f6… at #6), 2 occurrences, 1 observed value change; history intact

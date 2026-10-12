@@ -17,6 +17,17 @@ defmodule GlacierRelay.Summary do
     |> Enum.map(&instance/1)
   end
 
+  @doc """
+  The mission-oriented report (M2 B7, design section 50): additive, built from `build/1` and the
+  instance records by `GlacierRelay.Report`; `build/1` and `render/2` are unchanged.
+  """
+  @spec report(%{String.t() => Instance.t()}) :: [map()]
+  def report(instances) when is_map(instances), do: GlacierRelay.Report.report(instances)
+
+  @doc "The mission-oriented report as text (M2 B7)."
+  @spec render_report(%{String.t() => Instance.t()}, [map()]) :: String.t()
+  def render_report(instances, unidentified \\ []), do: GlacierRelay.Report.render(instances, unidentified)
+
   @doc "The same summary as text, for a log or an IEx session."
   @spec render(%{String.t() => Instance.t()}, [map()]) :: String.t()
   def render(instances, unidentified \\ []) do

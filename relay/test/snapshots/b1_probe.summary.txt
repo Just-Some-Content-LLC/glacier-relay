@@ -1,0 +1,26 @@
+adapter bf3be44e-a36d-4ac6-9508-d94330fb855e: 18 event(s), last sequence 18, gaps [], observation never
+  attempt 1: Peacock (assembly:/_PRO/Scenes/Missions/Paris/_Scene_FashionShowHit_01.entity): playing 2026-10-07T02:50:38.904Z (#1), stopped 2026-10-07T02:50:40.539Z (#18), duration 1.6 s
+    contract (engine telemetry): not observed
+    disposition (BEAM-derived): not observed
+    actor outcomes (engine telemetry): 10 died (1 target, 9 non-target; 8 civilian, 2 guard; context accident 1, murder 9); 6 pacified (1 target, 5 non-target; 6 civilian; context accident 1, murder 5)
+    #2 pacified Mark Parker (civilian, non-target): pacify/murder melee melee_lethal [CloseCombat] item 6adddf7e-6879-4d51-a7e2-6a25ffdca6ae @223.604233s (engine_telemetry)
+    #3 pacified Ad?le Rousseau (civilian, non-target): pacify/murder melee throw [DeadlyThrow] item 6adddf7e-6879-4d51-a7e2-6a25ffdca6ae @227.356537s (engine_telemetry)
+    #4 pacified Jacqueline Ducloitre (civilian, non-target): pacify/murder melee unarmed [Subdue] @231.97052s (engine_telemetry)
+    #5 died Jacqueline Ducloitre (civilian, non-target): kill/murder melee unarmed [CoupDeGrace] @393.780243s (engine_telemetry)
+    #6 died Philippe Quiron (guard, non-target): bloody_kill/murder ballistic pistol [Shoot] item e70adb5b-0646-4f88-bd4a-85bea7a2a654 @488.867157s (engine_telemetry)
+    #7 died Satordi Roux (civilian, non-target): kill/murder ballistic pistol [Shoot] item e70adb5b-0646-4f88-bd4a-85bea7a2a654 @620.153625s (engine_telemetry)
+    #8 died F?licien Bourque (civilian, non-target): bloody_kill/murder ballistic pistol [Shoot] item e70adb5b-0646-4f88-bd4a-85bea7a2a654 @624.076111s (engine_telemetry)
+    #9 died Olivier Lauzier (civilian, non-target): bloody_kill/murder melee melee_lethal [CloseCombat] item 1bbf0ed5-0515-4599-a4c9-454ce59cff44 @656.575745s (engine_telemetry)
+    #10 pacified Auguste Marcheterre (civilian, non-target): pacify/murder melee throw [DeadlyThrow] item 7aeb740f-3d60-4e49-8d27-15a98067ce9f @658.81781s (engine_telemetry)
+    #11 died Justin Mills (civilian, non-target): bloody_kill/murder melee throw [DeadlyThrow] item e17172cc-bf70-4df6-9828-d9856b1a24fd @662.54126s (engine_telemetry)
+    #12 died Kurt Donovan (guard, non-target): kill/accident explosion accident/accident_explosion [Shoot] item a8a0c154-c36f-413e-8f29-b83a1b7a22f0 @736.283569s (engine_telemetry)
+    #13 pacified Andr? Furchard (civilian, non-target): pacify/accident explosion accident/accident_explosion [Shoot] item a8a0c154-c36f-413e-8f29-b83a1b7a22f0 @736.3125s (engine_telemetry)
+    #14 pacified Viktor Novikov (civilian, target): pacify/murder explosion explosive [Shoot] item a8a0c154-c36f-413e-8f29-b83a1b7a22f0 @736.331726s (engine_telemetry)
+    #15 died Viktor Novikov (civilian, target): kill/murder ballistic pistol [Shoot] item e70adb5b-0646-4f88-bd4a-85bea7a2a654 @759.388428s (engine_telemetry)
+    #16 died Olivier Assis (civilian, non-target): bloody_kill/murder ballistic pistol [Shoot] item e70adb5b-0646-4f88-bd4a-85bea7a2a654 @762.43866s (engine_telemetry)
+    #17 died Sibyla Auger (civilian, non-target): bloody_kill/murder ballistic pistol [Shoot] item e70adb5b-0646-4f88-bd4a-85bea7a2a654 @763.947266s (engine_telemetry)
+    disguises (engine telemetry): none observed in the attempt
+    disguise state (BEAM-derived): worn: not observed; worn outfit: not observed; 0 changes, 0 definitions used; history intact
+    items (engine telemetry): none observed in the attempt
+    objectives (engine telemetry): none observed in the attempt
+    player state (engine telemetry): none observed in the attempt

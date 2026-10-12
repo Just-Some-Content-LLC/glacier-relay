@@ -1,0 +1,25 @@
+adapter 2f06fed8-6542-47fd-b383-68580798c96b: 22 event(s), last sequence 22, gaps [], observation never
+  attempt 1: Peacock (assembly:/_PRO/Scenes/Missions/Paris/_Scene_FashionShowHit_01.entity): playing 2026-10-08T21:58:28.310Z (#2), stopped 2026-10-08T21:58:30.038Z (#17), duration 1.7 s
+    contract (engine telemetry): session 2516109628137904204-c00b2d17-08b1-4949-9f9d-5f68b691f40f, LOCATION_PARIS, mission, difficulty 2; started #1 @0s; ended #16 by restart ("Contract ended manually: OnRestartLevel") @907.95282s on the contract clock
+    disposition (BEAM-derived, session paired by next_rise): restarted
+    actor outcomes (engine telemetry): 3 died (0 target, 3 non-target; 3 civilian; context murder 3); 3 pacified (0 target, 3 non-target; 3 civilian; context murder 3)
+    #6 pacified Mark Parker (civilian, non-target): pacify/murder melee melee_lethal [CloseCombat] item 6adddf7e-6879-4d51-a7e2-6a25ffdca6ae @223.604233s (engine_telemetry)
+    #7 pacified Ad?le Rousseau (civilian, non-target): pacify/murder melee throw [DeadlyThrow] item 6adddf7e-6879-4d51-a7e2-6a25ffdca6ae @227.356537s (engine_telemetry)
+    #8 pacified Jacqueline Ducloitre (civilian, non-target): pacify/murder melee unarmed [Subdue] @231.97052s (engine_telemetry)
+    #9 died Jacqueline Ducloitre (civilian, non-target): kill/murder melee unarmed [CoupDeGrace] @393.780243s (engine_telemetry)
+    #13 died Satordi Roux (civilian, non-target): kill/murder ballistic pistol [Shoot] item e70adb5b-0646-4f88-bd4a-85bea7a2a654 @620.153625s (engine_telemetry)
+    #14 died F?licien Bourque (civilian, non-target): bloody_kill/murder ballistic pistol [Shoot] item e70adb5b-0646-4f88-bd4a-85bea7a2a654 @624.076111s (engine_telemetry)
+    disguises (engine telemetry): contract.started says 874c4c48… (hitman suit); initial 874c4c48… #3 @13.011781s; change → 2018db77… #4 @202.104156s; compromised 2018db77… #5 @222.863129s; cleared 2018db77… #10 @393.788727s; change → 992cc7b6… #11 @497.756409s; compromised 992cc7b6… #12 @615.012756s; cleared 992cc7b6… #15 @624.086853s
+    disguise state (BEAM-derived): worn 992cc7b6… since #11; worn outfit: cleared; 2 changes, 3 definitions used; history intact
+    items (engine telemetry): none observed in the attempt
+    objectives (engine telemetry): none observed in the attempt
+    player state (engine telemetry): none observed in the attempt
+  attempt 2: Peacock (assembly:/_PRO/Scenes/Missions/Paris/_Scene_FashionShowHit_01.entity): playing 2026-10-08T21:58:30.198Z (#18), stopped 2026-10-08T21:58:30.671Z (#21), duration 473 ms
+    contract (engine telemetry): session 2516109618691980006-9666b5ad-6a4f-44bb-b5fb-ff86bb3a8d76, LOCATION_PARIS, mission, difficulty 2; started #19 @0s; ended #22 by exit to menu ("Contract ended manually: User pressed exit to Main menu") @105.089394s on the contract clock
+    disposition (BEAM-derived, session paired by open_attempt): exited to menu
+    actor outcomes (engine telemetry): none observed
+    disguises (engine telemetry): contract.started says 874c4c48… (hitman suit); initial 874c4c48… #20 @2.280066s
+    disguise state (BEAM-derived): worn 874c4c48… (equals the starting suit id) since #20; worn outfit: no compromise observed; 0 changes, 1 definition used; history intact
+    items (engine telemetry): none observed in the attempt
+    objectives (engine telemetry): none observed in the attempt
+    player state (engine telemetry): none observed in the attempt

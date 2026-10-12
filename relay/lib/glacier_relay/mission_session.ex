@@ -50,6 +50,12 @@ defmodule GlacierRelay.MissionSession do
   @doc "The event-derived summary as text."
   def summary_text, do: GenServer.call(__MODULE__, :summary_text)
 
+  @doc "The mission-oriented report as data (`GlacierRelay.Summary.report/1`, M2 B7)."
+  def report, do: GenServer.call(__MODULE__, :report)
+
+  @doc "The mission-oriented report as text (M2 B7)."
+  def report_text, do: GenServer.call(__MODULE__, :report_text)
+
   @impl true
   def init(_opts) do
     {:ok, %{instances: %{}, connections: %{}, unidentified: [], subscribers: MapSet.new()}}
@@ -66,6 +72,11 @@ defmodule GlacierRelay.MissionSession do
 
   def handle_call(:summary_text, _from, state),
     do: {:reply, Summary.render(state.instances, state.unidentified), state}
+
+  def handle_call(:report, _from, state), do: {:reply, Summary.report(state.instances), state}
+
+  def handle_call(:report_text, _from, state),
+    do: {:reply, Summary.render_report(state.instances, state.unidentified), state}
 
   @impl true
   def handle_cast({:connection_opened, pid, peer, at}, state) do

@@ -1,0 +1,19 @@
+adapter d12d8498-cc24-4b3d-96e3-b6f8382805c0: 45 event(s), last sequence 45, gaps [], observation never
+  attempt 1: Peacock (assembly:/_PRO/Scenes/Missions/Paris/_Scene_FashionShowHit_01.entity): playing 2026-10-09T06:47:49.351Z (#1), stopped 2026-10-09T07:11:38.744Z (#45), duration 1429.4 s
+    contract (engine telemetry): session 2516107723463793113-3b2aba6d-c825-4392-89b0-864e7f321709, LOCATION_PARIS, mission, difficulty 2; started #2 @0s; end not observed
+    disposition (BEAM-derived, session paired by open_attempt): not observed; contract end not seen
+    actor outcomes (engine telemetry): 7 died (2 target, 5 non-target; 5 civilian, 2 guard; context accident 7); 2 pacified (0 target, 2 non-target; 2 civilian; context accident 1, murder 1)
+    #16 died Viktor Novikov (civilian, target): kill/accident explosion accident/accident_explosion [Shoot] item a8a0c154-c36f-413e-8f29-b83a1b7a22f0 @217.10797119140625s (engine_telemetry)
+    #17 died Kurt Donovan (guard, non-target): kill/accident explosion accident/accident_explosion [Shoot] item a8a0c154-c36f-413e-8f29-b83a1b7a22f0 @217.13357543945312s (engine_telemetry)
+    #18 pacified Juliette Lauzier (civilian, non-target): pacify/accident explosion accident/accident_explosion [Shoot] item a8a0c154-c36f-413e-8f29-b83a1b7a22f0 @217.20059204101562s (engine_telemetry)
+    #24 pacified Liza McKenzie (civilian, non-target): pacify/murder melee melee_lethal [CloseCombat] item 7aeb740f-3d60-4e49-8d27-15a98067ce9f @448.6993408203125s (engine_telemetry)
+    #37 died Dalia Margolis (civilian, target): kill/accident explosion accident/accident_explosion [Shoot] item a8a0c154-c36f-413e-8f29-b83a1b7a22f0 @970.4242553710938s (engine_telemetry)
+    #38 died Baptiste Niro (civilian, non-target): kill/accident explosion accident/accident_explosion [Shoot] item a8a0c154-c36f-413e-8f29-b83a1b7a22f0 @970.4596557617188s (engine_telemetry)
+    #39 died Olivier Casgrain (guard, non-target): kill/accident explosion accident/accident_explosion [Shoot] item a8a0c154-c36f-413e-8f29-b83a1b7a22f0 @970.4707641601562s (engine_telemetry)
+    #40 died Nelle Brent (civilian, non-target): kill/accident explosion accident/accident_explosion [Shoot] item a8a0c154-c36f-413e-8f29-b83a1b7a22f0 @970.4853515625s (engine_telemetry)
+    #41 died Anne Schmidt (civilian, non-target): kill/accident explosion accident/accident_explosion [Shoot] item a8a0c154-c36f-413e-8f29-b83a1b7a22f0 @970.4853515625s (engine_telemetry)
+    disguises (engine telemetry): contract.started says 874c4c48… (hitman suit); initial 874c4c48… #3 @5.039904594421387s; change → 2018db77… #5 @55.11427307128906s; change → 874c4c48… #27 @500.6553039550781s
+    disguise state (BEAM-derived): worn 874c4c48… (equals the starting suit id) since #27; worn outfit: no compromise observed; 2 changes, 2 definitions used; history intact
+    items (engine telemetry): picked up 19 — Military Briefcase ×5, Crowbar, Propane Flask ×8, Sunsieger 300 ×2, Palace Master Key, Lead Pipe, IAGO Invitation; thrown 4 — Propane Flask ×4; removed from inventory 5 — Propane Flask ×4, Sunsieger 300; 7 definitions; history intact
+    objectives (engine telemetry): 2 reported done — kill/primary aca8cd5b… #19 @217.28643798828125s, kill/primary 9da41883… #42 @970.5736083984375s; history intact
+    player state (engine telemetry): none observed in the attempt

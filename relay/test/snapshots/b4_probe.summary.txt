@@ -1,0 +1,24 @@
+adapter 31c81c1e-071d-4ff4-8dd2-462b9b97900c: 45 event(s), last sequence 45, gaps [], observation never
+  attempt 1: Peacock (assembly:/_PRO/Scenes/Missions/Paris/_Scene_FashionShowHit_01.entity): playing 2026-10-09T03:36:38.821Z (#2), stopped 2026-10-09T03:36:42.770Z (#40), duration 3.9 s
+    contract (engine telemetry): session 2516109628137904204-c00b2d17-08b1-4949-9f9d-5f68b691f40f, LOCATION_PARIS, mission, difficulty 2; started #1 @0s; ended #39 by restart ("Contract ended manually: OnRestartLevel") @907.95282s on the contract clock
+    disposition (BEAM-derived, session paired by next_rise): restarted
+    actor outcomes (engine telemetry): 2 died (0 target, 2 non-target; 2 civilian; context murder 2); 3 pacified (0 target, 3 non-target; 3 civilian; context murder 3)
+    #10 pacified Mark Parker (civilian, non-target): pacify/murder melee melee_lethal [CloseCombat] item 6adddf7e-6879-4d51-a7e2-6a25ffdca6ae @223.604233s (engine_telemetry)
+    #13 pacified Ad?le Rousseau (civilian, non-target): pacify/murder melee throw [DeadlyThrow] item 6adddf7e-6879-4d51-a7e2-6a25ffdca6ae @227.356537s (engine_telemetry)
+    #16 died Jacqueline Ducloitre (civilian, non-target): kill/murder melee unarmed [CoupDeGrace] @393.780243s (engine_telemetry)
+    #31 pacified Auguste Marcheterre (civilian, non-target): pacify/murder melee throw [DeadlyThrow] item 7aeb740f-3d60-4e49-8d27-15a98067ce9f @658.81781s (engine_telemetry)
+    #34 died Justin Mills (civilian, non-target): bloody_kill/murder melee throw [DeadlyThrow] item e17172cc-bf70-4df6-9828-d9856b1a24fd @662.54126s (engine_telemetry)
+    disguises (engine telemetry): contract.started says 874c4c48… (hitman suit); initial 874c4c48… #3 @13.011781s; change → 2018db77… #5 @202.104156s; compromised 2018db77… #9 @222.863129s; cleared 2018db77… #17 @393.788727s; change → 992cc7b6… #21 @497.756409s; compromised 992cc7b6… #25 @615.012756s; cleared 992cc7b6… #26 @624.086853s
+    disguise state (BEAM-derived): worn 992cc7b6… since #21; worn outfit: cleared; 2 changes, 3 definitions used; history intact
+    items (engine telemetry): picked up 12 — Wrench ×3, Crowbar ×3, Emetic Rat Poison, Lead Pipe, Kitchen Knife ×2, Cleaver, Propane Flask; thrown 6 — Wrench ×2, Crowbar, Lead Pipe, Kitchen Knife, Propane Flask; removed from inventory 6 — Wrench ×2, Crowbar, Lead Pipe, Kitchen Knife, Propane Flask; 7 definitions; history intact
+    objectives (engine telemetry): none observed in the attempt
+    player state (engine telemetry): none observed in the attempt
+  attempt 2: Peacock (assembly:/_PRO/Scenes/Missions/Paris/_Scene_FashionShowHit_01.entity): playing 2026-10-09T03:36:42.925Z (#41), stopped 2026-10-09T03:36:43.397Z (#44), duration 472 ms
+    contract (engine telemetry): session 2516109618691980006-9666b5ad-6a4f-44bb-b5fb-ff86bb3a8d76, LOCATION_PARIS, mission, difficulty 2; started #42 @0s; ended #45 by exit to menu ("Contract ended manually: User pressed exit to Main menu") @105.089394s on the contract clock
+    disposition (BEAM-derived, session paired by open_attempt): exited to menu
+    actor outcomes (engine telemetry): none observed
+    disguises (engine telemetry): contract.started says 874c4c48… (hitman suit); initial 874c4c48… #43 @2.280066s
+    disguise state (BEAM-derived): worn 874c4c48… (equals the starting suit id) since #43; worn outfit: no compromise observed; 0 changes, 1 definition used; history intact
+    items (engine telemetry): none observed in the attempt
+    objectives (engine telemetry): none observed in the attempt
+    player state (engine telemetry): none observed in the attempt

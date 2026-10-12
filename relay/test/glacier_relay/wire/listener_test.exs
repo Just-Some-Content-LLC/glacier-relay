@@ -688,6 +688,26 @@ defmodule GlacierRelay.Wire.ListenerTest do
     :gen_tcp.close(socket)
   end
 
+  # -- B7: the mission-oriented report over the wire --------------------------------------------
+
+  test "the B7 report is available from the session over the same evidence, beside the unchanged legacy summary" do
+    id = "b7-report"
+    socket = connect()
+    :ok = :gen_tcp.send(socket, Enum.map_join(@b6, "\n", &String.replace(&1, @b6_id, id)) <> "\n")
+    assert_receive {:relay_event, %{adapter_instance_id: ^id, sequence: 22, event_type: "contract.ended"}}, 1_000
+
+    [r] = Enum.filter(MissionSession.report(), &(&1.adapter_instance_id == id))
+    assert length(r.attempts) == 2
+    assert Enum.map(hd(r.attempts).timeline.lines, & &1.sequence) == Enum.to_list(1..16)
+    text = MissionSession.report_text()
+    assert text =~ "attempt 1: Peacock"
+    assert text =~ "#4 " and text =~ "player.trespassing: true (room_id 6) [engine-authored]"
+    assert text =~ "disposition: restarted [engine reason \"Contract ended manually: OnRestartLevel\""
+    assert MissionSession.summary_text() =~ "player state (engine telemetry): trespassing last observed false at #7"
+    assert text =~ "adapter b7-report:"
+    :gen_tcp.close(socket)
+  end
+
   defp wait_until(fun, attempts \\ 50) do
     cond do
       fun.() -> :ok

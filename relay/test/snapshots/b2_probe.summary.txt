@@ -1,0 +1,20 @@
+adapter a5092b81-2103-4ec1-81a3-8103db3db375: 9 event(s), last sequence 9, gaps [], observation never
+  attempt 1: Peacock (assembly:/_PRO/Scenes/Missions/Paris/_Scene_FashionShowHit_01.entity): playing 2026-10-07T05:14:08.169Z (#2), stopped 2026-10-07T05:14:08.642Z (#5), duration 473 ms
+    contract (engine telemetry): session 2516109628137904204-c00b2d17-08b1-4949-9f9d-5f68b691f40f, LOCATION_PARIS, mission, difficulty 2; started #1 @0s; ended #4 by restart ("Contract ended manually: OnRestartLevel") @907.95282s on the contract clock
+    disposition (BEAM-derived, session paired by next_rise): restarted
+    actor outcomes (engine telemetry): 1 died (0 target, 1 non-target; 1 civilian; context murder 1); 0 pacified
+    #3 died Jacqueline Ducloitre (civilian, non-target): kill/murder melee unarmed [CoupDeGrace] @393.780243s (engine_telemetry)
+    disguises (engine telemetry): contract.started says 874c4c48… (hitman suit); none observed in the attempt
+    disguise state (BEAM-derived): worn: not observed; worn outfit: not observed; 0 changes, 0 definitions used; history intact
+    items (engine telemetry): none observed in the attempt
+    objectives (engine telemetry): none observed in the attempt
+    player state (engine telemetry): none observed in the attempt
+  attempt 2: Peacock (assembly:/_PRO/Scenes/Missions/Paris/_Scene_FashionShowHit_01.entity): playing 2026-10-07T05:14:08.801Z (#6), stopped 2026-10-07T05:14:09.115Z (#8), duration 314 ms
+    contract (engine telemetry): session 2516109618691980006-9666b5ad-6a4f-44bb-b5fb-ff86bb3a8d76, LOCATION_PARIS, mission, difficulty 2; started #7 @0s; ended #9 by exit to menu ("Contract ended manually: User pressed exit to Main menu") @105.089394s on the contract clock
+    disposition (BEAM-derived, session paired by open_attempt): exited to menu
+    actor outcomes (engine telemetry): none observed
+    disguises (engine telemetry): contract.started says 874c4c48… (hitman suit); none observed in the attempt
+    disguise state (BEAM-derived): worn: not observed; worn outfit: not observed; 0 changes, 0 definitions used; history intact
+    items (engine telemetry): none observed in the attempt
+    objectives (engine telemetry): none observed in the attempt
+    player state (engine telemetry): none observed in the attempt

@@ -1,0 +1,28 @@
+adapter cba1b5ec-bec1-4f61-8123-84376e3bd157: 6 event(s), last sequence 6, gaps [], observation never
+  attempt 1: Peacock (assembly:/_PRO/Scenes/Missions/Paris/_Scene_FashionShowHit_01.entity): playing 2026-10-06T23:33:39.906Z (#1), stopped 2026-10-06T23:33:40.110Z (#2), duration 204 ms
+    contract (engine telemetry): not observed
+    disposition (BEAM-derived): not observed
+    actor outcomes (engine telemetry): none observed
+    disguises (engine telemetry): none observed in the attempt
+    disguise state (BEAM-derived): worn: not observed; worn outfit: not observed; 0 changes, 0 definitions used; history intact
+    items (engine telemetry): none observed in the attempt
+    objectives (engine telemetry): none observed in the attempt
+    player state (engine telemetry): none observed in the attempt
+  attempt 2: Peacock (assembly:/_PRO/Scenes/Missions/Paris/_Scene_FashionShowHit_01.entity): playing 2026-10-06T23:33:40.317Z (#3), stopped 2026-10-06T23:33:40.520Z (#4), duration 203 ms
+    contract (engine telemetry): not observed
+    disposition (BEAM-derived): not observed
+    actor outcomes (engine telemetry): none observed
+    disguises (engine telemetry): none observed in the attempt
+    disguise state (BEAM-derived): worn: not observed; worn outfit: not observed; 0 changes, 0 definitions used; history intact
+    items (engine telemetry): none observed in the attempt
+    objectives (engine telemetry): none observed in the attempt
+    player state (engine telemetry): none observed in the attempt
+  attempt 3: Octopus (assembly:/_PRO/Scenes/Missions/CoastalTown/Mission01.entity): playing 2026-10-06T23:33:40.725Z (#5), stopped 2026-10-06T23:33:40.927Z (#6), duration 202 ms
+    contract (engine telemetry): not observed
+    disposition (BEAM-derived): not observed
+    actor outcomes (engine telemetry): none observed
+    disguises (engine telemetry): none observed in the attempt
+    disguise state (BEAM-derived): worn: not observed; worn outfit: not observed; 0 changes, 0 definitions used; history intact
+    items (engine telemetry): none observed in the attempt
+    objectives (engine telemetry): none observed in the attempt
+    player state (engine telemetry): none observed in the attempt
