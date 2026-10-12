@@ -2910,3 +2910,99 @@ Works from existing event evidence (no new instrumentation): yes. Every reported
 The report presents what the stream carried: no mission end, death, rating, attribution, inventory or current state; on the observed completion route the predicate did not fall (§44), so a completed mission reads as a long attempt that stopped on return to the menu; the clock-domain rule depends on the session id each payload carries (lifecycle edges carry none and are never compared); relative engine time is shown only inside the attempt's paired session; engine strings (names, methods) are printed as sent and may themselves contain any word.
 
 **Stop here for architectural review. M2 is not closed by this section; the recommendation of §50.6 stands.**
+
+## 52. M2 — Telemetry completion record (2026-10-12) — B7 passed review; the milestone is closed
+
+Decision (operator, 2026-10-12): B7 passed architectural review; M2 — Telemetry is formally closed. The roadmap goal and exit criterion are satisfied as written; `ROADMAP.md` records the status and keeps both sentences unchanged. This section is the final M2 record: the validated architecture, the accepted vocabularies, the evidence classes, the limitations that the closure preserves, the two B7 provenance notes carried into future work, and the checkpoint. **No code, wire schema, native artifact or runtime step is changed by closing M2.**
+
+### 52.1 References at closure
+
+| What | Ref |
+|---|---|
+| BEAM (`relay/`) | glacier-relay `main` `d68d7fb` (B7, section 51) on `802b5fe` (B6), `f5985f2` (B5), `c10c939` (B4), `63184c4` (B3 correction); the completion commit is the one that adds this section |
+| Native adapter | ZHMModSDK `relay/m2` **`c51528483a4f1f1eb9dcd63ae81f5272a6d5a8fe`** (accepted B6 checkpoint, sections 47–49), on `97946eb1` (B5), `183a6612`/`12ea5586` (B4), `84b93778` (B3) |
+| Accepted `GlacierRelay.dll` | SHA-256 **`6047a9a3278fdd725c55bdc16ac47f832436afb2f5a6f2260488a436a6009d65`** (10,155,008 bytes), clean build of `c5152848`; preserved with `GlacierRelay.pdb` `5a70e2cb…`, `GlacierRelayTests.exe` `da6d2ff3…`, `GlacierRelayWireProbe.exe` `542d70bf…` and the section 47 gate files in `%TEMP%\glacier-m0\hitmen\b6-accepted-artifacts\` (`origin.txt`, `sha256.txt`); not rebuilt for the checkpoint |
+| Game | HITMAN World of Assassination 3.280.0.0, Steam build 24833614, ZHMModSDK 4.1.1; game at M0 (26/26 hashes, `mods.ini` `b90b4c5e…`), no Relay DLL installed |
+| Tests at closure | native 25/25 (`tests25.cmd`, section 47); Elixir **259 tests, 0 failures, ×5** with `--warnings-as-errors` (section 51); standalone wire probe 22/22, 0 field mismatches (section 47); ten legacy summary snapshots byte-identical (section 51) |
+| Run evidence | `%TEMP%\glacier-m0\hitmen\`: `m2-run1` (Stage A), `b0-run1` (corpus), `b1-run1`, `b2-run1`, `b3-run1`, `b3diag-run1`, `b3fix-run1`, `b4-run1`, `b5-run1`, `b6-run1`; wire evidence `wire-probe\*`; committed replays `relay/test/*_envelopes.ndjson` (the real `b5_run1` and `b6_run1` among them) |
+| Checkpoint tag | `research/m2-telemetry` on glacier-relay (the completion commit) and on ZHMModSDK (`c5152848`); recorded with both targets in `HANDOFF.md` |
+
+### 52.2 Final validated architecture
+
+```
+HITMAN WOA 3.280.0.0 (Glacier 2 runtime, Windows)
+  │
+  ├─ native scene observation          ObserveSceneState → MissionObserver: the MissionPlaying predicate
+  │                                      (scene_type == "mission" ∧ loading stage 8 ∧ loaded), edges only
+  └─ ZAchievementManagerSimple::OnEventSent   one read-only detour on the engine-authored telemetry stream (ADR 0006)
+  │
+  ▼
+TelemetryIntake::Copy                   typed reflection into an owned TelemetryObservation (ZString, ZRepositoryID → dashed id,
+                                         bool, numbers, objects, arrays, string arrays; anything else Unsupported with its type name)
+  ▼
+TelemetryQueue                          bounded, owned; drained on the frame thread; drops counted
+  ▼
+TelemetryNormalizer                     table-driven rows {engine name → Relay event, Gating}; per-field validation with bounded,
+                                         escaped diagnostics (section 38.7); malformed counted, never published
+  ▼
+RelayAdapter                            one adapter_instance_id, one sequence, UTC timestamp → versioned Relay semantic envelope
+                                         (protocol 1; every event schema 1; engine-independent, ADR 0003)
+  ▼
+TcpRelaySink (IRelaySink, ADR 0005)      NDJSON, outbound TCP client → 127.0.0.1:4747
+  ▼
+WSL2 loopback                           Windows → WSL2 localhost forwarding
+  ▼
+Elixir/OTP (relay/)                     Wire.Listener → Wire.Connection (framing, Envelope.decode, Events.validate; open/close reported
+                                         as transport evidence)
+  ▼
+MissionSession                          one GenServer: Lifecycle.Instance per adapter instance; game, adapter and transport evidence
+                                         kept apart; subscribers notified
+  ▼
+derived mission state                   pure: Lifecycle (attempts, contract correlation, attribution fixed at receipt) →
+                                         Disguise / Items / Objectives / PlayerState views over shared AttemptHistory
+  ▼
+Summary (build/render) and Report       pure, event-derived; the mission report of section 51 (overview, named outcomes,
+                                         activity, sequence-ordered timeline with clock domains, uncertainty, provenance tags)
+```
+
+Properties validated across the stages: nothing below `IRelaySink` sees an SDK type; the stream's shape is never the Relay protocol; the native side never receives anything (no inbound protocol); a TCP close never implies a mission end (section 5); the predicate bounds the attempt and the stream's contract sessions are correlated to it by order and labelled as such (section 19); every published occurrence is counted (`captured = normalized + malformed`, `published = received`) and reconciled per run; the clean-build/25-test/import-diff/hash/×5/wire-probe gate preceded every run; every run was a separately authorized, operator-in-the-loop experiment with mechanical cleanup and a hash-verified return to M0.
+
+### 52.3 Accepted vocabularies (all schema 1, envelope protocol 1)
+
+| Family | Relay events | Engine source | Gating | Accepted | What it establishes | What it does not |
+|---|---|---|---|---|---|---|
+| Mission lifecycle | `mission.playing`, `mission.stopped` | native predicate edges (scene state) | — | M1, Stage A (section 13) | the engine started / stopped reporting a mission scene as playing | why; outcome; completion (the predicate stayed up through the end screens on the observed route, section 44) |
+| Actor outcomes | `actor.died`, `actor.pacified` | `Kill`, `Pacify` | attempt-gated | B1 (section 26) | engine-classified occurrences with name, definition id, engine actor id, type, target flag, death type/context, class, method, damage events, item | attribution to 47; unique actor identity; survival of unlisted targets |
+| Contract lifecycle | `contract.started`, `contract.ended` | `ContractStart`, `ContractFailed` | ungated | B2 (section 29) | Glacier's own session account with id, contract, location, type, difficulty, starting disguise; end reason verbatim with `reason_kind` | a completion-side end (`ContractEnd` is a name only); session ≡ attempt (the pairing is a BEAM correlation) |
+| Disguises | `disguise.equipped` (`initial`/`change`), `disguise.compromised`, `disguise.compromise_cleared` | `StartingSuit`, `Disguise`, `DisguiseBlown`, `BrokenDisguiseCleared` (`ZRepositoryID` rendered at the intake, section 35) | attempt-gated | B3 (section 37) | ids-only occurrences; a conservative worn/compromise reading with explicit unknowns | the current outfit; why a clear occurs at a change; witness semantics; display names |
+| Items | `item.picked_up`, `item.thrown`, `item.removed_from_inventory` | `ItemPickedUp`, `ItemThrown`, `ItemRemovedFromInventory` | attempt-gated | B4 (section 41) | independent definition-based occurrences with optional instance id, name, type, traits; direct counts | inventory state; instance identity; pairing of throws and removals; `ItemDropped`/`ItemDestroyed` |
+| Objectives | `objective.completed` | `ObjectiveCompleted` | ungated, attribution fixed at receipt | B5 (section 45) | occurrences with an opaque id, type, category, scoring flag; display grouping with first-observed metadata | objective-state completeness; mission completion; the id's namespace |
+| Player state | `player.trespassing`, `player.illegal_weapon` | `Trespassing`, `HoldingIllegalWeapon` | attempt-gated | B6 (section 49) | the engine's last statement per subject, optional `room_id`, optional nested weapon object; observed value changes | current state; safety; possession; health; death |
+
+### 52.4 Evidence classes, kept distinct in the data and the text
+
+| Class | Where it comes from | Tag / wording in the report | What it may say |
+|---|---|---|---|
+| Native observation of Glacier state | the scene predicate, polled per frame; `game_session_id` read at the edge | `:engine`, "engine-observed" | the runtime was in that state when read |
+| Engine-authored occurrence | one `OnEventSent` event, normalized | `:engine`, "engine-authored" / "engine telemetry" / "engine classification" | Glacier recorded that occurrence with those fields, on its own clock |
+| BEAM-derived correlation | pairing a session to an attempt by order; attaching a disposition by session id; attribution fixed at receipt; a disguise standing | `:derived`, "BEAM-derived" | a reading over the records, labelled with its rule |
+| Last-observed state | the most recent occurrence per subject | `:last_observed`, "last observed, never current state" | what the engine last said, with the sequence; unknown after a cut |
+| Transport connectivity | `Wire.Connection` open / identified / closed | `:transport`, "observation live / lost / never", interruptions without a sequence | whether evidence is arriving; never that a mission or process ended |
+| Absent or unknown | no record; a gap; a cut | `:not_observed`, "not observed", "unknown after #n" | nothing; never the opposite of the absent fact |
+
+No new event schema was needed to close the milestone, and none is added here.
+
+### 52.5 Limitations preserved by the closure
+
+M2 completion does **not** establish, and nothing in the records claims: authoritative mission completion or failure; reliable player-death semantics; Silent Assassin or any rating status; universal attribution of kills to Agent 47; unique actor identity for all NPCs; complete inventory state; a guaranteed current disguise or player state; complete objectives; spatial movement telemetry; multiplayer authority. The report prints its standing limitations on every attempt (section 51).
+
+Independent research candidates, each its own authorization and **not a retroactive M2 requirement**: `Hero_Health` / `Hero_Dead` payloads (section 46.8); `ContractEnd` payload and completion meaning (section 46.9); `ItemDropped` / `ItemDestroyed` (section 38.9); detection, witnesses and scoring names; runtime actor identity; spatial telemetry.
+
+### 52.6 B7 provenance notes carried into future work (nonblocking; B7 unchanged)
+
+1. **Envelope-only replay and transport presence.** A report rebuilt from saved envelopes alone shows `observation never` because connection open/close evidence is BEAM's own and is not in an envelope fixture (the section 51 sample over `b6_run1_envelopes.ndjson` shows it; the live session of section 48 had a connection). The label is correct for the evidence folded, but a reader cannot tell "no connection was ever observed" from "connection evidence was not available in this replay" from "the connection was lost". Future recordings (M4) must persist transport evidence beside the envelopes, and future presentation (M3) must label the source of the instance (`live` vs `replay`) so the three cases are distinct. Not a correctness defect; B7 is not changed for the checkpoint.
+2. **Glacier event provenance.** Native scene-state observations (`mission.playing` / `mission.stopped`, "engine-observed") and Glacier-authored `OnEventSent` occurrences ("engine-authored") share the `:engine` tag in the report data while the text already uses the two phrases. They have different provenance (rank 2 versus rank 1 in section 16). A future presentation refinement should carry the distinction in the data as well (for example `:engine_observed` / `:engine_authored`); this is a presentation refinement, not grounds to reopen M2.
+
+### 52.7 Checkpoint
+
+Tag `research/m2-telemetry` is applied to the glacier-relay completion commit (this record, the roadmap status and the handoff) and to ZHMModSDK `c5152848`, following the `research/m0-baseline` and `research/m1-first-semantic-event` lineage. The accepted native artifact is not rebuilt or modified to establish the checkpoint; its preserved copy and hashes stand (52.1). Work after this point is M3 and later; the native adapter stays at `c5152848` until a later milestone changes it under its own authorization.
