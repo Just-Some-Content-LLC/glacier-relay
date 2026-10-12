@@ -211,6 +211,12 @@ defmodule GlacierRelay.MissionSession do
         "relay: #{id}: item event ##{sequence} arrived with no open attempt; kept as unattributed"
       )
 
+  defp log_note(id, {:unattributed_player_state_event, sequence}),
+    do:
+      Logger.warning(
+        "relay: #{id}: player state event ##{sequence} arrived with no open attempt; kept as unattributed"
+      )
+
   defp log_note(id, {:unattributed_objective_event, sequence, :no_open_attempt}),
     do:
       Logger.warning(

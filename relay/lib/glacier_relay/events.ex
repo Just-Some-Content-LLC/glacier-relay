@@ -70,6 +70,22 @@ defmodule GlacierRelay.Events do
   The occurrence says nothing about other objectives, objective state or mission completion, and
   nothing about which actor it concerned. It is published ungated, so it may arrive with no open
   attempt; `Lifecycle` attributes it from stream order with the session as a veto only.
+
+  Player state (M2 B6, design section 46), normalized from Glacier's own telemetry; one
+  occurrence each, attempt-gated natively:
+
+  - `player.trespassing` v1: Glacier asserted its trespassing classification at that moment
+    ("Trespassing"): `trespassing` is the engine's boolean, `room_id` the engine's number verbatim
+    when it sent one — not a room name, an entity id or an authoritative location.
+  - `player.illegal_weapon` v1: Glacier asserted its illegal-weapon classification at that moment
+    ("HoldingIllegalWeapon"): `holding` is the engine's boolean — a specific observed
+    classification, not an inventory fact; `weapon` is the item object the engine attached when it
+    attached one, under the item rules above plus `perceived_as_weapon`. A `true` without a weapon
+    and a `false` with one are both valid observations, carried as sent.
+
+  Each occurrence is an engine statement about one moment. Neither says what the state is at any
+  other moment: an attempt with no occurrence has no known value (not `false`), and nothing here
+  or in `PlayerState.derive/2` presents the last statement as current gameplay truth.
   """
 
   alias GlacierRelay.Wire.Envelope
@@ -87,6 +103,8 @@ defmodule GlacierRelay.Events do
   @item_thrown "item.thrown"
   @item_removed_from_inventory "item.removed_from_inventory"
   @objective_completed "objective.completed"
+  @player_trespassing "player.trespassing"
+  @player_illegal_weapon "player.illegal_weapon"
   @reason_kinds ["restart", "exit_to_menu", "other"]
   @equipped_kinds ["initial", "change"]
 
@@ -103,6 +121,8 @@ defmodule GlacierRelay.Events do
   def item_thrown, do: @item_thrown
   def item_removed_from_inventory, do: @item_removed_from_inventory
   def objective_completed, do: @objective_completed
+  def player_trespassing, do: @player_trespassing
+  def player_illegal_weapon, do: @player_illegal_weapon
 
   @doc "Event types that are actor outcomes."
   def actor_outcome?(type), do: type in [@actor_died, @actor_pacified]
@@ -119,6 +139,9 @@ defmodule GlacierRelay.Events do
 
   @doc "Event types that are objective occurrences."
   def objective_event?(type), do: type == @objective_completed
+
+  @doc "Event types that are player-state occurrences."
+  def player_state_event?(type), do: type in [@player_trespassing, @player_illegal_weapon]
 
   @spec validate(String.t(), pos_integer(), map()) :: {:ok, map()} | {:error, term()}
   def validate(@mission_playing, 1, payload),
@@ -140,6 +163,8 @@ defmodule GlacierRelay.Events do
     do: item_payload(payload)
 
   def validate(@objective_completed, 1, payload), do: objective_payload(payload)
+  def validate(@player_trespassing, 1, payload), do: trespassing_payload(payload)
+  def validate(@player_illegal_weapon, 1, payload), do: illegal_weapon_payload(payload)
 
   def validate(type, version, _payload)
       when type in [
@@ -155,7 +180,9 @@ defmodule GlacierRelay.Events do
              @item_picked_up,
              @item_thrown,
              @item_removed_from_inventory,
-             @objective_completed
+             @objective_completed,
+             @player_trespassing,
+             @player_illegal_weapon
            ],
       do: {:error, {:unsupported_schema_version, type, version}}
 
@@ -356,6 +383,89 @@ defmodule GlacierRelay.Events do
        }}
     end
   end
+
+  # player.trespassing v1 (design section 46.3): the boolean is the subject, required; room_id is
+  # optional and must be a number when present (the wire carries no NaN or infinity: the native
+  # side rejects them and JSON cannot encode them), carried verbatim and never interpreted.
+  defp trespassing_payload(payload) do
+    with {:ok, source} <- Envelope.field(payload, "source", &Envelope.non_empty_string?/1),
+         {:ok, engine_event} <- Envelope.field(payload, "engine_event", &Envelope.non_empty_string?/1),
+         {:ok, trespassing} <- Envelope.field(payload, "trespassing", &is_boolean/1),
+         {:ok, room_id} <- optional(payload, "room_id", &finite_number?/1),
+         {:ok, contract_session_id} <- optional_string(payload, "contract_session_id"),
+         {:ok, engine_timestamp_s} <- optional(payload, "engine_timestamp_s", &is_number/1) do
+      {:ok,
+       %{
+         source: source,
+         engine_event: engine_event,
+         trespassing: trespassing,
+         room_id: room_id,
+         contract_session_id: contract_session_id,
+         engine_timestamp_s: engine_timestamp_s
+       }}
+    end
+  end
+
+  # player.illegal_weapon v1 (design section 46.3): the boolean is the subject, required; weapon is
+  # optional whatever the boolean says and, when present, an object under the item rules
+  # (definition id required and non-empty; instance id present must be non-empty; display strings
+  # and traits typed; perceived_as_weapon a boolean). A nested violation names the nested key.
+  defp illegal_weapon_payload(payload) do
+    with {:ok, source} <- Envelope.field(payload, "source", &Envelope.non_empty_string?/1),
+         {:ok, engine_event} <- Envelope.field(payload, "engine_event", &Envelope.non_empty_string?/1),
+         {:ok, holding} <- Envelope.field(payload, "holding", &is_boolean/1),
+         {:ok, weapon} <- optional_weapon(payload),
+         {:ok, contract_session_id} <- optional_string(payload, "contract_session_id"),
+         {:ok, engine_timestamp_s} <- optional(payload, "engine_timestamp_s", &is_number/1) do
+      {:ok,
+       %{
+         source: source,
+         engine_event: engine_event,
+         holding: holding,
+         weapon: weapon,
+         contract_session_id: contract_session_id,
+         engine_timestamp_s: engine_timestamp_s
+       }}
+    end
+  end
+
+  defp optional_weapon(payload) do
+    case Map.fetch(payload, "weapon") do
+      :error -> {:ok, nil}
+      {:ok, weapon} when is_map(weapon) -> weapon_payload(weapon)
+      {:ok, _} -> {:error, {:invalid_field, "weapon"}}
+    end
+  end
+
+  defp weapon_payload(weapon) do
+    result =
+      with {:ok, item_repository_id} <-
+             Envelope.field(weapon, "item_repository_id", &Envelope.non_empty_string?/1),
+           {:ok, item_instance_id} <- optional(weapon, "item_instance_id", &Envelope.non_empty_string?/1),
+           {:ok, item_name} <- optional_string(weapon, "item_name"),
+           {:ok, item_type} <- optional_string(weapon, "item_type"),
+           {:ok, online_traits} <- optional(weapon, "online_traits", &string_list?/1),
+           {:ok, perceived_as_weapon} <- optional(weapon, "perceived_as_weapon", &is_boolean/1) do
+        {:ok,
+         %{
+           item_repository_id: item_repository_id,
+           item_instance_id: item_instance_id,
+           item_name: item_name,
+           item_type: item_type,
+           online_traits: online_traits,
+           perceived_as_weapon: perceived_as_weapon
+         }}
+      end
+
+    case result do
+      {:ok, _} = ok -> ok
+      {:error, {reason, key}} -> {:error, {reason, "weapon." <> key}}
+    end
+  end
+
+  # Erlang floats have no NaN or infinity, so every decoded number is finite; the name states the
+  # contract the native side enforces before serialization.
+  defp finite_number?(value), do: is_number(value)
 
   defp disguise_kind(payload, :with_kind), do: Envelope.field(payload, "kind", &(&1 in @equipped_kinds))
 

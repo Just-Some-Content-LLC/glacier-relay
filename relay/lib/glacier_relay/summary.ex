@@ -5,8 +5,8 @@ defmodule GlacierRelay.Summary do
   infers a gameplay outcome. Each line says what was observed, and "not observed" where it wasn't.
   """
 
-  alias GlacierRelay.{Disguise, Items, Lifecycle, Objectives}
-  alias GlacierRelay.Lifecycle.{Attempt, Connection, ContractSession, DisguiseOccurrence, Instance, ItemOccurrence, ObjectiveOccurrence, Outcome}
+  alias GlacierRelay.{Disguise, Items, Lifecycle, Objectives, PlayerState}
+  alias GlacierRelay.Lifecycle.{Attempt, Connection, ContractSession, DisguiseOccurrence, Instance, ItemOccurrence, ObjectiveOccurrence, Outcome, PlayerStateOccurrence}
 
   @doc "Summary data, one map per instance, oldest attempt first."
   @spec build(%{String.t() => Instance.t()}) :: [map()]
@@ -67,6 +67,8 @@ defmodule GlacierRelay.Summary do
       # Objective occurrences not attached (M2 B5): no open attempt, or vetoed by a contradicting
       # session; each with the reason it recorded at receipt.
       unattributed_objective_events: Enum.map(instance.unattributed_objective_events, &objective_occurrence/1),
+      # Player-state occurrences with no open attempt (M2 B6): kept visible, never attached.
+      unattributed_player_state_events: Enum.map(instance.unattributed_player_state_events, &player_state_occurrence/1),
       # Contract lifecycle (M2 B2): every session Glacier reported, paired or not, plus what
       # could not be correlated and every observable discrepancy.
       contract_sessions: Enum.map(instance.contract_sessions, &contract_session/1),
@@ -132,7 +134,43 @@ defmodule GlacierRelay.Summary do
       # Objectives (M2 B5): the occurrences as facts with their recorded attribution, then the
       # display grouping.
       objective_events: Enum.map(attempt.objective_events, &objective_occurrence/1),
-      objectives: Objectives.derive(attempt, instance)
+      objectives: Objectives.derive(attempt, instance),
+      # Player state (M2 B6): the occurrences as facts, then the last-observed reading per subject
+      # with its uncertainty. The original records are never mutated into a state snapshot.
+      player_state_events: Enum.map(attempt.player_state_events, &player_state_occurrence/1),
+      player_state: PlayerState.derive(attempt, instance)
+    }
+  end
+
+  defp player_state_occurrence(%PlayerStateOccurrence{subject: :trespassing} = o) do
+    p = o.payload
+
+    %{
+      subject: :trespassing,
+      sequence: o.sequence,
+      timestamp: o.timestamp,
+      source: p.source,
+      engine_event: p.engine_event,
+      trespassing: p.trespassing,
+      room_id: p.room_id,
+      contract_session_id: p.contract_session_id,
+      engine_timestamp_s: p.engine_timestamp_s
+    }
+  end
+
+  defp player_state_occurrence(%PlayerStateOccurrence{subject: :illegal_weapon} = o) do
+    p = o.payload
+
+    %{
+      subject: :illegal_weapon,
+      sequence: o.sequence,
+      timestamp: o.timestamp,
+      source: p.source,
+      engine_event: p.engine_event,
+      holding: p.holding,
+      weapon: p.weapon,
+      contract_session_id: p.contract_session_id,
+      engine_timestamp_s: p.engine_timestamp_s
     }
   end
 
@@ -328,9 +366,14 @@ defmodule GlacierRelay.Summary do
         "  objective #{render_objective_occurrence(o)} #{render_unattributed_reason(o.attribution)}"
       end)
 
+    unattributed_player_state =
+      Enum.map(s.unattributed_player_state_events, fn o ->
+        "  player state #{render_player_state_occurrence(o)} with no open attempt"
+      end)
+
     anomalies = Enum.map(s.anomalies, &("  anomaly: " <> render_anomaly(&1)))
 
-    [header] ++ connections ++ attempts ++ strays ++ unattributed ++ unattributed_disguise ++ unattributed_items ++ unattributed_objectives ++ unpaired ++ unmatched_ends ++ anomalies
+    [header] ++ connections ++ attempts ++ strays ++ unattributed ++ unattributed_disguise ++ unattributed_items ++ unattributed_objectives ++ unattributed_player_state ++ unpaired ++ unmatched_ends ++ anomalies
   end
 
   defp render_attempt(a) do
@@ -374,7 +417,82 @@ defmodule GlacierRelay.Summary do
             Enum.map(outcomes, &("    " <> render_outcome(&1)))
       end
 
-    [line] ++ render_attempt_contract(a) ++ outcome_lines ++ render_attempt_disguise(a) ++ render_attempt_items(a) ++ render_attempt_objectives(a)
+    [line] ++ render_attempt_contract(a) ++ outcome_lines ++ render_attempt_disguise(a) ++ render_attempt_items(a) ++ render_attempt_objectives(a) ++ render_attempt_player_state(a)
+  end
+
+  # One line per attempt (M2 B6, design section 46.6): per subject, the last value the engine
+  # stated with its position, the metadata that occurrence carried, the standing when a cut
+  # follows it, the occurrence count and the observed-value-change count; then the history. Every
+  # value is "last observed", never a present-tense claim. Words that never appear here: is
+  # trespassing, armed, unarmed, holding, carried, safe, clean, dead, alive, died, complete.
+  defp render_attempt_player_state(a) do
+    d = a.player_state
+
+    if d.occurrences == 0 do
+      ["    player state (engine telemetry): none observed in the attempt"]
+    else
+      history =
+        case d.history do
+          :complete -> "history intact"
+          {:incomplete, reasons} -> "history broken: " <> Enum.map_join(reasons, ", ", &render_history_reason/1)
+        end
+
+      notes =
+        case d.trespassing.notes ++ d.illegal_weapon.notes do
+          [] -> ""
+          list -> "; notes: " <> Enum.map_join(list, ", ", &render_player_state_note/1)
+        end
+
+      ["    player state (engine telemetry): #{render_subject("trespassing", d.trespassing)}; #{render_subject("illegal weapon", d.illegal_weapon)}; #{history}#{notes}"]
+    end
+  end
+
+  defp render_subject(label, %{last: :not_observed}), do: "#{label} not observed"
+
+  defp render_subject(label, s) do
+    last = s.last
+    at = if last.engine_timestamp_s, do: " @#{last.engine_timestamp_s}s", else: ""
+
+    standing =
+      case s.standing do
+        :unknown -> ", standing unknown after #{render_cut(s.standing_cut)}"
+        _ -> ""
+      end
+
+    "#{label} last observed #{last.value} at ##{last.sequence}#{at}#{render_last_metadata(s)}#{standing}, " <>
+      "#{s.occurrences} occurrence#{plural(s.occurrences)}, #{s.observed_value_changes} observed value change#{plural(s.observed_value_changes)}"
+  end
+
+  # The engine's number verbatim, labelled as the field it came from: not a location or a name.
+  defp render_last_metadata(%{last: %{room_id: nil}}), do: ""
+  defp render_last_metadata(%{last: %{room_id: room_id}}), do: " (room_id #{room_id})"
+
+  # The weapon object the last occurrence carried; else the last one any occurrence named; else,
+  # on a true, the fact that none was named. Display name as sent, with the short definition id.
+  defp render_last_metadata(%{last: %{weapon: weapon}}) when not is_nil(weapon), do: " (#{render_weapon(weapon)})"
+  defp render_last_metadata(%{last_weapon: %{sequence: seq, weapon: weapon}}), do: " (last named weapon #{render_weapon(weapon)} at ##{seq})"
+  defp render_last_metadata(%{last: %{value: true}}), do: " (no weapon named)"
+  defp render_last_metadata(_), do: ""
+
+  defp render_weapon(%{item_name: name, item_repository_id: id}) when is_binary(name) and name != "", do: "#{name} #{short(id)}"
+  defp render_weapon(%{item_repository_id: id}), do: short(id)
+
+  defp render_cut({:gap, expected, got}), do: "gap #{expected}→#{got}"
+  defp render_cut({:interruption, at, reason}), do: "observation lost #{fmt(at)} (#{inspect(reason)})"
+
+  defp render_player_state_note({:no_weapon_named_on_true, seq}), do: "##{seq} true without a weapon object"
+  defp render_player_state_note({:weapon_named_on_false, seq}), do: "##{seq} false with a weapon object"
+
+  defp render_player_state_occurrence(%{subject: :trespassing} = o) do
+    at = if o.engine_timestamp_s, do: " @#{o.engine_timestamp_s}s", else: ""
+    room = if o.room_id, do: " (room_id #{o.room_id})", else: ""
+    "trespassing #{o.trespassing}#{room} ##{o.sequence}#{at}"
+  end
+
+  defp render_player_state_occurrence(%{subject: :illegal_weapon} = o) do
+    at = if o.engine_timestamp_s, do: " @#{o.engine_timestamp_s}s", else: ""
+    weapon = if o.weapon, do: " (#{render_weapon(o.weapon)})", else: ""
+    "illegal weapon #{o.holding}#{weapon} ##{o.sequence}#{at}"
   end
 
   # One line per attempt (M2 B5, design section 42.7): the objective occurrences the engine reported,

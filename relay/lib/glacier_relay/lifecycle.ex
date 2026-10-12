@@ -64,6 +64,12 @@ defmodule GlacierRelay.Lifecycle do
     `:no_open_attempt`. A closed attempt is never selected by session, timestamp or proximity, and a
     recorded decision is never re-evaluated against later pairing state (an occurrence attached by
     order to an attempt that was paired afterwards keeps its attachment and its recorded basis).
+  - Player-state occurrences (`player.trespassing`, `player.illegal_weapon`, M2 B6) are attached
+    to the open attempt by stream order, like items (`player_state_events`); with no open attempt
+    they are unattributed (both rows are attempt-gated natively, so that is unexpected and kept
+    visible). Nothing about the player's state is stored here: `PlayerState.derive/2` reads the
+    last observed value per subject on demand, with the attempt's gap and interruption evidence,
+    and never presents it as the current state.
   """
 
   alias GlacierRelay.Wire.Envelope
@@ -112,6 +118,15 @@ defmodule GlacierRelay.Lifecycle do
     `attempt_session` is the open attempt's paired session *as it was when the decision was made*.
     """
     defstruct [:sequence, :timestamp, :received_at, :payload, :attribution]
+  end
+
+  defmodule PlayerStateOccurrence do
+    @moduledoc """
+    One player-state occurrence as the engine recorded it (via the native normalizer). `subject`
+    is `:trespassing` or `:illegal_weapon`; everything else is the validated payload plus stream
+    position. Facts only: one engine statement about one moment, never a state.
+    """
+    defstruct [:subject, :sequence, :timestamp, :received_at, :payload]
   end
 
   defmodule ContractSession do
@@ -178,7 +193,9 @@ defmodule GlacierRelay.Lifecycle do
       # Item occurrences in stream order (M2 B4): facts, never derived state.
       item_events: [],
       # Objective occurrences in stream order (M2 B5), each with its attribution fixed at receipt.
-      objective_events: []
+      objective_events: [],
+      # Player-state occurrences in stream order (M2 B6): facts, never derived state.
+      player_state_events: []
     ]
   end
 
@@ -212,7 +229,9 @@ defmodule GlacierRelay.Lifecycle do
               unattributed_item_events: [],
               # Objective occurrences not attached (M2 B5): no open attempt, or the open attempt's
               # session contradicted the occurrence's. Each carries its reason; never attached later.
-              unattributed_objective_events: []
+              unattributed_objective_events: [],
+              # Player-state occurrences with no open attempt (M2 B6): kept, never attached by adjacency.
+              unattributed_player_state_events: []
   end
 
   def new(id), do: %Instance{id: id}
@@ -254,6 +273,9 @@ defmodule GlacierRelay.Lifecycle do
 
         GlacierRelay.Events.objective_event?(envelope.event_type) ->
           record_objective(instance, envelope, received_at)
+
+        GlacierRelay.Events.player_state_event?(envelope.event_type) ->
+          record_player_state(instance, envelope, received_at)
       end
 
     {%{instance | last_event: envelope}, notes ++ more}
@@ -736,6 +758,41 @@ defmodule GlacierRelay.Lifecycle do
         {%{
            instance
            | attempts: replace_last(instance.attempts, %{open | objective_events: open.objective_events ++ [occurrence]})
+         }, []}
+    end
+  end
+
+  # -- player state (M2 B6) ------------------------------------------------------------------
+
+  defp record_player_state(instance, envelope, received_at) do
+    subject =
+      if envelope.event_type == GlacierRelay.Events.player_trespassing(),
+        do: :trespassing,
+        else: :illegal_weapon
+
+    occurrence = %PlayerStateOccurrence{
+      subject: subject,
+      sequence: envelope.sequence,
+      timestamp: envelope.timestamp,
+      received_at: received_at,
+      payload: envelope.payload
+    }
+
+    case current_attempt(instance) do
+      nil ->
+        {%{
+           instance
+           | unattributed_player_state_events: instance.unattributed_player_state_events ++ [occurrence]
+         }, [{:unattributed_player_state_event, envelope.sequence}]}
+
+      open ->
+        {%{
+           instance
+           | attempts:
+               replace_last(instance.attempts, %{
+                 open
+                 | player_state_events: open.player_state_events ++ [occurrence]
+               })
          }, []}
     end
   end

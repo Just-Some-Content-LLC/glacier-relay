@@ -613,6 +613,81 @@ defmodule GlacierRelay.Wire.ListenerTest do
     :gen_tcp.close(socket)
   end
 
+  # -- B6: player state over the wire -----------------------------------------------------------
+
+  @b6 File.read!("test/b6_probe_envelopes.ndjson") |> String.split("\n", trim: true)
+  @b6_id "18b902b3-f84d-4b73-9ef8-9c009357cc1b"
+
+  test "the B6 native envelopes arrive in order; player-state occurrences attach by order and derive conservatively, beside the accepted vocabulary" do
+    socket = connect()
+    :ok = :gen_tcp.send(socket, Enum.join(@b6, "\n") <> "\n")
+    assert_receive {:relay_event, %{sequence: 22, event_type: "contract.ended"}}, 1_000
+
+    instance = MissionSession.state()[@b6_id]
+    assert instance.gaps == [] and instance.unattributed_player_state_events == []
+    assert [%Attempt{player_state_events: first} = a1, %Attempt{player_state_events: second} = a2] = instance.attempts
+    assert Enum.map(first, &{&1.subject, &1.sequence}) == [{:trespassing, 4}, {:trespassing, 7}, {:illegal_weapon, 9}, {:illegal_weapon, 10}, {:illegal_weapon, 11}, {:illegal_weapon, 12}]
+    assert Enum.map(second, &{&1.subject, &1.sequence}) == [{:illegal_weapon, 20}]
+
+    d1 = GlacierRelay.PlayerState.derive(a1, instance)
+    assert %{last: %{value: false, sequence: 7, room_id: 3}, occurrences: 2, observed_value_changes: 1, standing: :last_observed} = d1.trespassing
+    assert %{last: %{value: false, sequence: 12, weapon: nil}, last_weapon: %{sequence: 11}, occurrences: 4, observed_value_changes: 3, standing: :last_observed} = d1.illegal_weapon
+    assert d1.history == :complete
+
+    # Attempt 2 inherits nothing: trespassing not observed, one illegal-weapon statement with its object.
+    d2 = GlacierRelay.PlayerState.derive(a2, instance)
+    assert d2.trespassing.last == :not_observed and d2.trespassing.standing == :not_observed
+    assert %{last: %{value: true, sequence: 20, weapon: %{item_repository_id: "e70adb5b-0646-4f88-bd4a-85bea7a2a654", item_instance_id: "9a3f1dbb-a8b9-407a-8a7f-cdce8ddf1955"}}} = d2.illegal_weapon
+
+    # The accepted vocabulary in the same stream is unchanged by the new rows.
+    assert Enum.map(a1.outcomes, & &1.sequence) == [8, 13]
+    assert Enum.map(a1.item_events, & &1.sequence) == [5]
+    assert Enum.map(a1.disguise_events, & &1.sequence) == [3, 6]
+    assert Enum.map(a1.objective_events, & &1.sequence) == [14]
+    assert a1.disposition == :restarted and a2.disposition == :exited_to_menu
+
+    text = MissionSession.summary_text()
+    assert text =~ "player state (engine telemetry): trespassing last observed false at #7 @202.179184s (room_id 3), 2 occurrences, 1 observed value change; illegal weapon last observed false at #12 @491.880981s (last named weapon ICA19 Silverballer e70adb5b… at #11), 4 occurrences, 3 observed value changes; history intact"
+    assert text =~ "player state (engine telemetry): trespassing not observed; illegal weapon last observed true at #20 @476.573425s (ICA19 Silverballer e70adb5b…), 1 occurrence, 0 observed value changes; history intact"
+    refute text =~ ~r/complet|accomplish|remaining|clean|undetected|safe|silent assassin|inventory contents|holding|carried|owns|recovered|throws|\bis trespassing|\barmed|\bdead\b|\balive\b/i
+    :gen_tcp.close(socket)
+  end
+
+  test "a player-state event with no open attempt over the wire stays unattributed" do
+    orphan = Enum.at(@b6, 3) |> String.replace(@b6_id, "orphan-player-state")
+    socket = connect()
+    :ok = :gen_tcp.send(socket, orphan <> "\n")
+    assert_receive {:relay_event, %{adapter_instance_id: "orphan-player-state", event_type: "player.trespassing"}}, 1_000
+
+    instance = MissionSession.state()["orphan-player-state"]
+    assert instance.attempts == []
+    assert [%{subject: :trespassing, sequence: 4}] = instance.unattributed_player_state_events
+    assert MissionSession.summary_text() =~ "player state trespassing true (room_id 6) #4 @166.198425s with no open attempt"
+    :gen_tcp.close(socket)
+  end
+
+  test "a rejected player-state envelope leaves nothing behind and the next valid envelope on the connection is processed" do
+    id = "rejected-player-state"
+    [playing_line, weapon_line, holstered_line] = [Enum.at(@b6, 1), Enum.at(@b6, 8), Enum.at(@b6, 9)] |> Enum.map(&String.replace(&1, @b6_id, id))
+    bad = String.replace(weapon_line, ~s("item_instance_id":"9a3f1dbb-a8b9-407a-8a7f-cdce8ddf1955"), ~s("item_instance_id":""))
+    assert bad =~ ~s("item_instance_id":"")
+
+    socket = connect()
+    :ok = :gen_tcp.send(socket, playing_line <> "\n" <> bad <> "\n" <> holstered_line <> "\n")
+    assert_receive {:relay_event, %{adapter_instance_id: ^id, sequence: 2, event_type: "mission.playing"}}, 1_000
+    assert_receive {:relay_event, %{adapter_instance_id: ^id, sequence: 10, event_type: "player.illegal_weapon"}}, 1_000
+    refute_received {:relay_event, %{adapter_instance_id: ^id, sequence: 9}}
+
+    instance = MissionSession.state()[id]
+    # The rejected line never reached the model: not a fact, not an absence; the only trace is the gap.
+    assert [%Attempt{player_state_events: [%{subject: :illegal_weapon, sequence: 10}]} = a] = instance.attempts
+    assert instance.gaps == [{3, 10}]
+    d = GlacierRelay.PlayerState.derive(a, instance)
+    assert %{last: %{value: false, sequence: 10}, last_weapon: nil, occurrences: 1, standing: :last_observed} = d.illegal_weapon
+    assert d.history == {:incomplete, [{:gap, 3, 10}]}
+    :gen_tcp.close(socket)
+  end
+
   defp wait_until(fun, attempts \\ 50) do
     cond do
       fun.() -> :ok
