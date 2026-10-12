@@ -2790,3 +2790,123 @@ Policy for v2: the timeline is rendered **in Relay sequence order only** (the st
 `Hero_Health`/`Hero_Dead` shape diagnostic (§46.8; `Hero_Health` seen by name in B3 and §48); `ContractEnd` payload discovery (§46.9); `ItemDropped`/`ItemDestroyed` shape diagnostic (§38.9; three `ItemDestroyed` names in §48 with no pickup); witness/detection telemetry; runtime actor identity; spatial tracking. Each needs its own authorization and the operator's readiness; one bounded diagnostic run could carry several allowlisted names.
 
 **Stop here for architectural review of the B7 design and the M2 completion recommendation. Nothing in this section is implemented.**
+
+## 51. B7 implementation and offline validation (2026-10-12) — summary v2 built and validated from the existing evidence; M2 not closed
+
+Authorization: §50 accepted with refinements (clock domains per contract session; transport evidence without a Relay sequence; target grouping as display only with the full-status distinction; the four tags on data and text; byte-identical legacy summaries; no native, wire, hook, process or persistence change; no runtime experiment). **Scope delivered: BEAM-only, additive.** The native repository is untouched (ZHMModSDK `relay/m2` still `c5152848`, working tree clean, the accepted B6 DLL `6047a9a3…` unchanged in the build tree); `Events`, `Wire.*` and every validation clause are unchanged; nothing was deployed or run against the game. M2 is **not** marked complete here.
+
+### Commits
+
+| What | Ref |
+|---|---|
+| BEAM implementation, fixtures, snapshots and tests | glacier-relay `main` **`d68d7fb`** (on `3231e89`) |
+| This record | the commit that adds it |
+
+### Added public BEAM API (nothing removed or changed)
+
+- `GlacierRelay.Summary.report/1` — the report as data, one map per instance, oldest attempt first; delegates to the new pure module `GlacierRelay.Report`.
+- `GlacierRelay.Summary.render_report/2` — the report as text (instances, unidentified connections).
+- `GlacierRelay.MissionSession.report/0`, `report_text/0` — read-only calls over the session's instances.
+- `Summary.build/1`, `Summary.render/2`, `MissionSession.summary/0`, `summary_text/0`: **unchanged** (the only edit to `summary.ex` is the two delegating functions; `mission_session.ex` gains the two calls and their `handle_call` clauses). `Report` reads `Summary.build/1` once per report, so each attempt's derived views are folded once; the only extra pass is the timeline layout and the display grouping of outcomes (bounded by the attempt's outcome count).
+
+### Report structure (data)
+
+Per instance: `adapter_instance_id`, `received`, `last_sequence`, `gaps`, `observation`, `connections`, `attempts`, `unattributed` (outcomes, disguise, items, objectives, player state — listed, never attached), `unmatched_stops`, `unpaired_contract_sessions`, `unmatched_contract_ends`, `anomalies`, `limitations`. Per attempt:
+
+- `overview` — `number`, scene identity, `mission`; `start` `{sequence, relay_at, game_session_id, tag: :engine}`; `stop` (the same, or `{status: :not_observed, reason: :last_known_playing | {:superseded, by}, tag: :not_observed}`); `duration_ms`; `contract` (`status: :paired` with the engine's session facts, `started`/`ended` sub-records tagged `:engine`, `paired_by` and `correlation_tag: :derived`; or `:ambiguous` with candidates; or `:not_observed`); `disposition` (`value`, engine `reason`, `reason_kind`, `ended_sequence`, `ended_relative`, `tag: :derived`; or `:not_observed`); `completeness` (`AttemptHistory.history/2`).
+- `targets` / `non_targets` — `groups` of `{actor_name, repository_id, occurrences}` in first-seen order, `grouping: :display_only`, `occurrences` (a count of occurrences), `tag: :engine`; each occurrence keeps its own `sequence`, `relay_at`, `engine_t`, `kind`, `engine_actor_id`, `actor_type`, `is_target`, the engine classification fields, `damage_events`, `item_repository_id`, `tag: :engine`. `targets.note` states that the full status of all mission targets is not established and that an absent outcome is not evidence of survival. No distinct-actor count exists anywhere in the data.
+- `outcome_counts` — the existing aggregate (occurrence counts).
+- `activity` — the existing derived views with their events: `disguise` (`view_tag: :derived`), `items` (`:derived`), `objectives` (`:derived`; each grouped row gains `metadata_basis: :first_observed`; `Objectives.derive/2` untouched), `player_state` (`view_tag: :last_observed`); events tagged `:engine`.
+- `timeline` — `policy` (one sentence) and `lines`, each `{sequence | nil, position, relay_at, engine_t, engine_t_rel, clock: {domain, comparability, regression}, family, engine_event, fact, tag}`.
+- `uncertainty` — `[{kind, detail, tag}]`: gaps inside the attempt (with how many envelopes never arrived), interruptions, supersession, stop not observed, contract not observed / ambiguous / end not observed, disguise standing unknown and disguise anomalies, objective conflicts, player-state standing unknown and notes, the instance anomalies that name this attempt, then the four standing limitations (the mission's end is not observable on this stream and the predicate stayed up through the end screens in §44; `ContractEnd` is a name only; the full status of all targets is not established; player state is a last statement, not a current state).
+
+### Chronology and clock domains (§50.3 as refined)
+
+The timeline is laid out in Relay sequence order only: records sort by `{sequence, 0}`, a transport interruption by `{after_sequence, 1}` (after the last sequence the instance had received when the connection closed), so a sequence-less line never displaces a record. Each line shows the native publication time and, when the stream supplied one, the engine time on the contract clock. Each engine-timed line's clock domain is the `contract_session_id` its own payload carries (`:unknown` when absent; the legacy outcome map omits it, so it is read from the attempt's own `Outcome` records by sequence). Consecutive engine-timed lines are compared only when both carry the same explicit session id (`comparability: :same_domain`; `regression: true` when the later line's engine time is lower, rendered "engine time earlier than the previous line"); a different explicit session is `:new_domain` ("new contract clock", never a regression); an unknown domain on either side is `:unknown` ("clock comparability unknown", never a regression); the first engine-timed line is `:first`. A relative time `t+` is shown only for lines whose domain is the attempt's paired contract session, from that domain's first engine-timed line; an attempt with no paired session shows original engine times only. Adjacency never infers a domain. No record is modified; the fixture tests assert the instance is unchanged by reporting and that the legacy summary is byte-identical before and after.
+
+### Named-target presentation
+
+"target outcomes observed (the full status of all mission targets is not established; an absent outcome is not evidence of survival):" then one display group per `(actor_name, repository_id)` with the occurrence count and every occurrence on its own line — `#seq kind @engine-time (actor type; engine actor id N): death_type/death_context, kill_class, method, damage [...], item … [engine classification]`. Non-targets the same. Counts are labelled "occurrence counts, not an actor count". A pacify and a death of the same name are two lines in one group; two names with different definitions are two groups; two engine actor ids under one name and definition stay one display group with both ids printed. Nothing attributes an outcome to 47, nothing says survived, unique or distinct.
+
+### Provenance tags and wording
+
+Every structured field and every rendered line carries one of `:engine` ("engine-authored" / "engine-observed" / "engine classification"), `:derived` ("BEAM-derived"), `:last_observed`, `:not_observed`, plus `:transport` for connection evidence. Words that never appear outside the explicitly labelled limitation lines (checked on every fixture): complete/completion, accomplish, remaining, clean, undetected, safe, silent assassin, inventory contents, holding, carried, owns, recovered, throws, survive, unique, distinct actor, currently, is wearing, is trespassing, assassinated. The objective timeline line therefore reads "objective reported done: …" and the overview line "observation coverage: history …"; the Relay type names appear on the other timeline lines as provenance.
+
+### Fixture coverage and tests (`test/glacier_relay/report_test.exs`, 36 tests; `wire/listener_test.exs` +1; 259 in all)
+
+Fixtures: the ten committed envelope files — `stage1`, `stage_a_probe`, `b1_probe` … `b6_probe`, and the **real run envelopes** `b5_run1` (45, §44) and `b6_run1` (16, §48), extracted from the runs' native `published` lines (no user or platform ids in them). Snapshots: `test/snapshots/<fixture>.summary.txt`, the legacy `Summary.render/1` output generated from `802b5fe` before any B7 change, asserted byte-identical on every fixture before and after reporting. For every fixture: every record of every attempt (rise, stop, the paired session's start and end, outcomes, disguise, items, objectives, player state) appears exactly once in its timeline, in sequence order, with a tag; no sequenced line exists that is not a record; transport lines are the only sequence-less lines; the four limitations are present; every timeline fact and every uncertainty detail is in the rendered text; the reserved-word rule holds on every non-limitation line; `report/1` is identical across two independent folds and across a staged fold. The real B6 run: overview, exit disposition with its reason and attachment, intact coverage, three non-target groups, no target line, the player-state line, the `#4` timeline line. The real B5 run: Novikov and Margolis as engine-classified accident/explosion deaths with the exact lines, disposition not observed with its uncertainty item, objectives labelled "first observed", no attribution or survival words. Named targets: pacify-then-death in one group (synthetic, and the B1 fixture's `#14` pacified / `#15` died with their different classifications); identical names with distinct definitions; identical name and definition with distinct engine actor ids; no target outcome. Clock domains: regression within one established session; a session change as a new clock with relative time restarting from the attempt's own session; an attempt-2 occurrence still stamped with the previous session as a different domain; an unknown domain; lifecycle edges with Relay time only and no relative time without a paired session. Transport: an interruption after the last received sequence with no Relay sequence, implying no stop. Uncertainty: gaps, supersession, ambiguous correlation, unknown player-state standing; the overview tags; the objective label; unattributed occurrences and anomalies at the instance level; the empty state. Over TCP: `report/0` and `report_text/0` over the B6 fixture beside the unchanged legacy summary.
+
+### Offline validation (2026-10-12)
+
+| Step | Result |
+|---|---|
+| Formatting | `mix format --check-formatted` on the two new files passes (the formatter was not applied to known-good files; a first run that reformatted them was reverted so the diff holds only the change) |
+| Compilation | `mix compile --warnings-as-errors` clean |
+| Elixir suite ×5 (`b7-mix5.txt`) | **259 tests, 0 failures, five times** (222 + 36 + 1) |
+| Fixture replay | all ten fixtures, including the real B5 and B6 run envelopes |
+| Legacy compatibility | ten byte-identical snapshots asserted; `final_state.exs` and every existing test untouched |
+| Structured vs rendered | every timeline fact and uncertainty detail of the data appears in the text, on every fixture |
+| Native / protocol | ZHMModSDK working tree clean at `c5152848`; DLL `6047a9a3…` unchanged; `events.ex` and `wire/` untouched (git diff empty); no new process, endpoint or persistence |
+
+### Sample report from real validated evidence (the §48 run, `test/b6_run1_envelopes.ndjson`; verbatim `render_report/1`)
+
+```
+adapter 6e1b19b6-e265-4016-aa2a-d9a68ab08c9a: 16 event(s), last sequence 16, gaps [], observation never
+  attempt 1: Peacock (assembly:/_PRO/Scenes/Missions/Paris/_Scene_FashionShowHit_01.entity)
+    mission overview
+      identity: mission scene assembly:/_PRO/Scenes/Missions/Paris/_Scene_FashionShowHit_01.entity, hint "Peacock", attempt 1 [engine-observed scene state]
+      contract: session 2516104627224045772-4c0ec3f4-4acb-4e00-b7bc-4fae4aa0096f (LOCATION_PARIS, mission, difficulty 2, starting disguise 874c4c48… hitman suit; started #1) [engine telemetry; correlated to this attempt by next_rise: BEAM-derived]
+      start: #2 2026-10-12T20:48:12.980Z (the predicate rose; game_session_id 2516104627224045772-4c0ec3f4-4acb-4e00-b7bc-4fae4aa0096f observed) [engine-observed]
+      stop: #15 2026-10-12T20:51:14.134Z (the predicate fell) [engine-observed]
+      duration: 181.2 s (Relay clock, rise to fall)
+      disposition: exited to menu [engine reason "Contract ended manually: User pressed exit to Main menu"; attached from the paired session's contract.ended #16 (after the stop): BEAM-derived]
+      observation coverage: history intact (no gap, interruption or supersession inside the attempt)
+    actor outcomes [engine telemetry; grouping by name and definition id is display only, never an actor identity]
+      target outcomes observed: none in the stream; the full status of all mission targets is not established; an absent outcome is not evidence of survival [not observed]
+      non-target outcomes observed:
+        Michel Trier (99831d97…): 1 occurrence
+          #9 pacified @139.37754821777344s (guard; engine actor id 1444286432): pacify/murder, melee, unarmed, damage [InstantTakeDown] [engine classification]
+        Clarence Caubert (e65cff4c…): 1 occurrence
+          #12 died @147.02072143554688s (guard; engine actor id 129017597): bloody_kill/murder, ballistic, pistol, damage [Shoot], item fca954f6… [engine classification]
+        Aubert Achin (5965ab65…): 1 occurrence
+          #13 died @148.00912475585938s (guard; engine actor id 853615587): bloody_kill/murder, ballistic, pistol, damage [Shoot], item fca954f6… [engine classification]
+      counts: 2 died (0 target, 2 non-target); 1 pacified (0 target, 1 non-target) [engine classifications; occurrence counts, not an actor count]
+    gameplay activity
+      disguises: 5 occurrences [engine telemetry]; worn 992cc7b6… since #10; standing compromised; 1 change [BEAM-derived, conservative]
+      items: picked up 0, thrown 0, removed from inventory 0; 0 definitions [engine telemetry; direct counts, nothing paired]
+      objectives: none observed in the attempt [not observed]
+      player state: trespassing last observed false at #5 (room_id 6), 2 occurrences, 1 observed value change; illegal weapon last observed false at #8 (last named weapon ICA19 Red Trinity fca954f6… at #6), 2 occurrences, 1 observed value change [last observed, never current state]
+    timeline [Relay sequence order (publication order, replayable); each line shows the native publication time and, when the engine supplied one, the engine occurrence time on the contract clock; engine times are compared only between consecutive lines of the same established contract-session clock domain; a new session is a new clock; nothing is reordered by engine time]
+      #1 2026-10-12T20:48:12.980Z engine 0s (t+0.0s) contract.started: session 25161046…, LOCATION_PARIS, mission, difficulty 2 (correlated to this attempt by next_rise) [engine-authored]
+      #2 2026-10-12T20:48:12.980Z mission.playing: the mission predicate rose (Peacock) [engine-authored]
+      #3 2026-10-12T20:48:24.263Z engine 11.320298194885254s (t+11.32s) disguise.equipped (initial): 874c4c48… [engine-authored]
+      #4 2026-10-12T20:48:53.264Z engine 40.31857681274414s (t+40.319s) player.trespassing: true (room_id 6) [engine-authored]
+      #5 2026-10-12T20:49:19.719Z engine 66.77666473388672s (t+66.777s) player.trespassing: false (room_id 6) [engine-authored]
+      #6 2026-10-12T20:50:00.415Z engine 107.46269989013672s (t+107.463s) player.illegal_weapon: true (ICA19 Red Trinity fca954f6…) [engine-authored]
+      #7 2026-10-12T20:50:16.039Z engine 122.7513198852539s (t+122.751s) disguise.compromised: 874c4c48… [engine-authored]
+      #8 2026-10-12T20:50:18.683Z engine 125.73497009277344s (t+125.735s) player.illegal_weapon: false [engine-authored]
+      #9 2026-10-12T20:50:33.347Z engine 139.37754821777344s (t+139.378s) actor.pacified: Michel Trier (guard, non-target; engine actor id 1444286432): pacify/murder, melee, unarmed, damage [InstantTakeDown] [engine-authored]
+      #10 2026-10-12T20:50:35.461Z engine 141.49205017089844s (t+141.492s) disguise.equipped (change): 992cc7b6… [engine-authored]
+      #11 2026-10-12T20:50:35.640Z engine 141.49205017089844s (t+141.492s) disguise.compromise_cleared: 992cc7b6… [engine-authored]
+      #12 2026-10-12T20:50:40.991Z engine 147.02072143554688s (t+147.021s) actor.died: Clarence Caubert (guard, non-target; engine actor id 129017597): bloody_kill/murder, ballistic, pistol, damage [Shoot], item fca954f6… [engine-authored]
+      #13 2026-10-12T20:50:41.980Z engine 148.00912475585938s (t+148.009s) actor.died: Aubert Achin (guard, non-target; engine actor id 853615587): bloody_kill/murder, ballistic, pistol, damage [Shoot], item fca954f6… [engine-authored]
+      #14 2026-10-12T20:50:44.575Z engine 150.60952758789062s (t+150.61s) disguise.compromised: 992cc7b6… [engine-authored]
+      #15 2026-10-12T20:51:14.134Z mission.stopped: the mission predicate fell [engine-authored]
+      #16 2026-10-12T20:51:17.243Z engine 154.70941162109375s (t+154.709s) contract.ended: exit to menu ("Contract ended manually: User pressed exit to Main menu") (after the stop) [engine-authored]
+    uncertainty and limitations
+      - {:cleared_without_compromise, "992cc7b6-4ccf-4ae8-a467-e9b2aabaeeb5", 11} [BEAM-derived]
+      - whether the mission ended in success or failure is not observable on this stream: no terminal engine event is validated, and on the observed route the mission predicate stayed up through the end screens (section 44) [not observed]
+      - ContractEnd is a name only; its payload is unvalidated and it is not a completed-contract event (section 46.9) [not observed]
+      - the complete status of all mission targets is not established: an absent outcome is not evidence of survival [not observed]
+      - player state is the engine's last statement per subject, not a continuously verified current state [not observed]
+```
+
+### §50 completion criteria, checked
+
+Works from existing event evidence (no new instrumentation): yes. Every reported fact has documented provenance: yes (the tags; the fixture test traces every sequenced line to a record). Named targets displayed conservatively: yes. Chronology respects clock domains: yes (per contract session, as refined). Observation loss and ambiguity visible: yes (uncertainty list and transport lines). Useful without raw logs: the sample above reads as a mission report; the reviewer's judgement on this criterion is part of the review. Compatibility and replay tests pass: yes.
+
+### Limitations
+
+The report presents what the stream carried: no mission end, death, rating, attribution, inventory or current state; on the observed completion route the predicate did not fall (§44), so a completed mission reads as a long attempt that stopped on return to the menu; the clock-domain rule depends on the session id each payload carries (lifecycle edges carry none and are never compared); relative engine time is shown only inside the attempt's paired session; engine strings (names, methods) are printed as sent and may themselves contain any word.
+
+**Stop here for architectural review. M2 is not closed by this section; the recommendation of §50.6 stands.**
