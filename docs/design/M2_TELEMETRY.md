@@ -2644,3 +2644,41 @@ Final BEAM state captured over RPC before the stop; BEAM stopped by RPC `:init.s
 - **E. Readiness:** **candidate for acceptance for its bounded scope** (two engine-authored occurrence types, each observed live in both boolean forms, with the nested object on the one `true` that carried it; the typed intake, the per-row gate, the counters and the sequence as designed), with these limits stated: one run, one route, one trespass zone, one `RoomId` value (6, twice), one weapon definition; `RoomId`'s meaning and engine type, a `true` without `WeaponEquipped`, a `false` with one, any occurrence outside the predicate window, a gap or interruption inside an attempt, and a second attempt remain unobserved live. No targeted correction is indicated by this run. The acceptance decision is the reviewer's.
 
 **Stop here for architectural review. Nothing further was run; no production code changed; the game is at M0 and hash-verified.**
+
+## 49. B6 acceptance review (2026-10-12) — accepted for its bounded two-event player-state scope on the observed build; M2 remains incomplete
+
+Review decision, recorded in substance: **B6 is accepted for its bounded scope on build 3.280.0.0** — the implemented occurrence contract (`player.trespassing` v1: the engine's `IsTrespassing` boolean as the required subject, `RoomId` as an optional finite number carried verbatim; `player.illegal_weapon` v1: the engine's `IsHoldingIllegalWeapon` boolean as the required subject, `WeaponEquipped` as an optional nested object under the B4 item rules plus `perceived_as_weapon`, valid on either boolean; both attempt-gated on the observed-run evidence of §46.4; §38.7 diagnostics at both levels; no native deduplication), the BEAM reading (`PlayerState.derive/2`: last observed per subject with its sequence and metadata, occurrence count, `observed_value_changes` as differences between consecutive received values, standing `:not_observed` | `:last_observed` | `:unknown` after a cut following that subject's last occurrence, the last named weapon, notes for unexpected combinations, the shared bounded history), and the one-line summary that says "last observed" and never a present-tense state. It is an acceptance of **two engine-authored occurrence types**, each seen live in both boolean forms; it is not a claim that Relay knows the player's current state, inventory, safety, health or anything beyond what the engine stated at those moments.
+
+### Evidence the acceptance rests on
+
+- **Offline (§47):** clean build of the committed tree with 0 relay warnings; native tests 25/25 (the six recorded payloads, synthetic variants, finite-number rule, the weapon object on either boolean, per-field diagnostics at both levels, duplicates preserved, unknown names counted, attempt gating on both sides of the fall, one monotonic sequence across the B1–B6 vocabulary); imports/exports identical to the accepted B5 checkpoint; Elixir 222 ×5 (validation with nested keys; unknown initial state; counts; weapon metadata; per-subject cuts for gaps and interruptions with reconnection; attempt boundaries and supersession through the shared `AttemptHistory`; replay equivalence; wording; the B1–B5 lines pinned unchanged); standalone wire 22/22, 0 field mismatches, with a designed outside-attempt case.
+- **Runtime (§48):** `Trespassing` `true`/`false` and `HoldingIllegalWeapon` `true` (with the full nested object, a non-empty instance id) /`false` (without one) normalized, published and received with payloads intact; 16/16 envelopes, 0 field mismatches; captured 14 = normalized 14, malformed 0, outside-attempt 0, dropped 0, rejected 0, gaps `[]`; 0 WARN/ERROR/FAULT; BEAM last observed false/false, 2+2 occurrences, 1+1 observed value changes, history intact, no fabricated initial value; prior vocabulary live (lifecycle, contract, five disguise occurrences including the §36 change-time pattern, three actor outcomes); cleanup mechanical and reported (RPC stop; DLL removed; `mods.ini` restored; 107 files and hashes identical; M0 26/26; port free on both sides).
+
+### Accepted checkpoint (refs kept distinct)
+
+| What | Ref |
+|---|---|
+| Native build source and SDK head | ZHMModSDK `relay/m2` **`c51528483a4f1f1eb9dcd63ae81f5272a6d5a8fe`** |
+| `GlacierRelay.dll` SHA-256 (build tree and installed copy, §48) | **`6047a9a3278fdd725c55bdc16ac47f832436afb2f5a6f2260488a436a6009d65`** (10,155,008 bytes) — preserved with PDB, tests, probe and the §47 gate files in `%TEMP%\glacier-m0\hitmen\b6-accepted-artifacts\` (`origin.txt`, `sha256.txt`) |
+| BEAM | glacier-relay **`802b5fe`** |
+| Implementation record | glacier-relay **`8304fa2`** (§47) |
+| Runtime record | glacier-relay **`8dfc320`** (§48) |
+
+The accepted B3 (`84b93778` / `61fe5538…`), B4 (`12ea5586` / `07a71fc2…`) and B5 (`97946eb1` / `4e3a0453…`) checkpoints stand beside it, preserved in their `*-accepted-artifacts\` directories; the B6 DLL contains their rows unchanged (imports/exports identical; B1, B2, B3 rows exercised live in §48, B4 and B5 offline).
+
+### What acceptance does not establish
+
+- **Current player state** of any kind: a trespass or weapon occurrence is the engine's statement at that moment; the attempt begins with no assertion; "last observed" is the strongest reading the summary gives.
+- **Safety, detection, legality under a disguise, possession, inventory, health or death** — never derived; `IsHoldingIllegalWeapon` is a specific engine classification, not an inventory fact.
+- **`RoomId`'s meaning or engine type** — carried verbatim; 6 on both live occurrences, 6 then 3 in B0; not a location, entity id or room name.
+- **Engine field types** — a successful normalization establishes contract compatibility only (the nested `RepositoryId` may have been a copied string or a rendered `ZRepositoryID`; either is accepted by design).
+- **The unobserved variants** — a `true` without `WeaponEquipped`, a `false` with one, an occurrence outside the predicate window, a gap or interruption inside an attempt, a second attempt's independence — all offline-tested, none seen live.
+- **The gate as a Glacier guarantee** — attempt gating rests on 71 name-only and 10 payload observations all inside the window; the outside-attempt counter remains the instrument.
+
+### Unobserved, by provenance
+
+Through the B6 runtime path (§48): a second trespass zone or `RoomId` value; a `true` without an object or a `false` with one; repeated identical statements; an occurrence after the fall; another route. Name-only in §48, outside B6's scope: `Hero_Health` (once, in combat), `ItemDestroyed` (three, no pickup/throw in the run), `NoHunting` (first sighting), `Unnoticed_Pacified`, `ShotsFired`/`ShotsHit`, the detection names.
+
+### What remains for M2
+
+B7 summary v2 (design in §50) and the completion decision; the roadmap's exit criterion is unchanged. The `Hero_Health`/`Hero_Dead` (§46.8), `ItemDropped`/`ItemDestroyed` (§38.9) and `ContractEnd` (§46.9) diagnostics remain separately authorized research candidates, not prerequisites.
