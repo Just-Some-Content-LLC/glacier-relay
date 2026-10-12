@@ -2682,3 +2682,111 @@ Through the B6 runtime path (§48): a second trespass zone or `RoomId` value; a 
 ### What remains for M2
 
 B7 summary v2 (design in §50) and the completion decision; the roadmap's exit criterion is unchanged. The `Hero_Health`/`Hero_Dead` (§46.8), `ItemDropped`/`ItemDestroyed` (§38.9) and `ContractEnd` (§46.9) diagnostics remain separately authorized research candidates, not prerequisites.
+
+## 50. B7 — summary v2 design and M2 completion analysis (2026-10-12; design and source review only, nothing implemented)
+
+Scope: a review of what the accepted B1–B6 stream and the existing pure summary already establish about one mission attempt; a design for a mission-oriented summary v2 over the same data; an assessment of the M2 goal and exit criterion as written in `ROADMAP.md`; the smallest bounded implementation stage. Sources read as they are on `main` `802b5fe` + `7602939`: `GlacierRelay.Summary`, `Lifecycle` (with `Observation`, `Outcome`, `DisguiseOccurrence`, `ItemOccurrence`, `ObjectiveOccurrence`, `PlayerStateOccurrence`, `ContractSession`, `Attempt`, `Instance`), `MissionSession`, `AttemptHistory`, `Disguise`, `Items`, `Objectives`, `PlayerState`, `Events`, `Wire.Envelope`, and the committed fixtures (`stage1`, `stage_a_probe`, `b1`–`b6` probe envelopes). Run evidence used for the time analysis: `b1-run1`, `b2-run1`, `b5-run1`, `b6-run1` (`beam-events.ndjson`, `beam-final-state.txt`). **No native code, BEAM production code or wire schema is changed by this section.**
+
+### 50.1 What the current summary already establishes about one attempt (evaluation)
+
+The existing `Summary.build/1` (data) and `Summary.render/2` (text) are pure over `Lifecycle.Instance`; `MissionSession.summary/0` and `summary_text/0` expose them; `final_state.exs` dumps them. Per attempt, today:
+
+| # | Question | Present today | Provenance the data carries | Verdict |
+|---|---|---|---|---|
+| 1 | Mission and contract identity | scene resource, scene type, codename hint (from the rise); paired Glacier contract session id, `contract_id`, `location_id`, `contract_type`, `difficulty_level`, starting disguise id (from `contract.started`) | engine scene state (polled) + engine telemetry; the pairing is BEAM-derived (`:next_rise` / `:open_attempt`) and labelled | information present; presentation is a flat line |
+| 2 | Start and observed stop | rise and fall `Observation`s: Relay sequence, Relay timestamp, polled `game_session_id`; duration when both exist; `:playing` (last known) or `:superseded` when the stop was not observed | native observation of the predicate | present and correctly hedged |
+| 3 | Contract disposition and provenance | `disposition` from the paired session's `contract.ended` only (`:restarted`, `:exited_to_menu`, `{:ended, reason}`, else `:not_observed`), with the engine's reason string verbatim and where the end sat (`:during` / `:after_stop`) | engine telemetry; the attachment is BEAM-derived by session id within Glacier's domain | present; the rendered line already says "BEAM-derived, session paired by …" |
+| 4 | Named actor deaths and pacifications | every `Outcome` with `actor_name`, `repository_id`, `engine_actor_id`, `actor_type`, `is_target`, `death_type`, `death_context`, `accident`, `kill_class`, `method_broad`, `method_strict`, `damage_events`, `item_repository_id`, session, engine timestamp, Relay sequence and timestamp | engine telemetry, every field the engine's own classification | **information complete; presentation is a per-outcome dump plus aggregate counts** |
+| 5 | Target / non-target classification | `outcome_counts` per kind: total, target, non-target, by actor type, by death context, accidents | engine `IsTarget` and enums | present; **no target-oriented view** (which named targets had an outcome; which classification each had) |
+| 6 | Disguises | the occurrences in order and `Disguise.derive/2` (initial, worn interval, compromise episodes, standing with its rule, cut, history, anomalies) | engine telemetry; the view is BEAM-derived and labelled | present and conservative |
+| 7 | Items | the occurrences and `Items.derive/2` (direct counts per type and per definition, display names, history) | engine telemetry | present |
+| 8 | Objectives | the occurrences with attribution fixed at receipt and `Objectives.derive/2` (grouping per opaque id, first-observed metadata, conflicts, history) | engine telemetry; attribution BEAM-derived and labelled | present (the §45 carry-over "first observed" label is not yet in the rendered line) |
+| 9 | Player state | the occurrences and `PlayerState.derive/2` (last observed per subject, counts, standing, cut, last named weapon, notes, history) | engine telemetry | present and conservative |
+| 10 | Gaps, interruptions, uncertainty | instance gaps with `AttemptHistory` bounding per attempt; interruptions with `after_sequence`; supersession; `observation` `:live`/`:lost`/`:never`; per-view `history` and standing cuts; anomalies (session mismatch, pairing ambiguity, end ambiguity, objective contradiction, disguise anomalies) | BEAM transport and stream evidence, kept apart from game evidence | present; **scattered across lines, not one place** |
+| 11 | Engine time vs Relay time | each occurrence carries `engine_timestamp_s` (engine, seconds on the contract clock, when supplied) and the envelope `timestamp` (native publication time, UTC) and `sequence`; `received_at` is kept on each record | both kinds present on every telemetry-derived record; the edges carry Relay time only | **information present; the text shows engine time per occurrence and Relay time only on the edges; no ordering policy is stated** |
+| 12 | Missing or ambiguous facts that prevent a coherent summary | see below | | |
+
+**Missing information (cannot be presented because it was never observed; needs engine evidence, outside B7):** mission success/failure/completion (no engine completion event is validated; `ContractEnd` is a name; the predicate did not fall on completion in §44); player death (`Hero_Dead` never captured); a target's survival (absence of an outcome is not evidence); a unique-actor count (`repository_id` is shared by generic NPCs; `ActorId` is not a proven permanent identity, B0); who caused an outcome (the engine classifies the outcome, it does not attribute it to 47); the complete inventory; the player's current disguise or state; the rating (Silent Assassin is a backend/scoring notion, never on this stream); the cause of a `BrokenDisguiseCleared` at a change; what `RoomId` identifies.
+
+**Missing presentation (the data exists; only the rendering is instance- and family-structured rather than mission-structured):** a mission overview with the identity, times, disposition and completeness in one place; a target-oriented outcome view; a single timeline with both time axes and the ordering policy stated; the uncertainty collected in one place; the objective "first observed" label; the engine clock and the Relay clock both shown. **Conclusion of the evaluation: no new engine telemetry is needed to produce a coherent mission summary; B7 is a presentation stage over the existing records.**
+
+### 50.2 Summary v2 — design
+
+**Position.** Evolve the existing pure `Summary` module; add no analytics subsystem, no process, no persistence, no native change, no wire change. v2 is an additional pure function over the same `Lifecycle.Instance` values and the same derived views; the records are read, never rewritten or reordered.
+
+**Shape.** `Summary.report/1` (data) and `Summary.render_report/2` (text) beside the existing `build/1` and `render/2`, which stay byte-for-byte unchanged so every existing consumer, fixture test and run-evidence comparison keeps working; `MissionSession.report/0` and `report_text/0` expose them. One report per attempt (the attempt is the mission unit; the instance header stays above it):
+
+```
+mission overview       identity (scene, codename hint; paired contract session, contract id, location, type, difficulty, starting disguise),
+                       attempt number; rise and fall (Relay sequence + Relay UTC time; polled game_session_id as observation),
+                       duration when bounded else "stop not observed (last known playing | superseded by attempt N)";
+                       disposition where observed (engine reason verbatim + Relay reading) else "not observed";
+                       observation completeness (history: intact | broken: gaps, interruptions, supersession)
+actor outcomes         targets: every outcome whose is_target is true, grouped for display by actor_name + repository_id,
+                       each occurrence listed (kind, death_type/death_context, kill_class, method, damage events, item id,
+                       engine time, Relay sequence); "no outcome observed for any other target" is NOT written — only
+                       "no further target outcomes observed in the stream";
+                       non-targets: the same per occurrence, grouped for display by name + repository_id;
+                       the existing aggregate counts
+gameplay activity      the existing disguise, item, objective and player-state views, rendered with their labels
+                       ("engine telemetry" / "BEAM-derived" / "last observed"), the objective type/category labelled "first observed"
+timeline               every record of the attempt in Relay sequence order (the stored order; replayable), each line carrying:
+                       #sequence, Relay UTC time, engine time when supplied, the family, the engine event name, the fact in the
+                       engine's own words, and the provenance tag; lifecycle edges and connection interruptions interleaved by
+                       Relay time; an ordering-policy note once per timeline (50.3)
+uncertainty            one list: sequence gaps inside the attempt (with what is missing), interruptions, supersession,
+                       unpaired or ambiguous contract sessions, unmatched ends, every anomaly, every view's standing cut,
+                       unattributed occurrences that arrived while this attempt was open or adjacent (listed, not attached),
+                       and the standing limitations (completion unobservable on the predicate; ContractEnd name-only)
+```
+
+**Named-target reporting (the B1 observations used, nothing added).** Grouping is for display only, keyed by (`actor_name`, `repository_id`); two occurrences with the same name are two occurrences and both are shown (a pacify then a kill of the same name is the B1 pattern; two distinct NPCs sharing a name are indistinguishable here and are not merged into one actor); `engine_actor_id` is printed as an observation beside each occurrence, never used as a key; no count of distinct actors is printed, only occurrence counts; a target with no outcome in the stream is **not listed** (listing it would state its survival, which the stream cannot support); the line for a target reads, for example, `target Viktor Novikov (052434e7…): died #16 @217.108s — engine classification kill/accident, explosion, accident/accident_explosion, damage [Shoot], item a8a0c154…` — the engine's classification, no attribution to 47, no "assassinated".
+
+**Epistemic tags.** Every rendered fact carries one of four tags, as a word in the data map (`:engine` for an engine-authored occurrence or field; `:derived` for a BEAM correlation such as the session pairing, the disposition attachment or a disguise standing; `:last_observed` for a last-value reading; `:not_observed` for an absence) and the text keeps the existing phrases ("engine telemetry", "BEAM-derived", "last observed", "not observed"). The report never contains: completed/completion/success/failed-the-mission, Silent Assassin, "47 killed", survived, unique actors, inventory contents, "currently", "is wearing", "is trespassing", "armed", dead/alive for the player, or a stop caused by the transport. The two standing limitations are printed verbatim in the uncertainty list of every attempt: "mission completion is not observable on this stream: on the observed route the predicate stayed up through the end screens (§44)" and "`ContractEnd` is a name only; its payload is unvalidated (§46.9)".
+
+### 50.3 Chronology policy (with the evidence that forces it)
+
+Three time facts exist per telemetry-derived record and are kept apart: the Relay **sequence** (publication order, the one total order, replayable); the Relay envelope **timestamp** (native publication time, UTC, assigned on the frame thread when the drain publishes); the engine **`engine_timestamp_s`** (seconds on the contract clock, assigned by the engine at emission, present when the stream supplied it; absent on lifecycle edges). Observed divergences: in B1 the engine emitted five explosion outcomes within 52 ms of engine time (668.413–668.465 s) that were published over 1.75 s of wall time (04:19:25.139–04:19:26.887); in B5 the second explosion's five outcomes spanned 61 ms of engine time and 870 ms of publication; in B2 the restart `contract.ended` was published 1.0 s before the fall and the exit `contract.ended` 3.08 s after it, both on the engine's own schedule relative to the scene transition; across every run the engine's contract clock and the Relay clock have different origins and units.
+
+Policy for v2: the timeline is rendered **in Relay sequence order only** (the stored order; identical to replay), with both times printed on each line; no line is moved by its engine time. A `t+` column shows engine time relative to the first engine-timed record of the attempt, for reading, with the note that it is the engine's clock. Where two consecutive records' engine times are out of order with their sequence, the line is marked `(engine time earlier than the previous line)` — an observation, since the engine may stamp and emit in different orders. No durations between occurrences are derived from engine time except the attempt's own Relay duration already present. Timestamps are never used to attach, pair, merge or reorder anything.
+
+### 50.4 Required tests (replay/fixture based; all pure)
+
+- `report/1` on the B1, B2, B3, B4, B5 and B6 wire fixtures (`test/*_probe_envelopes.ndjson`) and on the §44 and §48 run `beam-events.ndjson` shapes re-expressed as envelopes: every record of every attempt appears exactly once in the timeline, in sequence order; the timeline's sequences equal the attempt's records' sequences; the overview fields equal the existing `build/1` fields (no new fact invented).
+- Named targets: B1's two target outcomes (pacify then kill of Novikov) appear as two occurrences under one display group; a non-target with the same `repository_id` as another is not merged; no "distinct actors" number anywhere; a fixture with no target outcome prints no target line and no survival claim.
+- Chronology: a synthetic attempt with engine times out of sequence order renders in sequence order with the marker; the B1 explosion window renders with both times and no reordering; edges without engine time render with Relay time only.
+- Uncertainty: gaps, interruptions, supersession, ambiguity, contradiction and standing cuts each appear once in the uncertainty list and the two standing limitations always appear.
+- Wording: one reserved-word regex per family plus the report-level words above, over the whole report for every fixture.
+- Compatibility: `build/1` and `render/2` byte-identical on every fixture to the strings pinned today (existing tests untouched, plus one snapshot test per fixture); `final_state.exs` unaffected.
+- Replay equivalence: `report/1` of the folded instance equals `report/1` of the same instance re-folded from the envelopes.
+
+### 50.5 Minimal implementation stage (proposed B7, not started)
+
+| Item | Proposal |
+|---|---|
+| Files to modify | `relay/lib/glacier_relay/summary.ex` (add `report/1`, `render_report/2` and their private renderers; existing functions unchanged), `relay/lib/glacier_relay/mission_session.ex` (two read-only calls), `relay/lib/glacier_relay/objectives.ex` only if the "first observed" label needs a field (it does not; the renderer can label it), `relay/test/glacier_relay/report_test.exs` (new), `test/wire/listener_test.exs` (+1: `report_text` over the B6 fixture) |
+| Pure data | `report/1 :: %{instances: [%{…, attempts: [%{overview, targets, non_targets, outcome_counts, activity, timeline: [line], uncertainty: [item]}]}]}` where a `line` is `%{sequence, relay_at, engine_t, family, engine_event, fact, tag}` and an `item` is `%{kind, detail, tag}` |
+| Wire protocol | **no change** (nothing new crosses the wire; v2 reads what is already received) |
+| Native | **no change**; no new hook, no new row, no rebuild; the accepted B6 DLL stays the checkpoint |
+| Target presentation | 50.2; grouping by (`actor_name`, `repository_id`) for display, every occurrence listed, `engine_actor_id` as an observation |
+| Chronology | 50.3, with the one-line policy note rendered |
+| Uncertainty | 50.2's single list plus the two standing limitations |
+| Compatibility | `build/1`/`render/2`/`summary/0`/`summary_text/0`/`final_state.exs` unchanged; v2 is additive |
+| Completion criteria | the tests of 50.4 green ×5; `report_text/0` over the B6 wire fixture and over a replay of the §48 and §44 runs produces a report whose every fact traces to a stored record or a labelled derivation; a reviewer's reading of the §44 report confirms Novikov and Margolis are reported as engine-classified accident/explosion deaths with no attribution and no survival claim for any other target; no runtime experiment is needed to complete B7 |
+
+### 50.6 M2 exit criterion review
+
+`ROADMAP.md` M2: *"Capture a bounded useful vocabulary: mission lifecycle, player state, kills/pacifications, disguises, items and objectives. Exit: mission summary generated from events rather than manual state inspection."* Neither sentence is changed here.
+
+- **Milestone goal — achieved.** Every family the goal names has an accepted, runtime-validated bounded vocabulary on build 3.280.0.0: mission lifecycle (Stage A, §13), kills/pacifications (B1, §26), contract lifecycle (B2, §29, an addition the goal did not name), disguises (B3, §37), items (B4, §41), objectives (B5, §45), player state (B6, §49). "Bounded" is the word that matters: each is a small set of engine-authored occurrence types with explicit non-claims, not the engine's full event surface.
+- **Exit criterion — achieved in substance.** Since Stage A the summary has been generated from events only (`Summary` is pure over `Lifecycle.Instance`; nothing inspects the game; every run's `beam-final-state.txt` is that summary); it has covered every family as each was added; and §44 and §48 show it describing real missions — two target deaths, their engine classifications, items, disguises, objectives, player state, the disposition — from events. No manual state inspection is involved anywhere in producing it.
+- **Presentation still desired (B7).** The current text is organised by instance and family, as an evidence listing; it lacks a mission overview, a target-oriented view, a single timeline with the ordering policy stated, and the uncertainty in one place. These are rendering concerns over data that already exists (50.1).
+- **Research that belongs after M2.** `Hero_Health`/`Hero_Dead`, `ContractEnd`, `ItemDropped`/`ItemDestroyed`, witness/detection names, runtime actor identity, spatial tracking: each is a separately scoped candidate; none is required by the goal or the exit criterion as written.
+
+**Recommendation.** Do not close M2 on the strength of the current rendering, and do not keep it open for unexplored engine names. Implement B7 as the single bounded presentation stage of 50.5 (BEAM-only, additive, no runtime experiment), then **close M2 with its limitations stated in the record**: completion, death, success, rating, attribution, unique actors, inventory and current state are not observable on this stream and are not claimed; the predicate's behaviour on completion (§44) is a standing limitation; the deferred diagnostics are post-M2 research. If the reviewer prefers to close M2 now and treat B7 as the first M4 (mission recorder) item, the evidence supports that too, since the exit criterion is already met in substance; the difference is whether "mission summary" is read as "a summary derived from events" (met) or "a summary a reader uses as a mission report" (B7). This section recommends the former reading with B7 done first, because it is small.
+
+### 50.7 Separate research authorizations (unchanged, not prerequisites)
+
+`Hero_Health`/`Hero_Dead` shape diagnostic (§46.8; `Hero_Health` seen by name in B3 and §48); `ContractEnd` payload discovery (§46.9); `ItemDropped`/`ItemDestroyed` shape diagnostic (§38.9; three `ItemDestroyed` names in §48 with no pickup); witness/detection telemetry; runtime actor identity; spatial tracking. Each needs its own authorization and the operator's readiness; one bounded diagnostic run could carry several allowlisted names.
+
+**Stop here for architectural review of the B7 design and the M2 completion recommendation. Nothing in this section is implemented.**
