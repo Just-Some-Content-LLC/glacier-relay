@@ -234,3 +234,104 @@ Nothing native changes: the accepted DLL `6047a9a3…` is the artifact, hash-ver
 6. Whether the optional `MissionSession` refinements (ETS read copy; atomic subscribe-with-state; `name:` option) may be designed into M3-B or wait for a measurement.
 
 **Stop here. No installation, implementation or runtime step is authorized by this document.**
+
+## 10. M3-A implementation record (2026-10-12) — Phoenix web foundation built and validated offline; M3 not closed
+
+Authorization: M2 completion and the proposed architecture accepted; ADR 0007 accepted with two refinements (the projection as the normal web-side reader; a stage-limited exception letting the two diagnostic routes read `MissionSession`'s presentations directly until the projection exists); M3-A only. Scope delivered: dependency bootstrap, optional web supervision, loopback HTTP endpoint, the two text routes, boundary validation, headless regression gate, offline HTTP validation. **Not delivered, by design:** `Dashboard.Projection`, any LiveView, browser fan-out, event-stream UI, persistence, commands, authentication, non-loopback hosting. The native repository is unchanged at the M2 checkpoint (`c5152848`, DLL `6047a9a3…`); nothing was deployed or run against the game; the wire protocol and every event schema are unchanged.
+
+### 10.1 Commits
+
+| What | Ref |
+|---|---|
+| Dependency bootstrap (`mix.exs`, `mix.lock`, `.formatter.exs`) | glacier-relay `main` **`6012c16`** |
+| Web foundation (config, `Application`, `lib/glacier_relay_web/`, `test/glacier_relay_web/`) | glacier-relay `main` **`3dc54b4`** |
+| This record, ADR 0007 acceptance, roadmap exit criterion, handoff, `relay/README.md` | the commit that adds it |
+
+### 10.2 Dependencies as resolved from Hex in the WSL2 environment
+
+Resolved on 2026-10-12 with `mix hex.info` and `mix deps.get` (the design's section 3.4 figures were superseded: LiveView had moved to 1.2 and PubSub to 2.4). Hex 2.5.2 and rebar3 installed in user scope by `mix local.hex` / `mix local.rebar` (no root). `mix.lock` SHA-256 `24d1e73a5a0692f3a3448f577988e7f0d5567579055508064481948f92fbfa88`, committed in `6012c16`. OTP 28.4.2, Elixir 1.19.6.
+
+| Dependency | Constraint | Resolved | Role |
+|---|---|---|---|
+| `phoenix` | `~> 1.8` | **1.8.15** | endpoint, router, controller |
+| `phoenix_live_view` | `~> 1.2` | **1.2.12** | installed for M3-B; nothing mounted |
+| `phoenix_html` | `~> 4.3` | 4.3.0 | HEEx helpers (M3-B) |
+| `phoenix_pubsub` | `~> 2.4` | 2.4.1 | the web subtree's PubSub (fan-out in M3-B) |
+| `bandit` | `~> 1.12` | **1.12.5** | HTTP server (`Bandit.PhoenixAdapter`) |
+| `lazy_html` | `~> 0.1`, test only | 0.1.13 | LiveView's test DOM (precompiled NIF `nif-2.16-x86_64-linux-gnu` downloaded; no C build) |
+| transitive | | `plug` 1.20.3, `plug_crypto` 2.2.0, `phoenix_template` 1.1.0, `thousand_island` 1.5.0, `websock` 0.5.3, `websock_adapter` 0.6.0, `hpax` 1.1.0, `mime` 2.0.7, `telemetry` 1.4.2, `elixir_make` 0.10.0, `cc_precompiler` 0.1.11, `fine` 0.1.6 | |
+
+Not installed: Node, esbuild, Tailwind, `jason` (Phoenix is configured with Elixir's built-in `JSON`), `phoenix_live_dashboard`, `phoenix_live_reload`, `telemetry_metrics`, Ecto or any database. No generator was run; the existing application was not regenerated or overwritten.
+
+### 10.3 Supervision and configuration
+
+```
+GlacierRelay.Supervisor                           one_for_one (unchanged)
+├── GlacierRelay.MissionSession                   unchanged
+├── GlacierRelay.Wire.ConnectionSupervisor        unchanged
+├── GlacierRelay.Wire.Listener                    unchanged (127.0.0.1:4747)
+└── GlacierRelayWeb.Supervisor                    only when `config :glacier_relay, :dashboard, enabled: true`
+    ├── {Phoenix.PubSub, name: GlacierRelay.PubSub}      rest_for_one
+    └── GlacierRelayWeb.Endpoint                         Bandit, 127.0.0.1:4748; (M3-B projection goes between the two)
+```
+
+`config/config.exs`: `:dashboard, enabled: false` (every environment); endpoint `http: [ip: {127,0,0,1}, port: 4748]`, `server: true`, `adapter: Bandit.PhoenixAdapter`, `pubsub_server: GlacierRelay.PubSub`, `render_errors: [formats: [text: GlacierRelayWeb.ErrorText]]`, `check_origin: ["//localhost", "//127.0.0.1"]`, `config :phoenix, :json_library, JSON`. `config/runtime.exs` (new): `GLACIER_RELAY_DASHBOARD=1` enables the subtree; `secret_key_base` is random per boot (no session outlives the VM; no secret committed). `config/test.exs`: disabled; endpoint port 0 for the web-enabled tests, which start the subtree themselves. `Application.dashboard_enabled?/0` is the single decision point. Under one-for-one at the top, nothing in the web subtree can restart an ingestion child; the tests kill the endpoint and the PubSub child and assert `MissionSession` and `Listener` keep their pids while the endpoint comes back and answers.
+
+### 10.4 Endpoint and routes
+
+`GlacierRelayWeb.Endpoint`: `Plug.Head` (HEAD answered as GET without a body; no `Plug.MethodOverride`), `Plug.Session` (cookie store, reserved for future interactive routes; the text routes never touch it), `GlacierRelayWeb.Router`. Router: pipeline `:browser` (`accepts html`, `fetch_session`, `protect_from_forgery`, `put_secure_browser_headers`) defined with no routes under it yet; pipeline `:diagnostics` (`put_secure_browser_headers`) with
+
+| Route | Handler | Response |
+|---|---|---|
+| `GET /report.txt` | `TextController.report/2` → `MissionSession.report_text/0` | 200, `text/plain; charset=utf-8`, the B7 report text |
+| `GET /summary.txt` | `TextController.summary/2` → `MissionSession.summary_text/0` | 200, `text/plain; charset=utf-8`, the legacy summary text |
+| any other method on those paths | `TextController.fallback/2` | 405, `allow: GET, HEAD`, nothing read or changed |
+| any other path, any method | `TextController.fallback/2` | 404, nothing read or changed |
+
+No socket, LiveView, static file, upload, API, parser or write path is mounted. `GlacierRelayWeb.ErrorText` renders an exception inside a request as a status phrase in text; routing itself never reaches it.
+
+### 10.5 Security assumptions (local development observability tool)
+
+Loopback only (`127.0.0.1:4748`); no authentication is authorized at this stage, so **any local process able to reach the loopback port can read the mission report and summary.** Verified not bound to `0.0.0.0`, the WSL2 external interface (`172.23.229.225`) or any LAN address: the test connects to every non-loopback IPv4 address of the host and asserts refusal; the offline validation shows `ss` listing `127.0.0.1:4747` and `127.0.0.1:4748` only, and both a WSL2 `curl` and a Windows `curl.exe` to `172.23.229.225:4748` fail (`000`, connection refused) while `127.0.0.1:4748` answers 200. CSRF (`protect_from_forgery`) and origin checks (`check_origin` restricted to loopback hosts) are configured for the future interactive routes. No write endpoint, arbitrary file path, upload, generic RPC, shell execution or websocket command handler exists. The wire listener (4747) and the HTTP endpoint (4748) are two sockets with two purposes and are never conflated.
+
+### 10.6 Read-only boundary (tests, `test/glacier_relay_web/boundary_test.exs` and `endpoint_test.exs`)
+
+Compiled proof: for every module under `GlacierRelayWeb`, the BEAM file's remote-call table (`:beam_lib` `imports`) contains no call into `Wire.Listener`, `Wire.Connection`, `Wire.Framing`, `Wire.Envelope`, `Lifecycle`, `Events`, `:gen_tcp`, `:socket`, `:inet` or `:ssl`, no `GenServer.cast/call`, and the only `MissionSession` calls anywhere are `TextController` → `report_text/0` and `summary_text/0`. Source proof: no web source mentions a wire, socket, model, evidence-delivery, process-messaging or native SDK token (`ZString`, `ZRepositoryID`, `ZDynamicObject`, `ZHMModSDK`, `Mods/`, `Glacier/`, `TelemetryIntake`, …). Exported-function proof: no web module exports an evidence-delivery function. Behavioural proof over real HTTP: the router's reflection lists exactly the two GET routes plus the refusing fallback; `POST`/`PUT`/`PATCH` with an envelope-shaped body and `DELETE` on both paths return 405, `POST /events` with the whole B6 fixture returns 404, and in every case `MissionSession.state/0` is unchanged and no `{:relay_event, _}` reaches a subscriber. Nothing a browser can send publishes a Relay event or alters semantic evidence.
+
+### 10.7 Headless regression gate
+
+With the dashboard disabled (the default): `Supervisor.which_children/1` on the application supervisor yields exactly `[MissionSession, Wire.ConnectionSupervisor, Wire.Listener]` in the M2 order (3 specs, 3 active); no `GlacierRelayWeb.Supervisor`, `GlacierRelayWeb.Endpoint` or `GlacierRelay.PubSub` process is registered; a connection to port 4748 is refused; the wire listener is loopback, bound and answering. The existing 259 tests are unchanged and green; `summary/0`, `summary_text/0`, `report/0`, `report_text/0` are unchanged (the HTTP tests assert byte equality with them); `final_state.exs` (`--no-start`, RPC into the running node) still works (10.8). The live headless node showed the three children, `endpoint pid: nil`, `dashboard_enabled?: false`, `127.0.0.1:4747` listening and 4748 refused.
+
+### 10.8 Offline HTTP validation (2026-10-12, 23:00Z to 23:04Z; evidence `%TEMP%\glacier-m0\hitmen\m3a-offline\`, `sha256.txt`; no HITMAN)
+
+| Step | Result |
+|---|---|
+| Start with `GLACIER_RELAY_DASHBOARD=1 elixir --sname relay -S mix run --no-halt` | `ss`: `127.0.0.1:4747` and `127.0.0.1:4748` listening (same `beam.smp` pid); `beam-web.log` 0 errors |
+| `GET /report.txt`, `GET /summary.txt` before any event | 200, `text/plain; charset=utf-8`, "no adapter instance has delivered an event" |
+| Refusals | `POST /report.txt` 405; `DELETE /summary.txt` 405; `GET /` 404; `POST /events` (whole fixture) 404 |
+| Replay `test/b6_run1_envelopes.ndjson` through the wire listener (`nc 127.0.0.1 4747`) | the normal ingestion path; nothing about it changed |
+| `GET` both routes after the replay | 49-line report for `6e1b19b6…` (16 events, attempt 1 Peacock, exited to menu, observation lost after the replay socket closed) |
+| Same state through RPC (`MissionSession.report_text/0`, `summary_text/0` from a second node) | **byte-identical** to the HTTP bodies |
+| `final_state.exs` (unchanged tool from `wire-probe\b6`, `--no-start`) | rc 0; its `summary_text/0` section **identical** to `/summary.txt` (the tool appends one newline) |
+| Windows host → WSL2 | `curl.exe http://127.0.0.1:4748/summary.txt` 200; `curl.exe http://localhost:4748/report.txt` **identical** to the WSL2 body (localhost forwarding works for the new port, the same mechanism as 4747) |
+| Non-loopback | WSL2 `curl http://172.23.229.225:4748` → refused (rc 7, `000`); Windows `curl.exe` to the same → `000`, failed as expected; bind list `127.0.0.1:4747`, `127.0.0.1:4748` only |
+| Stop via RPC `:init.stop` | both ports free within a second; no `beam.smp` left |
+| Headless start (no variable), inspect via RPC, stop | 4747 only; 4748 refused (rc 7); children `[MissionSession, Wire.ConnectionSupervisor, Wire.Listener]`; endpoint pid nil; `dashboard_enabled?` false; both ports free after stop. (A first headless attempt right after the stop failed with "name relay@VENGEANCE seems to be in use": epmd had not yet released the name; retried once the registration was gone. Nothing was changed.) |
+
+### 10.9 Tests and gate
+
+| Step | Result |
+|---|---|
+| Dependency resolution | clean (10.2); `mix.lock` committed |
+| Formatting | `mix format --check-formatted` on every changed or new file passes (`.formatter.exs` gains `import_deps: [:phoenix, :plug]`; known-good files were not reformatted) |
+| Compilation | `mix compile --warnings-as-errors` clean |
+| Suite ×5 (`m3a-mix5.txt`) | **279 tests, 0 failures, five consecutive runs** with `--warnings-as-errors` (259 existing + 5 headless + 10 endpoint + 5 boundary) |
+| Web-enabled tests | real HTTP over a raw socket against the real application (the OTP build's `inets` HTTP client does not load `:http_util`; the test depends on nothing but the endpoint) |
+| Wire / schemas | `lib/glacier_relay/wire/`, `events.ex`, `lifecycle.ex`, the derived views, `summary.ex`, `report.ex` untouched (git diff empty); the listener tests unchanged |
+| Native | ZHMModSDK `relay/m2` clean at `c5152848`; no build |
+
+### 10.10 Recorded for M3-B (not implemented)
+
+**Subscription semantics (section 8 as accepted):** `MissionSession` subscription notifications are change signals, not authoritative snapshots. The projection subscribes; reads the current state after subscribing; coalesces subsequent notifications; rebuilds presentation snapshots from session-owned state; publishes revisions through `Phoenix.PubSub`. The envelope in a notification is never taken as the final folded instance, and the session's notification ordering is not changed. **Implementation boundary for M3-B:** `GlacierRelay.Dashboard.Projection` as a child between PubSub and the endpoint; `DashboardLive`, `ReportLive` and function components rendering `Report.report/1` data unchanged; the LiveView socket mounted in the endpoint with the loopback `check_origin`; the LiveView client served from the dependencies' `priv/static`; the decision on the two text routes (migrate to projection-owned cached data, or keep as justified on-demand diagnostic reads); the fixture player and the LiveView tests of section 7; the viewer-choice `handle_event/3` clauses, which change assigns only. Each needs its own authorization.
+
+**Stop here. M3-B and M3-C are not authorized by this record; nothing is deployed and HITMAN is not launched.**

@@ -1,6 +1,15 @@
 # ADR 0007 — Live observability is a read-only projection of OTP-owned mission state
 
-**Status:** Proposed (2026-10-12), with the M3 design (`docs/design/M3_LIVE_OBSERVABILITY.md`). Scope: **M3 — Live observability only.** Nothing here authorizes a command channel (M5), persistence (M4) or any change to the native adapter or the wire.
+**Status:** Accepted (2026-10-12; proposed the same day with the M3 design, `docs/design/M3_LIVE_OBSERVABILITY.md`), with two refinements recorded under *Refinements at acceptance*. Scope: **M3 — Live observability only.** Nothing here authorizes a command channel (M5), persistence (M4) or any change to the native adapter or the wire.
+
+## Architectural rule
+
+`MissionSession` and the existing pure semantic model own mission evidence and derived state. Phoenix is a read-only consumer. No controller or LiveView may call the session's evidence-delivery functions (`handle_event/2`, `connection_opened/2`, `connection_closed/2`), cast to it, or reach the wire.
+
+## Refinements at acceptance
+
+1. **The projection is the normal reader.** The M3-B `GlacierRelay.Dashboard.Projection` will be the normal web-side reader of `MissionSession` and the publisher of read-model snapshots (revisions over `Phoenix.PubSub`). Its subscription semantics are recorded in the M3 design, section 8: a session notification is a change signal, not an authoritative snapshot; the projection subscribes, then reads the current state, coalesces later notifications, rebuilds presentation snapshots from session-owned state, and publishes revisions. The session's notification ordering is not changed for this.
+2. **Stage-limited exception (M3-A).** Until the projection exists, the two diagnostic text routes (`GET /report.txt`, `GET /summary.txt`) call the existing read-only presentation API of `MissionSession` directly (`report_text/0`, `summary_text/0`). These are on-demand reads of OTP-owned state, outside the event path. M3-B decides whether they migrate to projection-owned cached data or remain as explicitly justified on-demand diagnostic reads; either way the boundary test keeps every other session function out of the web namespace.
 
 ## Context
 

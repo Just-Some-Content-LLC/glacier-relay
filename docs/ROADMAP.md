@@ -30,6 +30,10 @@ Exit: mission summary generated from events rather than manual state inspection.
 ## M3 — Live observability
 Phoenix/LiveView dashboard for current mission state and event stream.
 
+Exit (agreed 2026-10-12): a browser on the Windows host displays a live HITMAN mission attempt and its Relay event stream from OTP-owned state, with transport connectivity and mission lifecycle shown separately.
+
+**Status: in progress.** Design and ADR 0007 accepted 2026-10-12 (`docs/design/M3_LIVE_OBSERVABILITY.md`). M3-A (Phoenix web foundation) implemented and validated offline the same day (design section 10): Phoenix 1.8.15 / LiveView 1.2.12 / Bandit 1.12.5 inside the existing `relay/` application, an optional web supervisor behind configuration (headless tree identical to M2's three children), a loopback-only endpoint on `127.0.0.1:4748` serving `GET /report.txt` and `GET /summary.txt` from the existing read-only presentations, boundary and headless-invariance tests, 279 Elixir tests ×5; standalone Windows-to-WSL2 HTTP connectivity verified; no dashboard, projection or LiveView yet. M3-B (projection and dashboard) and M3-C (one controlled live experiment) each need their own authorization. The native adapter is unchanged at the M2 checkpoint.
+
 ## M4 — Mission recorder
 Persist event streams, derive statistics, timelines and eventually spatial analysis/heat maps.
 
