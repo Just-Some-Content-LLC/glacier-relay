@@ -845,3 +845,93 @@ Section 21 accepted the section-20 run; its recording `9fcb9a72-74bb-49fa-86c3-7
 Recommendation: **close M4** on the basis of sections 20–22 — the exit criterion demonstrated by one real recording (20), accepted (21), with a bounded analytics layer that summarises observed evidence without filling in what was not observed (22) — and tag the closure `research/m4-mission-recorder` on glacier-relay only (the native adapter is unchanged at `c5152848`, DLL `6047a9a3…`). The decision is the operator's. Proposed checkpoint: this record's commit. Deferred: M4-D spatial research (needs a separate native stage, not authorized), a second runtime experiment covering a roll, a restart or an unclean stop under the game and a qualified close reason (20.9), the historical index (22.7).
 
 **Stop here. M4-C is implemented and validated offline; no game, native, protocol, session, fold, recorder, reader, replay or dashboard change; no index, no database; M4-D and any runtime experiment not started; M4 not marked complete.**
+
+## 23. M4 — Mission Recorder: completion record (2026-10-13)
+
+M4-C passed architectural review and M4 was approved for formal completion. This section closes the milestone: the final architecture, the evidence kept apart by it, what was demonstrated live and what only offline, the limitations that stand, two analytics provenance notes for future work, and the checkpoint. The roadmap carries the status; the native adapter is unchanged at its M2 checkpoint.
+
+### 23.1 Final architecture
+
+```
+Glacier (HITMAN WOA 3.280.0.0, the engine's own telemetry stream and scene state)
+  → native semantic adapter (GlacierRelay.dll: one read-only detour, polled lifecycle, bounded queue,
+    normalizer, RelayAdapter: one sequence counter per adapter instance)
+  → versioned Relay envelopes (protocol 1, per-event schema 1; NDJSON over loopback TCP 127.0.0.1:4747,
+    native is the client, nothing flows back)
+  → wire validation (Wire.Listener / Wire.Connection / Wire.Envelope: framing, decoding, validation,
+    receipt time; transport open/close reported as evidence)
+  → MissionSession / Session.Fold (the pure fold shared with replay: instances, attempts, outcomes,
+    contract sessions, disguise/item/objective/player-state occurrences, connections, unidentified)
+  → recording-grade evidence notifications (session record and connection numbers, the evidence's own
+    time, the raw wire object; sent to subscribers, never acknowledged)
+  → asynchronous segmented NDJSON recorder (format 1: header, records, gap and recovery lines, footer
+    through the close protocol, segment hashes, CLOSED; continuation headers with the durable boundary;
+    typed close reasons)
+  → verified reader (segment hashes, header chain, trusted-boundary cross-checks, record precedence:
+    verified → durable → unverified → withheld)
+  → shared pure replay fold (the same Session.Fold; re-validation; an explicit completeness account)
+  → B7 mission report (summary data and text; the mission report with provenance tags)
+  → statistics and comparisons (observed occurrence counts inheriting the evidence class; deterministic
+    text and JSON; cross-recording comparison by an explicit basis)
+```
+
+Optional, read-only and disabled by default: the M3 dashboard (`GLACIER_RELAY_DASHBOARD=1`, loopback 4748) and the recorder (`GLACIER_RELAY_RECORD=1`); the replay, the statistics and the comparison run on a fresh node without the application.
+
+### 23.2 The distinctions the architecture preserves
+
+| Evidence | Where it lives | Never converted into |
+|---|---|---|
+| Native publication evidence | the native log's `published` lines and counters; the envelope's `timestamp` and `sequence` | BEAM receipt; anything about delivery |
+| BEAM receipt evidence | the session's `received_at` on each observation; the record's `at` | the native time; the engine time |
+| Transport observations | connection opened / identified / re-attributed / closed with reason, as session records and Lifecycle connections | a mission edge; an attempt disposition |
+| Recorder durability | the footer boundary, the segment hashes, the continuation header's cross-checked durable boundary | a claim about records past the last successful sync |
+| Recorder gaps | explicit gap and recovery lines with exact record ranges and causes; open-ended gaps | silence; a Relay gap |
+| Relay sequence gaps | per-instance `{expected, got}` on the Lifecycle instance and in the account | a recorder gap; a native drop |
+| Native queue drops | the native log's `dropped` counter, reconciled outside the recording; `native_drops: unknown` inside it | zero |
+| Incomplete or unverified evidence | the account's classes (unverified used, ambiguous withheld, hash mismatch, missing segment, corrupt tail, unclosed), the broken attempt histories | a count; a confidence score |
+| Derived statistics | `Statistics` results labelled `observed_occurrences` with `observed_only_reasons`; readings tagged `:derived` / `:last_observed` | evidence; totals; actor identities; current state |
+
+### 23.3 Demonstrated live versus offline only
+
+Demonstrated in the one controlled HITMAN run (section 20, accepted in section 21): the recorder captures a live session's transport and semantic evidence; session record numbering preserves the processing order; BEAM receipt and native timestamps are kept separately; clean finalization with hash verification; a fresh node reconstructs term-equal Lifecycle instances, unidentified evidence, summary and report data and byte-identical texts; native, BEAM and recorder envelopes reconcile with zero field mismatches and zero native drops; the completeness account is authoritative for that scope; the recorder introduces no observed ingestion regression; M0 restoration 26/26. Demonstrated offline only (standalone nodes and the test suite, never under HITMAN): segment rollover, recorder-process restart with resume at the durable boundary, SIGKILL leaving an explicitly unclosed recording, write and sync failure with a header-only or missing segment and retained records, the trusted-boundary cross-checks against contradictory or forged headers, duplicate and conflicting records, qualified close reasons, the mailbox overload policy, the disk budget, and the statistics over incomplete evidence. Not demonstrated anywhere: behaviour on other game builds, locations, routes, loading conditions or recording volumes beyond the kilobyte range observed.
+
+### 23.4 The actual evidence of the milestone
+
+| Fact | Where |
+|---|---|
+| 12 durable session records from the live experiment (1 opened, 1 identified, 9 envelopes, 1 closed), continuous, footer at boundary 12 | 20.4; `m4-run1\recording-9fcb9a72-…`; `relay/test/recordings/m4-run1-9fcb9a72` |
+| 9 envelopes matching across native publication, BEAM and recorder; 0 field mismatches; no unexpected gap | 20.6; `native-beam-recorder-compare.txt` |
+| Term-equal replayed Lifecycle state, unidentified list, summary and report data | 20.5; `compare-replay.out` |
+| Byte-identical legacy summary and B7 report text | 20.5; re-confirmed by the M4-C gate (22.9) |
+| Recorder-authoritative account for the recorded scope; native drops unknown to it, reconciled to zero externally | 20.5, 20.7 |
+| M0 restoration 26/26, listing and hashes identical, `mods.ini` byte-identical | 20.10; `cleanup.out` |
+| 437 Elixir tests, five consecutive full runs for M4-C (404 ×5 at the hardening gate before it) | 22.9; `m4c-offline\mix5.txt` |
+| Deterministic text and JSON analytics across fresh VMs; inputs unchanged by hash | 22.9 |
+
+Stages and how they satisfy the milestone: **M4-A** (section 17) — the recording-grade subscription and the segmented recorder: evidence recording with explicit transport metadata, session numbering and receipt times. **M4-B** (section 18) — deterministic replay through the shared pure `Session.Fold`, the verifying reader and the completeness account. **M4-B hardening** (section 19) — trusted durable boundaries on every continuation header and a typed close-reason vocabulary, so a replay claims exactness only where the format reconstructs it. **The live run** (sections 20–21) — one HITMAN Paris attempt durably recorded, finalized, reconciled across three accounts and replayed in a fresh node. **M4-C** (section 22) — evidence-derived statistics and cross-recording comparisons that inherit the evidence class and fill in nothing.
+
+### 23.5 Accepted limitations (standing)
+
+- Only one real HITMAN recording and replay experiment was performed, on one build, one location and one route.
+- Live segment rollover, recorder restart, write failure and budget exhaustion were not exercised during HITMAN; offline recovery tests cover those mechanisms (sections 17, 19, 22.8).
+- The recorder's mailbox bounds are soft (a high- and low-water policy measured in its own loop), not strict.
+- Native drops are unknown to a recording unless separately reconciled with native evidence.
+- Some close reasons cannot be reconstructed as the original Erlang terms and are replayed as qualified evidence.
+- Actor identities are not universally unique: display groups share a name and definition id and are never actors.
+- Mission completion, player death, rating, attribution, inventory and current-state certainty remain outside the validated vocabulary.
+- Continuous movement and reliable world-space coordinates are not available; spatial heat maps are not implemented. M4-D spatial research is an independently authorized future investigation (it needs a separate native stage), not a blocker to closure.
+
+### 23.6 Analytics provenance notes (future work, non-blocking; `Statistics` unchanged at this checkpoint)
+
+**Repeated evidence.** The same original gameplay evidence appears in several historical fixtures and recordings (the B6 run's envelopes are the `b6_run1` fixture and the content of the M4-A recordings A, B and C and of M4-B's D). Cross-recording statistics therefore represent the supplied replay inputs, not independently observed gameplay sessions: the Paris group of 22.10 counts 24 attempts across 15 results, not 24 attempts of play. Future analysis should distinguish recording identity from an independently observed gameplay-session identity (the engine's contract session id and the adapter instance id are candidates, each with its own caveats).
+
+**Content identity.** A damaged copy of a recording preserves the original recording id in its header, so a comparison groups the original and the copy together (22.12). Future comparison tooling may use a content hash of the segment files or an equivalent verification identity to detect exact and partial duplicates and to tell a copy from its original.
+
+### 23.7 Checkpoint and preservation
+
+- glacier-relay: the M4 completion commit (this section, the roadmap status, HANDOFF), tagged `research/m4-mission-recorder` (annotated; the exact target and tag object hashes recorded in HANDOFF after tagging).
+- ZHMModSDK: unchanged at `c51528483a4f1f1eb9dcd63ae81f5272a6d5a8fe` (`relay/m2`, tag `research/m2-telemetry`); accepted DLL SHA-256 `6047a9a3278fdd725c55bdc16ac47f832436afb2f5a6f2260488a436a6009d65`, preserved with PDB, tests, probe and gate files in `b6-accepted-artifacts\`; no native tag was created and the DLL was not rebuilt for this BEAM milestone.
+- Recordings preserved: the live recording on ext4 under `~/.local/state/glacier-relay-m4-run1/`, in `m4-run1\recording-9fcb9a72-…` and committed under `relay/test/recordings/`; the M4-A and M4-B standalone recordings in their evidence directories and under `relay/test/recordings/`. Evidence directories `m4a-offline`, `m4b-offline`, `m4b-hardening`, `m4-run1`, `m4c-offline`, each with its `sha256.txt` (their own `validate.log`/`validate.out` were appended after hashing and are the only entries that do not verify).
+- Verified before this record: both repositories clean at the stated commits, the four research tags on origin, the DLL hash, the live recording and its committed copy by hash, the `m4-run1` evidence (117 files) by hash.
+
+**M4 — Mission Recorder is complete.** M5 begins as a design investigation under its own authorization.
