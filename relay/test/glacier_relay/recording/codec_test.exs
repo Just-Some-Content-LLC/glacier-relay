@@ -147,8 +147,12 @@ defmodule GlacierRelay.Recording.CodecTest do
     for {reason, expected} <- [
           {:peer_closed, "peer_closed"},
           {:line_too_long, "line_too_long"},
-          {{:tcp_error, :econnreset}, %{"tcp_error" => ":econnreset"}},
-          {{:down, :killed}, %{"down" => ":killed"}}
+          {{:tcp_error, :econnreset}, %{"tcp_error" => %{"posix" => "econnreset"}}},
+          {{:down, :killed}, %{"down" => %{"exit" => "killed"}}},
+          {{:tcp_error, {:weird, 1}}, %{"tcp_error" => %{"text" => "{:weird, 1}"}}},
+          {{:down, {:shutdown, %{x: 1}}}, %{"down" => %{"text" => "{:shutdown, %{x: 1}}"}}},
+          {:some_other_atom, %{"text" => ":some_other_atom"}},
+          {{:custom, 2}, %{"text" => "{:custom, 2}"}}
         ] do
       closed = %Record{
         no: 3,
@@ -162,6 +166,87 @@ defmodule GlacierRelay.Recording.CodecTest do
 
       {:ok, c} = closed |> Codec.encode_record() |> IO.iodata_to_binary() |> Codec.decode_line()
       assert c["reason"] == expected and c["instance"] == nil
+    end
+  end
+
+  # -- close reasons (correction B) --------------------------------------------------------------
+
+  defp round_trip(reason) do
+    {:ok, c} =
+      %Record{no: 1, kind: :connection_closed, at: at(), conn: 1, peer: "p", reason: reason}
+      |> Codec.encode_record()
+      |> IO.iodata_to_binary()
+      |> Codec.decode_line()
+
+    Codec.decode_reason(c["reason"])
+  end
+
+  test "every reason in the exact vocabulary round-trips to the identical term through a line" do
+    assert round_trip(:peer_closed) == {:exact, :peer_closed}
+    assert round_trip(:line_too_long) == {:exact, :line_too_long}
+    %{tcp_error: posix, down: exits} = Codec.exact_reason_vocabulary()
+    assert :econnreset in posix and :etimedout in posix and :killed in exits
+    for p <- posix, do: assert(round_trip({:tcp_error, p}) == {:exact, {:tcp_error, p}})
+    for e <- exits, do: assert(round_trip({:down, e}) == {:exact, {:down, e}})
+  end
+
+  test "a reason outside the vocabulary comes back qualified, its category kept, never equal to the original" do
+    assert round_trip({:tcp_error, {:weird, 1}}) ==
+             {:qualified, {:tcp_error, {:recorded_text, "{:weird, 1}"}}, :unrepresentable}
+
+    assert round_trip({:down, {:shutdown, %{x: 1}}}) ==
+             {:qualified, {:down, {:recorded_text, "{:shutdown, %{x: 1}}"}}, :unrepresentable}
+
+    assert round_trip(:some_other_atom) ==
+             {:qualified, {:recorded_text, ":some_other_atom"}, :unrepresentable}
+
+    assert round_trip({:custom, 2}) ==
+             {:qualified, {:recorded_text, "{:custom, 2}"}, :unrepresentable}
+
+    # A DOWN reason carrying an exception and a stacktrace is text, bounded, never a term.
+    {:qualified, {:down, {:recorded_text, text}}, :unrepresentable} =
+      round_trip({:down, {%RuntimeError{message: "boom"}, [{__MODULE__, :f, 1, []}]}})
+
+    assert text =~ "RuntimeError" and byte_size(text) < 4_096
+  end
+
+  test "legacy format-1 inspected strings are qualified evidence, not reconstructed" do
+    assert Codec.decode_reason(%{"tcp_error" => ":econnreset"}) ==
+             {:qualified, {:tcp_error, {:recorded_text, ":econnreset"}}, :legacy_text}
+
+    assert Codec.decode_reason(%{"down" => ":killed"}) ==
+             {:qualified, {:down, {:recorded_text, ":killed"}}, :legacy_text}
+
+    assert Codec.decode_reason("gone") == {:qualified, {:recorded_text, "gone"}, :legacy_text}
+  end
+
+  test "malformed or malicious reason content is returned as recorded and creates no atom" do
+    suffix = Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
+    posix_name = "nope_#{suffix}"
+    exit_name = "os_cmd_#{suffix}"
+
+    assert Codec.decode_reason(%{"tcp_error" => %{"posix" => posix_name}}) ==
+             {:qualified, {:tcp_error, {:recorded_text, posix_name}}, :outside_vocabulary}
+
+    assert Codec.decode_reason(%{"down" => %{"exit" => exit_name}}) ==
+             {:qualified, {:down, {:recorded_text, exit_name}}, :outside_vocabulary}
+
+    assert_raise ArgumentError, fn -> String.to_existing_atom(posix_name) end
+    assert_raise ArgumentError, fn -> String.to_existing_atom(exit_name) end
+
+    for bad <- [
+          12,
+          nil,
+          ["a"],
+          %{},
+          %{"tcp_error" => %{"posix" => 1}},
+          %{"tcp_error" => %{"posix" => "econnreset", "x" => 1}},
+          %{"tcp_error" => %{"posix" => "econnreset"}, "down" => %{"exit" => "killed"}},
+          %{"down" => %{"text" => 5}},
+          %{"text" => %{"nested" => true}},
+          %{"eval" => "System.cmd(\"rm\", [])"}
+        ] do
+      assert Codec.decode_reason(bad) == {:qualified, {:unrecognized_reason, bad}, :unrecognized}
     end
   end
 

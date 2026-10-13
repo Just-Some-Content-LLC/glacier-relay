@@ -11,6 +11,27 @@ defmodule GlacierRelay.Recording.Codec do
   The wire object of an envelope (`Envelope.raw`) is written value-exact under `envelope`. An
   envelope built in code (no wire object) is written from its validated fields with
   `"wire": false`, so a reader knows it is not the wire's bytes.
+
+  ## Close reasons (typed vocabulary; M4-B correction B)
+
+  A `connection.closed` record's `reason` is written from a closed vocabulary, so that a reader
+  reconstructs the original term exactly where the format can, and otherwise returns a visibly
+  qualified value — never a new atom, never an evaluated term:
+
+  | recorded                                   | reconstructed                                   |
+  |--------------------------------------------|-------------------------------------------------|
+  | `"peer_closed"`, `"line_too_long"`         | `:peer_closed`, `:line_too_long` (exact)        |
+  | `{"tcp_error": {"posix": "econnreset"}}`   | `{:tcp_error, :econnreset}` (exact; allow-list) |
+  | `{"tcp_error": {"text": "<inspect>"}}`     | `{:tcp_error, {:recorded_text, text}}`          |
+  | `{"down": {"exit": "killed"}}`             | `{:down, :killed}` (exact; allow-list)          |
+  | `{"down": {"text": "<inspect>"}}`          | `{:down, {:recorded_text, text}}`               |
+  | `{"text": "<inspect>"}`                    | `{:recorded_text, text}`                        |
+  | pre-correction `{"tcp_error": "<inspect>"}`, `{"down": "<inspect>"}`, other bare string | the same qualified forms (`:legacy_text`) |
+  | anything else                              | `{:unrecognized_reason, value}`                 |
+
+  The allow-lists are the POSIX socket error atoms `:inet` reports and the common exit reasons;
+  a name outside them is returned as recorded text (`:outside_vocabulary`), not turned into an
+  atom. Inspected text is bounded (`inspect/2` limits) and is evidence, not a term.
   """
 
   alias GlacierRelay.Recording.Record
@@ -18,7 +39,83 @@ defmodule GlacierRelay.Recording.Codec do
 
   @format 1
 
+  @posix ~w(eacces eaddrinuse eaddrnotavail eafnosupport ealready econnaborted econnrefused
+            econnreset edestaddrreq ehostdown ehostunreach einprogress eisconn emsgsize enetdown
+            enetunreach enopkg enoprotoopt enotconn enotty enotsock eproto eprotonosupport
+            eprototype esocktnosupport etimedout ewouldblock exbadport exbadseq nxdomain epipe
+            closed timeout)a
+  @exits ~w(normal shutdown killed noproc noconnection timeout)a
+  @posix_names Map.new(@posix, &{Atom.to_string(&1), &1})
+  @exit_names Map.new(@exits, &{Atom.to_string(&1), &1})
+  @text_opts [limit: 100, printable_limit: 2_048]
+
   def format, do: @format
+
+  @doc "The close-reason terms the format reconstructs exactly (besides the two atomic reasons)."
+  def exact_reason_vocabulary, do: %{tcp_error: @posix, down: @exits}
+
+  @doc "Encodes a close reason into the typed vocabulary (a JSON value)."
+  @spec encode_reason(term()) :: String.t() | map()
+  def encode_reason(:peer_closed), do: "peer_closed"
+  def encode_reason(:line_too_long), do: "line_too_long"
+
+  def encode_reason({:tcp_error, r}) when r in @posix,
+    do: %{"tcp_error" => %{"posix" => Atom.to_string(r)}}
+
+  def encode_reason({:tcp_error, r}), do: %{"tcp_error" => %{"text" => text(r)}}
+  def encode_reason({:down, r}) when r in @exits, do: %{"down" => %{"exit" => Atom.to_string(r)}}
+  def encode_reason({:down, r}), do: %{"down" => %{"text" => text(r)}}
+  def encode_reason(other), do: %{"text" => text(other)}
+
+  @doc """
+  Decodes a recorded close reason: `{:exact, term}` when the format reconstructs the original
+  term, otherwise `{:qualified, term, why}` with `why` one of `:unrepresentable` (the recorder
+  could only write text), `:legacy_text` (a pre-correction inspected string),
+  `:outside_vocabulary` (a typed name this reader does not know) or `:unrecognized` (a shape
+  the format never writes). No atom is created from the recorded value.
+  """
+  @spec decode_reason(term()) :: {:exact, term()} | {:qualified, term(), atom()}
+  def decode_reason("peer_closed"), do: {:exact, :peer_closed}
+  def decode_reason("line_too_long"), do: {:exact, :line_too_long}
+
+  def decode_reason(%{"tcp_error" => %{"posix" => name} = m} = v)
+      when is_binary(name) and map_size(m) == 1 and map_size(v) == 1 do
+    case @posix_names do
+      %{^name => atom} -> {:exact, {:tcp_error, atom}}
+      _ -> {:qualified, {:tcp_error, {:recorded_text, name}}, :outside_vocabulary}
+    end
+  end
+
+  def decode_reason(%{"tcp_error" => %{"text" => t} = m} = v)
+      when is_binary(t) and map_size(m) == 1 and map_size(v) == 1,
+      do: {:qualified, {:tcp_error, {:recorded_text, t}}, :unrepresentable}
+
+  def decode_reason(%{"down" => %{"exit" => name} = m} = v)
+      when is_binary(name) and map_size(m) == 1 and map_size(v) == 1 do
+    case @exit_names do
+      %{^name => atom} -> {:exact, {:down, atom}}
+      _ -> {:qualified, {:down, {:recorded_text, name}}, :outside_vocabulary}
+    end
+  end
+
+  def decode_reason(%{"down" => %{"text" => t} = m} = v)
+      when is_binary(t) and map_size(m) == 1 and map_size(v) == 1,
+      do: {:qualified, {:down, {:recorded_text, t}}, :unrepresentable}
+
+  def decode_reason(%{"text" => t} = v) when is_binary(t) and map_size(v) == 1,
+    do: {:qualified, {:recorded_text, t}, :unrepresentable}
+
+  # Format 1 before correction B: inspected strings.
+  def decode_reason(%{"tcp_error" => t} = v) when is_binary(t) and map_size(v) == 1,
+    do: {:qualified, {:tcp_error, {:recorded_text, t}}, :legacy_text}
+
+  def decode_reason(%{"down" => t} = v) when is_binary(t) and map_size(v) == 1,
+    do: {:qualified, {:down, {:recorded_text, t}}, :legacy_text}
+
+  def decode_reason(s) when is_binary(s), do: {:qualified, {:recorded_text, s}, :legacy_text}
+  def decode_reason(other), do: {:qualified, {:unrecognized_reason, other}, :unrecognized}
+
+  defp text(term), do: inspect(term, @text_opts)
 
   @doc "Encodes one session record as a line (with its newline)."
   @spec encode_record(Record.t()) :: iodata()
@@ -70,7 +167,7 @@ defmodule GlacierRelay.Recording.Codec do
       {"conn", r.conn},
       {"peer", r.peer},
       {"instance", r.instance},
-      {"reason", reason(r.reason)}
+      {"reason", encode_reason(r.reason)}
     ])
   end
 
@@ -145,9 +242,4 @@ defmodule GlacierRelay.Recording.Codec do
 
   defp stringify(list) when is_list(list), do: Enum.map(list, &stringify/1)
   defp stringify(other), do: other
-
-  defp reason(r) when is_atom(r), do: Atom.to_string(r)
-  defp reason({:tcp_error, r}), do: %{"tcp_error" => inspect(r)}
-  defp reason({:down, r}), do: %{"down" => inspect(r)}
-  defp reason(other), do: inspect(other)
 end

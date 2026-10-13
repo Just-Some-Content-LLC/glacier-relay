@@ -6,7 +6,9 @@ defmodule GlacierRelay.Recording.Completeness do
   boolean it does carry, `recorder_authoritative?`, says only that every record between the
   first and the boundary came from verified or durable (trusted-boundary) evidence, with no
   gap, no corruption, no ambiguity, no reader issue of any kind and a clean finalization; it
-  says nothing about the Relay stream or the game.
+  says nothing about the Relay stream or the game, and nothing about type fidelity: a close
+  reason the format could only record as text is listed under `close_reasons.qualified`, and
+  term equality with the live session is not claimed for it.
   """
 
   alias GlacierRelay.Recording.Replay
@@ -37,6 +39,7 @@ defmodule GlacierRelay.Recording.Completeness do
               ambiguous: []
             },
             boundaries: %{trusted: [], untrusted: [], unstated: []},
+            close_reasons: %{exact: 0, qualified: []},
             recorder_gaps: [],
             open_ended_gaps: [],
             unexplained_missing: [],
@@ -77,6 +80,7 @@ defmodule GlacierRelay.Recording.Completeness do
         conflicts: 0,
         ambiguous: []
       },
+      close_reasons: %{exact: 0, qualified: []},
       rejected_by_current_validator: replay.rejected,
       relay_sequence_gaps: gaps,
       transport: :not_recorded,
@@ -135,6 +139,13 @@ defmodule GlacierRelay.Recording.Completeness do
         )
     }
 
+    closes = Enum.count(r.records, &(&1.kind == "connection.closed"))
+
+    close_reasons = %{
+      exact: closes - length(replay.qualified_reasons),
+      qualified: replay.qualified_reasons
+    }
+
     finalization =
       cond do
         r.footer == nil -> :unclosed
@@ -186,6 +197,7 @@ defmodule GlacierRelay.Recording.Completeness do
       segments: segments,
       records: records,
       boundaries: boundaries,
+      close_reasons: close_reasons,
       recorder_gaps: gaps,
       open_ended_gaps: open_ended,
       unexplained_missing: r.unexplained_missing,
@@ -204,6 +216,7 @@ defmodule GlacierRelay.Recording.Completeness do
       limitations:
         limitations(finalization, format, segments, records, gaps, open_ended, r, replay) ++
           boundary_limitations(boundaries) ++
+          reason_limitation(replay.qualified_reasons) ++
           rejected_limitation(replay.rejected) ++
           gap_limitation(sequence_gaps) ++
           [
@@ -298,6 +311,15 @@ defmodule GlacierRelay.Recording.Completeness do
     ]
     |> Enum.reject(&is_nil/1)
   end
+
+  defp reason_limitation([]), do: []
+
+  defp reason_limitation(qualified),
+    do: [
+      "#{length(qualified)} close reason(s) not reconstructed exactly (" <>
+        Enum.map_join(qualified, ", ", &"r=#{&1.no} #{&1.why}") <>
+        "): term equality with the live session is not claimed for those connections"
+    ]
 
   defp rejected_limitation([]), do: []
 

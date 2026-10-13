@@ -9,16 +9,19 @@ defmodule GlacierRelay.Recording.Replay do
   Envelopes are re-validated with the current `Envelope.decode/1`; one the current validator
   rejects is listed, never folded and never replaced. `connection.identified` records are the
   session's decisions and are checked against the fold's own; a difference is an issue, not a
-  correction. Close reasons come back as the recording wrote them: `peer_closed` and
-  `line_too_long` as atoms; structured reasons (`tcp_error`, `down`) as `{tag, text}` with the
-  inspected text, never a new atom (design section 18 lists this as a format limit).
+  correction. Close reasons are decoded by `Codec.decode_reason/1`: exact where the typed
+  vocabulary reconstructs the original term (`peer_closed`, `line_too_long`, allow-listed
+  `tcp_error` and `down` reasons), otherwise a visibly qualified value (`{:recorded_text, _}`
+  inside the kept category, or `{:unrecognized_reason, _}`) listed under `qualified_reasons` —
+  so term equality with the live session is claimed only where the format provides it, and a
+  difference is reported rather than repaired by an invented term.
 
   Legacy fixtures (envelope-only NDJSON) replay through `from_envelopes/2` under their documented
   semantics: no connection evidence (`transport: :not_recorded`), no receipt times, the direct
   fold of `Lifecycle.apply_event/3` with `received_at` nil, as the M2 fixture tests do.
   """
 
-  alias GlacierRelay.Recording.{Completeness, Reader}
+  alias GlacierRelay.Recording.{Codec, Completeness, Reader}
   alias GlacierRelay.Session.Fold
   alias GlacierRelay.Summary
   alias GlacierRelay.Wire.Envelope
@@ -39,6 +42,7 @@ defmodule GlacierRelay.Recording.Replay do
             reader: nil,
             issues: [],
             rejected: [],
+            qualified_reasons: [],
             notes: %{},
             timings_us: %{}
 
@@ -58,7 +62,7 @@ defmodule GlacierRelay.Recording.Replay do
   @doc "Replays an already read recording."
   @spec replay_result(Reader.Result.t()) :: t()
   def replay_result(%Reader.Result{} = result) do
-    {fold_us, {fold, issues, rejected, notes, boundary}} =
+    {fold_us, {fold, issues, rejected, qualified, notes, boundary}} =
       :timer.tc(fn -> fold_records(result.records) end)
 
     {render_us, outputs} = :timer.tc(fn -> outputs(fold) end)
@@ -75,6 +79,7 @@ defmodule GlacierRelay.Recording.Replay do
       reader: result,
       issues: issues,
       rejected: rejected,
+      qualified_reasons: qualified,
       notes: notes,
       timings_us: %{fold: fold_us, render: render_us}
     }
@@ -127,15 +132,23 @@ defmodule GlacierRelay.Recording.Replay do
   # -- folding ------------------------------------------------------------------------------------
 
   defp fold_records(records) do
-    init = %{fold: Fold.new(), issues: [], rejected: [], notes: %{}, expected: %{}, boundary: nil}
+    init = %{
+      fold: Fold.new(),
+      issues: [],
+      rejected: [],
+      qualified: [],
+      notes: %{},
+      expected: %{},
+      boundary: nil
+    }
 
     acc = Enum.reduce(records, init, &fold_record/2)
 
     leftover =
       for {conn, %{no: no}} <- acc.expected, do: {:identification_without_envelope, no, conn}
 
-    {acc.fold, Enum.reverse(acc.issues) ++ leftover, Enum.reverse(acc.rejected), acc.notes,
-     acc.boundary}
+    {acc.fold, Enum.reverse(acc.issues) ++ leftover, Enum.reverse(acc.rejected),
+     Enum.reverse(acc.qualified), acc.notes, acc.boundary}
   end
 
   defp fold_record(%{kind: "connection.opened", map: m, no: no}, acc) do
@@ -187,7 +200,18 @@ defmodule GlacierRelay.Recording.Replay do
 
   defp fold_record(%{kind: "connection.closed", map: m, no: no}, acc) do
     {at, acc} = time(m["at"], no, acc)
-    {fold, effects} = Fold.connection_closed(acc.fold, m["conn"], reason(m["reason"]), at)
+
+    {reason, acc} =
+      case Codec.decode_reason(m["reason"]) do
+        {:exact, reason} ->
+          {reason, acc}
+
+        {:qualified, reason, why} ->
+          entry = %{no: no, conn: m["conn"], recorded: m["reason"], replayed: reason, why: why}
+          {reason, %{acc | qualified: [entry | acc.qualified]}}
+      end
+
+    {fold, effects} = Fold.connection_closed(acc.fold, m["conn"], reason, at)
     %{acc | fold: fold, boundary: no} |> effects_issues(effects, no)
   end
 
@@ -242,12 +266,6 @@ defmodule GlacierRelay.Recording.Replay do
   end
 
   defp time(_other, no, acc), do: {nil, issue(acc, {:bad_timestamp, no, nil})}
-
-  defp reason("peer_closed"), do: :peer_closed
-  defp reason("line_too_long"), do: :line_too_long
-  defp reason(%{"tcp_error" => text}), do: {:tcp_error, text}
-  defp reason(%{"down" => text}), do: {:down, text}
-  defp reason(other), do: {:recorded, other}
 
   defp outputs(%Fold.State{} = fold) do
     %{

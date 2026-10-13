@@ -58,6 +58,10 @@ case Replay.replay(Path.expand(dir)) do
     IO.puts("replay boundary: r=#{inspect(r.boundary)}")
 
     IO.puts(
+      "close reasons: #{c.close_reasons.exact} exact, #{length(c.close_reasons.qualified)} qualified#{if c.close_reasons.qualified != [], do: " " <> inspect(c.close_reasons.qualified)}"
+    )
+
+    IO.puts(
       "transport evidence (#{c.transport}): opened #{count.("connection.opened")}, identified #{count.("connection.identified")}, closed #{count.("connection.closed")}; envelopes #{count.("envelope")}; unidentified connections at the boundary: #{length(r.unidentified)}"
     )
 

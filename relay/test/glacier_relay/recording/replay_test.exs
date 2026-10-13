@@ -366,6 +366,212 @@ defmodule GlacierRelay.Recording.ReplayTest do
     assert new.instances[b] == live.instances[b]
   end
 
+  # -- close reasons (correction B) --------------------------------------------------------------
+
+  # A process that announces a connection, then closes it with `reason` (or dies with `exit`).
+  defp open_connection(peer, at) do
+    parent = self()
+
+    pid =
+      spawn(fn ->
+        MissionSession.connection_opened(peer, at)
+        send(parent, :opened)
+
+        receive do
+          {:close, reason} -> MissionSession.connection_closed(reason, at)
+          {:exit, reason} -> exit(reason)
+        end
+      end)
+
+    assert_receive :opened, 2_000
+    assert_receive {:relay_connection, :opened, %{peer: ^peer}}, 2_000
+    # The session's monitor is a signal the idle process must handle before it is killed;
+    # killing it first makes the runtime answer the monitor with :noproc (a harness race, not
+    # the session's behaviour with a running connection process).
+    session = Process.whereis(MissionSession)
+
+    assert FixturePlayer.wait_until(fn ->
+             session in elem(Process.info(pid, :monitored_by), 1)
+           end)
+
+    pid
+  end
+
+  defp close_with(pid, peer, reason) do
+    send(pid, {:close, reason})
+    assert_receive {:relay_connection, :closed, %{peer: ^peer, reason: ^reason}}, 2_000
+  end
+
+  defp strip_reasons(list), do: Enum.map(list, &Map.put(&1, :close_reason, nil))
+
+  test "close reasons the format reconstructs exactly replay term-equal: peer_closed, line_too_long, a TCP error, a process exit" do
+    {rec, _, _} = RecordingFixtures.start_recorder()
+    at = ~U[2026-10-13 08:00:00.000000Z]
+
+    # peer_closed and line_too_long over the real wire.
+    socket = FixturePlayer.connect()
+    :gen_tcp.close(socket)
+    assert_receive {:relay_connection, :closed, %{instance_id: nil, reason: :peer_closed}}, 2_000
+    socket = FixturePlayer.connect()
+    :ok = :gen_tcp.send(socket, String.duplicate("a", 5_000) <> "\n")
+
+    assert_receive {:relay_connection, :closed, %{instance_id: nil, reason: :line_too_long}},
+                   2_000
+
+    :gen_tcp.close(socket)
+
+    # A TCP error as the connection process reports it; a DOWN as the session observes it.
+    p = open_connection("127.0.0.1:1", at)
+    close_with(p, "127.0.0.1:1", {:tcp_error, :econnreset})
+    p = open_connection("127.0.0.1:2", at)
+    Process.exit(p, :kill)
+
+    assert_receive {:relay_connection, :closed, %{peer: "127.0.0.1:2", reason: {:down, :killed}}},
+                   2_000
+
+    p = open_connection("127.0.0.1:3", at)
+    send(p, {:exit, :shutdown})
+
+    assert_receive {:relay_connection, :closed,
+                    %{peer: "127.0.0.1:3", reason: {:down, :shutdown}}},
+                   2_000
+
+    live = RecordingFixtures.capture([])
+    {:ok, summary} = Recorder.close(rec)
+    {:ok, replay} = Replay.replay(summary.recording_dir)
+    n = length(replay.unidentified)
+    assert n == 5
+    assert replay.unidentified == Enum.take(live.unidentified, n)
+
+    assert Enum.map(replay.unidentified, & &1.close_reason) ==
+             [
+               {:down, :shutdown},
+               {:down, :killed},
+               {:tcp_error, :econnreset},
+               :line_too_long,
+               :peer_closed
+             ]
+
+    assert replay.summary_text == live.summary_text.(n) and
+             replay.report_text == live.report_text.(n)
+
+    c = replay.completeness
+    assert c.close_reasons == %{exact: 5, qualified: []} and replay.qualified_reasons == []
+    assert c.recorder_authoritative?
+    refute Enum.any?(c.limitations, &String.contains?(&1, "close reason"))
+  end
+
+  test "close reasons outside the vocabulary replay qualified: the category is kept, the inequality is explicit, nothing is invented" do
+    {rec, _, _} = RecordingFixtures.start_recorder()
+    at = ~U[2026-10-13 08:00:00.000000Z]
+    p = open_connection("127.0.0.1:11", at)
+    close_with(p, "127.0.0.1:11", {:tcp_error, {:weird, 1}})
+    p = open_connection("127.0.0.1:12", at)
+    send(p, {:exit, {:shutdown, %{x: 1}}})
+
+    assert_receive {:relay_connection, :closed,
+                    %{peer: "127.0.0.1:12", reason: {:down, {:shutdown, %{x: 1}}}}},
+                   2_000
+
+    p = open_connection("127.0.0.1:13", at)
+    close_with(p, "127.0.0.1:13", :some_other_atom)
+    live = RecordingFixtures.capture([])
+    {:ok, summary} = Recorder.close(rec)
+    {:ok, replay} = Replay.replay(summary.recording_dir)
+    n = 3
+    live_unidentified = Enum.take(live.unidentified, n)
+
+    assert Enum.map(live_unidentified, & &1.close_reason) ==
+             [:some_other_atom, {:down, {:shutdown, %{x: 1}}}, {:tcp_error, {:weird, 1}}]
+
+    assert Enum.map(replay.unidentified, & &1.close_reason) == [
+             {:recorded_text, ":some_other_atom"},
+             {:down, {:recorded_text, "{:shutdown, %{x: 1}}"}},
+             {:tcp_error, {:recorded_text, "{:weird, 1}"}}
+           ]
+
+    # Everything but the reason is equal; the reason is not, and the account says so.
+    assert replay.unidentified != live_unidentified
+    assert strip_reasons(replay.unidentified) == strip_reasons(live_unidentified)
+    assert replay.summary_text != live.summary_text.(n)
+    c = replay.completeness
+    assert c.close_reasons.exact == 0 and length(c.close_reasons.qualified) == 3
+    assert Enum.all?(c.close_reasons.qualified, &(&1.why == :unrepresentable))
+
+    assert Enum.map(c.close_reasons.qualified, & &1.recorded) |> Enum.reverse() == [
+             %{"text" => ":some_other_atom"},
+             %{"down" => %{"text" => "{:shutdown, %{x: 1}}"}},
+             %{"tcp_error" => %{"text" => "{:weird, 1}"}}
+           ]
+
+    assert Enum.any?(
+             c.limitations,
+             &String.contains?(&1, "3 close reason(s) not reconstructed exactly")
+           )
+
+    # Type fidelity is reported apart from evidence completeness.
+    assert c.evidence == :authoritative and c.recorder_authoritative?
+  end
+
+  test "legacy inspected-string and malformed reasons replay as recorded evidence and create no atom" do
+    {rec, _, _} = RecordingFixtures.start_recorder()
+    at = ~U[2026-10-13 08:00:00.000000Z]
+
+    for i <- 1..5 do
+      p = open_connection("127.0.0.1:2#{i}", at)
+      close_with(p, "127.0.0.1:2#{i}", {:tcp_error, :econnreset})
+    end
+
+    # A session call first: the close records are then ahead of the recorder's close request.
+    _ = MissionSession.unidentified()
+    {:ok, summary} = Recorder.close(rec)
+    dir = RecordingFixtures.copy(summary.recording_dir)
+    suffix = Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
+    typed = ~s("reason":{"tcp_error":{"posix":"econnreset"}})
+
+    replacements = [
+      ~s("reason":{"tcp_error":":econnreset"}),
+      ~s("reason":"gone"),
+      ~s("reason":{"tcp_error":{"posix":"nope_#{suffix}"}}),
+      ~s("reason":{"down":{"exit":"os_cmd_#{suffix}"}}),
+      ~s("reason":12)
+    ]
+
+    RecordingFixtures.edit_lines(RecordingFixtures.segment(dir, 1), fn lines ->
+      {edited, _} =
+        Enum.map_reduce(lines, replacements, fn line, reps ->
+          if String.contains?(line, typed) and reps != [] do
+            {String.replace(line, typed, hd(reps)), tl(reps)}
+          else
+            {line, reps}
+          end
+        end)
+
+      edited
+    end)
+
+    RecordingFixtures.rehash(dir)
+    {:ok, replay} = Replay.replay(dir)
+
+    assert Enum.map(replay.unidentified, & &1.close_reason) |> Enum.reverse() == [
+             {:tcp_error, {:recorded_text, ":econnreset"}},
+             {:recorded_text, "gone"},
+             {:tcp_error, {:recorded_text, "nope_#{suffix}"}},
+             {:down, {:recorded_text, "os_cmd_#{suffix}"}},
+             {:unrecognized_reason, 12}
+           ]
+
+    assert Enum.map(replay.qualified_reasons, & &1.why) ==
+             [:legacy_text, :legacy_text, :outside_vocabulary, :outside_vocabulary, :unrecognized]
+
+    assert_raise ArgumentError, fn -> String.to_existing_atom("nope_#{suffix}") end
+    assert_raise ArgumentError, fn -> String.to_existing_atom("os_cmd_#{suffix}") end
+    assert length(replay.completeness.close_reasons.qualified) == 5
+    assert replay.completeness.rejected_by_current_validator == []
+    # The report renders the recorded evidence, never a reconstructed term.
+    assert replay.report_text =~ "recorded_text" and replay.report_text =~ "unrecognized_reason"
+  end
+
   # -- legacy ------------------------------------------------------------------------------------
 
   for name <- @fixtures do
