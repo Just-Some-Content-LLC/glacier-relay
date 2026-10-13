@@ -33,6 +33,12 @@ defmodule GlacierRelay.Recording.RecorderTest do
 
   defp recording_dir(name), do: Recorder.health(name).recording_dir
 
+  # A session call first: the records the session just sent are then ahead of the flush request.
+  defp flush(name) do
+    _ = MissionSession.unidentified()
+    Recorder.flush(name)
+  end
+
   defp segments(rdir), do: rdir |> Path.join("segment-*.ndjson") |> Path.wildcard() |> Enum.sort()
 
   defp lines(rdir) do
@@ -81,7 +87,7 @@ defmodule GlacierRelay.Recording.RecorderTest do
     fixture = FixturePlayer.lines("b6_run1") |> FixturePlayer.with_instance(id)
     :closed = FixturePlayer.play("b6_run1", id)
     FixturePlayer.await_closed(id)
-    health = Recorder.flush(name)
+    health = flush(name)
     assert health.status == :recording
 
     all = lines(recording_dir(name))
@@ -146,7 +152,7 @@ defmodule GlacierRelay.Recording.RecorderTest do
     :closed = FixturePlayer.play("b2_probe", b)
     FixturePlayer.await_closed(a)
     FixturePlayer.await_closed(b)
-    Recorder.flush(name)
+    flush(name)
     all = lines(recording_dir(name))
     [ia] = all |> of_instance(a) |> Enum.filter(&(&1["k"] == "connection.identified"))
     [ib] = all |> of_instance(b) |> Enum.filter(&(&1["k"] == "connection.identified"))
@@ -180,7 +186,7 @@ defmodule GlacierRelay.Recording.RecorderTest do
     :gen_tcp.close(silent)
     assert_receive {:relay_connection, :closed, %{instance_id: nil}}, 2_000
 
-    Recorder.flush(name)
+    flush(name)
     all = lines(recording_dir(name))
 
     idents =
@@ -268,7 +274,7 @@ defmodule GlacierRelay.Recording.RecorderTest do
     assert_receive {:relay_connection, :closed, %{peer: ^peer, instance_id: nil}}, 2_000
     assert_receive {:relay_connection, :closed, %{peer: ^peer, instance_id: ^id}}, 2_000
 
-    Recorder.flush(name)
+    flush(name)
     all = lines(recording_dir(name))
     same_peer = Enum.filter(all, &(&1["peer"] == peer))
     conns = same_peer |> Enum.map(& &1["conn"]) |> Enum.uniq()
@@ -352,7 +358,7 @@ defmodule GlacierRelay.Recording.RecorderTest do
     a = FixturePlayer.unique_id("rs-a")
     :closed = FixturePlayer.play("stage1", a)
     FixturePlayer.await_closed(a)
-    h1 = Recorder.flush(name)
+    h1 = flush(name)
     boundary = h1.durable_boundary
     rdir = h1.recording_dir
     assert boundary > 0
@@ -425,7 +431,7 @@ defmodule GlacierRelay.Recording.RecorderTest do
     a = FixturePlayer.unique_id("rs2-a")
     :closed = FixturePlayer.play("stage1", a)
     FixturePlayer.await_closed(a)
-    h1 = Recorder.flush(name)
+    h1 = flush(name)
     ref = Process.monitor(pid1)
     Process.exit(pid1, :kill)
     assert_receive {:DOWN, ^ref, :process, ^pid1, :killed}
@@ -472,7 +478,7 @@ defmodule GlacierRelay.Recording.RecorderTest do
     for {chunk, i} <- Enum.with_index(Enum.chunk_every(lines, 9), 1) do
       FixturePlayer.send_lines(socket, chunk)
       FixturePlayer.await(id, i * 9)
-      Recorder.flush(name)
+      flush(name)
     end
 
     :gen_tcp.close(socket)
@@ -544,7 +550,7 @@ defmodule GlacierRelay.Recording.RecorderTest do
     a = FixturePlayer.unique_id("fail-a")
     :closed = FixturePlayer.play("stage1", a)
     FixturePlayer.await_closed(a)
-    h = Recorder.flush(name)
+    h = flush(name)
     assert h.status == :degraded and h.last_error == :enospc and h.write_errors >= 1
     assert h.segment == nil and h.unverified_segments == ["segment-000001.ndjson"]
     assert h.pending_count > 0 and h.durable_boundary < h.last_record_no
@@ -554,7 +560,7 @@ defmodule GlacierRelay.Recording.RecorderTest do
     b = FixturePlayer.unique_id("fail-b")
     :closed = FixturePlayer.play("stage1", b)
     FixturePlayer.await_closed(b)
-    h2 = Recorder.flush(name)
+    h2 = flush(name)
     assert h2.status == :recording and h2.segment == 2 and h2.degraded == nil
 
     seg2 =
@@ -588,14 +594,14 @@ defmodule GlacierRelay.Recording.RecorderTest do
     a = FixturePlayer.unique_id("full-a")
     :closed = FixturePlayer.play("b2_probe", a)
     FixturePlayer.await_closed(a)
-    h = Recorder.flush(name)
+    h = flush(name)
     assert h.status == :degraded and h.last_error == :eio and h.pending_count >= 4
 
     # Still failing, buffer full: the next evidence is discarded, numbered exactly.
     b = FixturePlayer.unique_id("full-b")
     :closed = FixturePlayer.play("b2_probe", b)
     FixturePlayer.await_closed(b)
-    h = Recorder.flush(name)
+    h = flush(name)
     assert h.status == :degraded and (h.discarding != nil or h.records_discarded > 0)
 
     StubWriter.mode(agent, :ok)
@@ -657,7 +663,7 @@ defmodule GlacierRelay.Recording.RecorderTest do
     id = FixturePlayer.unique_id("budget-roll")
     :closed = FixturePlayer.play("b5_run1", id)
     FixturePlayer.await_closed(id)
-    Recorder.flush(name)
+    flush(name)
     h = Recorder.health(name)
     assert h.status == :stopped and match?({:budget, _}, h.last_error)
     rdir = h.recording_dir
@@ -733,7 +739,7 @@ defmodule GlacierRelay.Recording.RecorderTest do
     snap = GlacierRelay.Dashboard.Projection.snapshot()
     assert snap.report_text == MissionSession.report_text()
     assert snap.source == :live
-    Recorder.flush(name)
+    flush(name)
     assert Enum.any?(lines(recording_dir(name)), &(&1["instance"] == id))
   end
 
