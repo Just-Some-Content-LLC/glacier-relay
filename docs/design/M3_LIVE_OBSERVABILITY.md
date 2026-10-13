@@ -1,6 +1,6 @@
 # M3 Design — Live Observability
 
-Date: 2026-10-12. Status: **design proposal, awaiting review.** Nothing in this document is installed, implemented or run: `relay/mix.exs` has no dependencies, `mix archive` shows no Hex, the supervision tree is the M1 one, and the native adapter stays at the M2 checkpoint (ZHMModSDK `relay/m2` `c5152848`, DLL `6047a9a3…`). The first M3 implementation stage needs its own authorization because it installs Hex, rebar and the Phoenix dependencies.
+Date: 2026-10-12. Status: **M3 complete (2026-10-13; section 13 is the completion record).** Sections 1–9 are the design proposal as reviewed (written when `relay/mix.exs` had no dependencies and the supervision tree was the M1 one); sections 10–12 are the M3-A, M3-B and M3-C records; section 13 closes the milestone. The native adapter stayed at the M2 checkpoint throughout (ZHMModSDK `relay/m2` `c5152848`, DLL `6047a9a3…`).
 
 Inputs: `ROADMAP.md` M3 ("Phoenix/LiveView dashboard for current mission state and event stream"); `ARCHITECTURE.md` (LiveView console as one consumer of OTP-owned state; `WebEndpoint` under the application supervisor as a hypothesis); ADR 0001–0006; `M2_TELEMETRY.md` sections 2, 7, 50–52; and the BEAM sources read as they are on `main` at the M2 checkpoint (`135d6da`): `application.ex`, `wire/listener.ex`, `wire/connection.ex`, `wire/envelope.ex`, `wire/framing.ex`, `mission_session.ex`, `lifecycle.ex`, `attempt_history.ex`, `disguise.ex`, `items.ex`, `objectives.ex`, `player_state.ex`, `summary.ex`, `report.ex`, `events.ex`, `config/*.exs`, `mix.exs`, and the tests (`report_test.exs`, `wire/listener_test.exs`).
 
@@ -523,3 +523,82 @@ Unverified or not produced, stated plainly: live coalescing under a dense burst 
 ### 12.13 Recommendation
 
 The M3 exit criterion as agreed — *a browser on the Windows host displays a live HITMAN mission attempt and its Relay event stream from OTP-owned state, with transport connectivity and mission lifecycle shown separately* — was demonstrated on this run for one attempt on the B6 route. Recommend **accepting M3 and closing it with these limitations stated**: live coalescing under dense bursts is offline-evidence only; browser update latency is unmeasured; the dashboard does not show an open connection before its first envelope; no screenshots exist for this run. Post-M3 presentation refinements to carry forward, none reopening M3: expose open unidentified connections as transport evidence; split the `:engine` tag into observed/authored (M2 section 52.6); label replay sources when a playback tool exists. The native adapter stays at the M2 checkpoint. **M3 is not closed by this record.**
+
+## 13. M3 — Live observability completion record (2026-10-13) — M3-C passed architectural review; the milestone is closed
+
+Decision (operator, 2026-10-13): M3-C passed architectural review; M3 — Live observability is formally closed. The roadmap goal ("Phoenix/LiveView dashboard for current mission state and event stream") and the agreed exit criterion ("a browser on the Windows host displays a live HITMAN mission attempt and its Relay event stream from OTP-owned state, with transport connectivity and mission lifecycle shown separately") are satisfied as written; `ROADMAP.md` records the status and keeps both sentences unchanged. This section is the final M3 record: the references, how each stage satisfied the requirements, the validated path and its ownership, the accepted scope and its limitations, the presentation refinements carried forward, and the checkpoint. **No code, wire schema, native artifact, dependency or runtime step is changed by closing M3.**
+
+### 13.1 References at closure
+
+| What | Ref |
+|---|---|
+| BEAM and docs (`relay/`, `docs/`) | glacier-relay `main`: M3-C record `9225183` (verified clean and equal to `origin/main` before closure); M3-B record `7d976f2`; M3-B code `c9c95c9` on `251d6be`; M3-A record `2527c83`; M3-A code `3dc54b4` on the dependency bootstrap `6012c16`; design and ADR 0007 `5650945`; M2 completion `135d6da`. The completion commit is the one that adds this section |
+| Native adapter | **unchanged**: ZHMModSDK `relay/m2` `c51528483a4f1f1eb9dcd63ae81f5272a6d5a8fe` (accepted B6 checkpoint, M2 section 49), tag `research/m2-telemetry`; working tree verified clean and equal to `origin/relay/m2` at closure |
+| Accepted `GlacierRelay.dll` | SHA-256 `6047a9a3278fdd725c55bdc16ac47f832436afb2f5a6f2260488a436a6009d65` (10,155,008 B), preserved in `%TEMP%\glacier-m0\hitmen\b6-accepted-artifacts\` and re-hashed at closure (equal); ran unchanged in M3-C; **not rebuilt** for M3 or for this checkpoint |
+| Dependencies (`relay/mix.lock`) | Phoenix 1.8.15, Phoenix LiveView 1.2.12, phoenix_html 4.3.0, phoenix_pubsub 2.4.1, Bandit 1.12.5; lazy_html 0.1.13 (test only); resolved from Hex (Hex 2.5.2, user-scoped) on OTP 28.4.2 / Elixir 1.19.6 |
+| Tests at closure | Elixir **311 tests, 0 failures, ×5** with `--warnings-as-errors` (`m3b-mix5.txt`; M2's 259 unchanged); native 25/25 at the M2 checkpoint (not rerun: nothing native changed) |
+| Evidence | `%TEMP%\glacier-m0\hitmen\m3a-offline\`, `m3b-offline\`, `m3c-run1\` (79 hashed files; native log `relay-20261013-044108-28372.log` `219369bd…`); gate records `m3a-mix5.txt`, `m3b-mix5.txt`, `m3b-perf.txt` |
+| Game | HITMAN WOA 3.280.0.0, Steam 24833614, ZHMModSDK 4.1.1; at M0 (26/26 hashes, `mods.ini` `b90b4c5e…`), no Relay DLL installed, ports 4747 and 4748 free |
+| Checkpoint tag | `research/m3-live-observability` on glacier-relay (the completion commit; recorded with its target in `HANDOFF.md`). No native tag is added: the native adapter did not change in M3 and stays at `research/m2-telemetry` |
+
+### 13.2 How the stages satisfied the goal and the exit criterion
+
+| Requirement | Satisfied by | Evidence |
+|---|---|---|
+| A Phoenix/LiveView dashboard for current mission state | M3-A foundation (section 10) and M3-B `DashboardLive` at `/` (section 11): instance cards, attempt selector, status line, overview, outcomes, activity panes, timeline, uncertainty, legend — the B7 report data laid out unchanged with its tags | `dashboard_live_test.exs`, `report_live_test.exs`, the M3-B and M3-C page captures |
+| … and event stream | the projection's `dashboard:events` topic and the bounded recent-event pane (200 rows per viewer, labelled) | `projection_test.exs` (two message kinds per instance), the M3-C `final` capture (nine rows for nine events) |
+| A browser on the Windows host | the operator's browser at `http://localhost:4748/` during M3-C; six host-side LiveView joins over WebSocket (`capture.ps1`, .NET `ClientWebSocket`) | section 12.2–12.7; `*-livejoin.json` |
+| displays a live HITMAN mission attempt | R2/R3/R5 of M3-C: the operator reported the browser updating live at each gate; the watcher's projection lines show one snapshot per event within the coalescing window | section 12.3–12.6, `timing-lines.txt` |
+| and its Relay event stream | nine envelopes (`contract.started #1` … `contract.ended #9`) delivered, forwarded and rendered; 9/9 reconciled with the native log, 0 mismatches, 0 gaps, 0 queue drops, 0 native WARN/ERROR/FAULT | section 12.9, `native-beam-compare.txt` |
+| from OTP-owned state | the projection is the only web-side subscriber and reader of `MissionSession`; its per-instance report maps equalled `MissionSession.report/0` and `/report.txt` was byte-identical to `report_text/0` from WSL2 and Windows at quiescence | section 12.7, `boundary_test.exs`, `rpc-*.txt`, `final-equivalence.txt` |
+| with transport connectivity and mission lifecycle shown separately | R5a: stopped at #8 with observation live; R5b: observation lost with the attempt unchanged and no new event | section 12.6, `r5a-*` and `final-*` captures |
+| without touching the game | the unchanged accepted DLL, one detour, loopback binds, no web-to-wire path (compiled-call tables, source tokens, real HTTP), game restored to M0 26/26 | sections 12.10–12.11 |
+
+### 13.3 Final validated architecture and ownership
+
+```
+HITMAN WOA 3.280.0.0 (Glacier 2 runtime, Windows)
+  ▼
+GlacierRelay.dll (unchanged; ZHMModSDK relay/m2 c5152848)    native: engine observation (the scene predicate) and
+                                                              semantic normalization of one engine-authored stream
+  ▼
+versioned Relay envelopes (protocol 1, every event schema 1)  engine-independent; the stream's shape is never the protocol
+  ▼
+TCP 127.0.0.1:4747 (Windows → WSL2 localhost forwarding)
+  ▼
+Wire.Listener → Wire.Connection                               framing, Envelope.decode, Events.validate; open/close reported
+                                                              as transport evidence with the receipt time
+  ▼
+MissionSession                                                authoritative received evidence and lifecycle state: one
+                                                              Lifecycle.Instance per adapter instance; game, adapter and
+                                                              transport evidence kept apart; subscribers notified
+  ▼
+Summary / Report (pure)                                       evidence-derived presentation: the B7 report with provenance tags
+  ▼
+Dashboard.Projection                                          cached read-only presentation snapshots: subscribe → read → build →
+                                                              publish; 50 ms coalescing; monotonic revisions; no evidence of its own
+  ▼
+Phoenix.PubSub                                                fan-out inside the VM
+  ▼
+LiveView (DashboardLive, ReportLive)                          rendering and viewer choices only; never calls the session
+  ▼
+Windows browser on localhost:4748                             loopback only; no authentication; no write route
+```
+
+Ownership, as validated: **native** — engine observation and semantic normalization; **MissionSession** — authoritative received evidence and lifecycle state; **Report** — pure evidence-derived presentation; **Projection** — cached read-only presentation snapshots; **Phoenix LiveView** — rendering and viewer choices; **transport** — connectivity evidence independent of the gameplay lifecycle, reported by `Wire.Connection` and shown beside, never derived from, mission status. ADR 0007 stands as accepted, with its two refinements (the projection as the normal reader; the stage-limited text routes). **No browser-to-wire or browser-to-game command path exists in M3**: the endpoint serves GET only, the socket's handlers change viewer choices only, and the boundary test keeps `Wire.*`, sockets and the session's evidence-delivering functions out of the web and dashboard namespaces.
+
+### 13.4 Accepted scope and limitations
+
+M3 completion establishes **one live, read-only, local dashboard over the existing semantic stream**, demonstrated for one attempt on the observed build and route. It does **not** establish: reliable behaviour under arbitrarily dense live bursts (coalescing was exercised offline with a 45-envelope burst; the live run's events were 8–96 s apart); measured browser paint or update latency (the operator observed updates "live"; nothing instrumented the browser); remote access or public hosting; authentication; durable recording or replay; spatial position tracking; heat maps; multiplayer synchronization; mission completion semantics beyond the observed evidence (the report's standing limitations stand); a native command channel. The unobserved behaviours are stated as unobserved, not as validated.
+
+### 13.5 Presentation refinements carried forward (none blocking; recorded for later work)
+
+1. **Show an open but unidentified TCP connection before the first Relay envelope.** The session holds it in its connection map but exposes only closed unidentified connections (`unidentified/0`); the M3-C main-menu gate showed the empty state while the adapter was connected (section 12.2).
+2. **Distinguish native scene-state observation from Glacier-authored telemetry in the visual provenance labels** (the `:engine` tag covers both; the text already says "engine-observed" / "engine-authored"; M2 section 52.6).
+3. **Distinguish historical replay without transport evidence from an observed absence of transport** (`observation never` under an envelope-only replay; M2 section 52.6; the `:replay` label exists but no committed tool sets it, section 11.9).
+4. **Investigate full report-text regeneration on every snapshot** when data volume justifies it (the projection rebuilds `report_text` for all instances per snapshot; with one instance it equals the instance's own cost, section 12.8).
+5. **Investigate dense-burst live performance and browser update latency** in a separately scoped future test (verdict G partial, section 12.12).
+
+### 13.6 Checkpoint
+
+Tag `research/m3-live-observability` is applied to the glacier-relay completion commit (this record, the roadmap status and the handoff), following the `research/m0-baseline`, `research/m1-first-semantic-event` and `research/m2-telemetry` lineage. The native adapter is not tagged again: it did not change in M3, and a new native tag would suggest otherwise. The accepted DLL is not rebuilt or modified; its preserved copy and hashes stand (13.1). Work after this point is M4 and later; `MissionSession`, the wire and the native adapter stay as they are until a later milestone changes them under its own authorization.
