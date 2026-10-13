@@ -37,6 +37,10 @@ Exit (agreed 2026-10-12): a browser on the Windows host displays a live HITMAN m
 ## M4 — Mission recorder
 Persist event streams, derive statistics, timelines and eventually spatial analysis/heat maps.
 
+Exit (agreed 2026-10-13): with recording enabled, one real HITMAN mission attempt on the observed build is recorded by the Relay node into a local recording that is successfully finalized and survives the termination of the game and of the BEAM node; a fresh node without the game replays that recording into Lifecycle state equal to, and a mission report byte-identical to, the live node's state and report captured at quiescence; and the replay presents a transparent completeness account that separates what the recorder wrote from what it knows it missed, what is unverifiable, and what native-side evidence loss remains unknown — so that no recording is presented as complete beyond what the evidence shows.
+
+**Status: in progress.** Design and ADR 0008 (`docs/design/M4_MISSION_RECORDER.md`) accepted in principle 2026-10-13 with the limits stated at acceptance (section 16). M4-A (recording foundation) authorized; M4-B replay, M4-C analytics and M4-D spatial research are not. The exit criterion is not satisfied by M4-A.
+
 ## M5 — Command channel
 BEAM -> adapter -> Glacier.
 

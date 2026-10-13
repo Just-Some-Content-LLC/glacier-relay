@@ -1,6 +1,14 @@
 # ADR 0008 — Mission recordings are append-only evidence logs replayed through the pure model
 
-**Status:** Proposed (2026-10-13, with the M4 design, `docs/design/M4_MISSION_RECORDER.md`). Scope: **M4 — Mission recorder only.** Nothing here authorizes a command channel (M5), a native change, a change to the wire protocol, remote access, or any M4 implementation; the design's first stage needs its own authorization.
+**Status:** Accepted in principle (2026-10-13; proposed the same day with the M4 design, `docs/design/M4_MISSION_RECORDER.md`), reconciled under *Limits stated at acceptance* and the design's section 16. Scope: **M4 — Mission recorder only.** Nothing here authorizes a command channel (M5), a native change, a change to the wire protocol, remote access, a database or a new dependency. The architectural decision accepted: **a recording is a local append-only evidence log, not a second gameplay model.**
+
+## Limits stated at acceptance
+
+- **Durability is what was synced.** Only a successful `datasync` moves the durable boundary; a successful write is not durability. A kill, VM crash or power loss loses an unverifiable tail of unknown size; `flush_ms` bounds nothing when the writer is stalled or degraded. Recovery can verify which complete lines exist, not which were synced.
+- **The overload policy is soft.** Session-to-recorder delivery is asynchronous and unacknowledged; the mailbox is measured only when the recorder runs its loop and is unbounded during a stalled write. Discarded ranges are reported exactly because every record carries its session number; no lossless behaviour under arbitrary load is claimed.
+- **A clean close is a protocol, not a side effect.** Success is reported only after the boundary, the drain, the flush, the sync, the footer, the hashes and the marker; otherwise the recording stays explicitly unclosed. `terminate/2` is one caller of it and is not sufficient alone; connection closes caused by the shutdown itself fall after the boundary and are not recorded.
+- **A restarted recorder recovers the durable boundary, not the lost records.** It never appends to the unverified previous segment; a detected hole's end is known only when a later record establishes it; the cause is recorded only when directly known, otherwise `unknown`. A new node lifetime is a new recording; counters never continue across lifetimes.
+- **Completeness is recorder-level and scoped.** A finalized recording establishes that the recorder wrote everything the session issued between its boundaries; it never establishes complete Glacier observation. Native queue drops, Relay sequence gaps, recorder-side missing evidence and unclean tails are four different facts; the recorder cannot show native drops were zero without the native evidence, and the replay reader must carry every one of these limits forward.
 
 ## Context
 
@@ -14,7 +22,7 @@ M3 closed with an OTP-owned semantic model (`Lifecycle.Instance` per adapter ins
 4. **Transport evidence is recorded beside semantic envelopes**, and a recording states whether it carries transport evidence at all, so that "never observed", "not recorded" and "lost" stay three different readings. A connection close never becomes a mission stop, in the recording or in the replay.
 5. **Format: human-readable NDJSON segments on the Linux filesystem**, one recording per node lifetime, identified by a random id, with a header, a footer on clean close, size-based segments, a size budget that stops recording rather than deleting, and recovery at the record boundary. No database, no term storage, no new dependency for the evidence log.
 6. **Replay is a function from files to values.** It folds records in record order through the pure model, reproduces the session's interpretation exactly (equivalence is tested as term equality of instances and byte-identical report text), never opens a socket, never touches the session or the game, and labels its output as a replay of a named recording.
-7. **Three gap classes stay apart**: native drops (native log counters), Relay sequence gaps (`Lifecycle.gaps`) and recorder gaps (record-number holes with their reason). A replay reports completeness from them separately and never claims completeness it cannot show.
+7. **Loss classes stay apart**: native drops (native log counters, not available to the recorder), Relay sequence gaps (`Lifecycle.gaps`), recorder-side missing evidence (record-number holes with their cause when directly known) and unclean or unverifiable tails. A replay reports completeness from them separately and never claims completeness it cannot show.
 
 ## Consequences
 
