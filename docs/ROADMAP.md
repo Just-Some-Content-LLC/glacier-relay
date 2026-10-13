@@ -46,6 +46,8 @@ BEAM -> adapter -> Glacier.
 
 Exit: one safe, reversible semantic command changes observable game state.
 
+**Status: design investigation (2026-10-13), implementation not authorized.** Both sentences above are recorded as originally written. `docs/design/M5_COMMAND_CHANNEL.md` (read-only research over the native adapter, the SDK, the BEAM wire and session, ADRs 0001–0008, the Hitmen archaeology and the run tooling) proposes: a separate, native-initiated, explicitly duplex loopback command link (`127.0.0.1:4749`, default off on both sides) beside the untouched one-way telemetry connection; a compiled allowlist with a versioned command protocol; engine writes only on the applying frame through SDK wrappers after fresh resolution; one armed BEAM authority with an append-only command journal; a status ladder that separates applied from observed and admits `unknown`; a named reversal for every effectful command; the observer path never the command path (boundary and invariance tests). Candidate first command: the player's outfit through `Functions::ZHitman5_SetOutfit`, observable through `disguise.equipped`, with two research questions open (id-to-kit resolution; whether the SDK path emits the telemetry event) and the game-time multiplier as the fallback. Stages M5-A (BEAM boundary and protocol, offline) → M5-B (native acceptance and scheduling) → M5-C (one reversible command) → M5-D (one controlled runtime experiment); the smallest safe first authorization is M5-A. ADR 0009 proposed. Native adapter unchanged at `c5152848`; no command sent, no DLL, no game.
+
 ## M6 — Second Hitman
 Reproduce and stabilize the upstream experimental `Hitmen` second-player entity on the current game.
 
