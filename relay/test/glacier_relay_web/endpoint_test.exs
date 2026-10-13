@@ -149,11 +149,11 @@ defmodule GlacierRelayWeb.EndpointTest do
 
   # -- read-only: nothing else is served, nothing is changed ---------------------------------
 
-  test "every other method on the diagnostic paths is 405 and changes nothing", %{port: port} do
+  test "every other method on the known paths is 405 and changes nothing", %{port: port} do
     before = MissionSession.state()
     envelope_like = hd(@fixture)
 
-    for path <- ["/report.txt", "/summary.txt"] do
+    for path <- ["/report.txt", "/summary.txt", "/", "/report"] do
       for method <- [:post, :put, :patch] do
         {405, headers, _} = request(method, port, path, envelope_like)
         assert header(headers, "allow") == "GET, HEAD"
@@ -169,10 +169,12 @@ defmodule GlacierRelayWeb.EndpointTest do
   test "unknown paths are 404 for any method and change nothing", %{port: port} do
     before = MissionSession.state()
 
-    {404, _, "not found"} = request(:get, port, "/")
-    {404, _, "not found"} = request(:get, port, "/report")
-    {404, _, "not found"} = request(:get, port, "/live/websocket")
+    {404, _, "not found"} = request(:get, port, "/nowhere")
+    {404, _, "not found"} = request(:get, port, "/report/extra")
+    {404, _, "not found"} = request(:get, port, "/nowhere/websocket")
     {404, _, "not found"} = request(:post, port, "/events", hd(@fixture))
+    {405, _, "method not allowed"} = request(:post, port, "/", hd(@fixture))
+    {405, _, "method not allowed"} = request(:post, port, "/report", hd(@fixture))
     # Plug normalises the trailing slash, so this is the known path and is refused as 405.
     {405, _, "method not allowed"} = request(:post, port, "/report.txt/", hd(@fixture))
 
@@ -180,7 +182,28 @@ defmodule GlacierRelayWeb.EndpointTest do
     assert MissionSession.state() == before
   end
 
-  test "the router exposes exactly the two GET diagnostics plus the refusing fallback" do
+  test "the pages and the client assets are served read-only, GET only", %{port: port} do
+    {200, headers, body} = request(:get, port, "/")
+    assert header(headers, "content-type") =~ "text/html"
+    assert body =~ "Glacier Relay"
+    assert body =~ ~s(<meta name="csrf-token")
+    {200, _, _} = request(:get, port, "/report")
+    {200, h1, b1} = request(:get, port, "/assets/phoenix/phoenix.min.js")
+    assert header(h1, "content-type") =~ "javascript" and b1 =~ "var Phoenix="
+    {200, _, b2} = request(:get, port, "/assets/live_view/phoenix_live_view.min.js")
+    assert b2 =~ "var LiveView="
+    {200, _, b3} = request(:get, port, "/assets/app.js")
+    assert b3 =~ "LiveSocket"
+    {200, h4, _} = request(:get, port, "/assets/app.css")
+    assert header(h4, "content-type") =~ "text/css"
+    {404, _, _} = request(:get, port, "/assets/phoenix/phoenix.js")
+    {404, _, _} = request(:get, port, "/assets/../mix.exs")
+    # The LiveView socket path without an upgrade is refused, never served.
+    {status, _, _} = request(:get, port, "/live/websocket")
+    assert status in 400..499
+  end
+
+  test "the router exposes the two LiveViews, the two GET diagnostics and the refusing fallback" do
     routes =
       GlacierRelayWeb.Router
       |> Phoenix.Router.routes()
@@ -189,6 +212,8 @@ defmodule GlacierRelayWeb.EndpointTest do
 
     assert routes == [
              {:*, "/*path", GlacierRelayWeb.TextController, :fallback},
+             {:get, "/", Phoenix.LiveView.Plug, GlacierRelayWeb.DashboardLive},
+             {:get, "/report", Phoenix.LiveView.Plug, GlacierRelayWeb.ReportLive},
              {:get, "/report.txt", GlacierRelayWeb.TextController, :report},
              {:get, "/summary.txt", GlacierRelayWeb.TextController, :summary}
            ]

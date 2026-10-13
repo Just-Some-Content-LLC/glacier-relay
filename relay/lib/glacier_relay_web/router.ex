@@ -1,22 +1,31 @@
 defmodule GlacierRelayWeb.Router do
   @moduledoc """
-  M3-A routes: two GET diagnostics that serve the existing read-only BEAM presentations as text.
-  Every other method or path reaches `TextController.fallback/2`, which answers 405 or 404 without
-  touching anything. The `:browser` pipeline (session, CSRF, secure headers) is defined for the
-  future interactive routes and has no routes under it yet.
+  Routes: the two read-only LiveViews (`/`, `/report`) under the browser pipeline (session, CSRF,
+  secure headers, root layout), the two GET text diagnostics, and a fallback that answers 405 or
+  404 for everything else without touching anything.
   """
 
   use Phoenix.Router
+  import Phoenix.LiveView.Router
 
   pipeline :browser do
     plug :accepts, ["html"]
     plug :fetch_session
+    plug :fetch_live_flash
+    plug :put_root_layout, html: {GlacierRelayWeb.Layouts, :root}
     plug :protect_from_forgery
     plug :put_secure_browser_headers
   end
 
   pipeline :diagnostics do
     plug :put_secure_browser_headers
+  end
+
+  scope "/", GlacierRelayWeb do
+    pipe_through :browser
+
+    live "/", DashboardLive
+    live "/report", ReportLive
   end
 
   scope "/", GlacierRelayWeb do

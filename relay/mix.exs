@@ -6,6 +6,7 @@ defmodule GlacierRelay.MixProject do
       app: :glacier_relay,
       version: "0.1.0",
       elixir: "~> 1.19",
+      elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       deps: deps()
     ]
@@ -18,6 +19,10 @@ defmodule GlacierRelay.MixProject do
       mod: {GlacierRelay.Application, []}
     ]
   end
+
+  # Test-only support modules (fixture player, rendering checks) live beside the tests.
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
 
   # M3-A (docs/design/M3_LIVE_OBSERVABILITY.md, ADR 0007): the minimal Phoenix/LiveView set for a
   # loopback, read-only observability endpoint. No Node, esbuild, Tailwind, Ecto or database. The

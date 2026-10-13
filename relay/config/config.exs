@@ -11,7 +11,15 @@ config :glacier_relay, GlacierRelay.Wire.Listener,
 # M3-A (ADR 0007): the optional, read-only web subtree. Disabled by default in every environment;
 # when disabled the supervision tree is exactly the three M2 children and no HTTP port is bound.
 # `config/runtime.exs` enables it when GLACIER_RELAY_DASHBOARD=1.
-config :glacier_relay, :dashboard, enabled: false
+config :glacier_relay, :dashboard,
+  enabled: false,
+  # M3-B projection: notifications are coalesced into one recompute per window (ms).
+  coalesce_ms: 50,
+  # The recent-event pane keeps this many rows per viewer: a presentation window, never evidence.
+  stream_limit: 200,
+  # Provenance of the evidence this node receives: :live (the wire listener) or :replay, which a
+  # controlled playback environment sets explicitly (GLACIER_RELAY_SOURCE=replay); never inferred.
+  source: :live
 
 # The HTTP endpoint. Loopback only, a different port from the wire listener (4747), never
 # conflated with it. Bandit serves it. No sockets, LiveViews or static assets are mounted in M3-A.
