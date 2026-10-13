@@ -264,14 +264,33 @@ defmodule GlacierRelay.Dashboard.ProjectionTest do
     s = Projection.refresh()
     assert entry(s, id1).observation == :lost
     assert entry(s, id2).observation == :live
-    assert s.focus == id2
+    # Focus is a live instance with the newest last envelope among the live ones (the session is
+    # shared: another test's instance may hold a connection record that never closed, so id2 is
+    # the focus only when no such instance carries newer envelopes).
+    live = Enum.filter(s.instances, &(&1.observation == :live))
+    assert entry(s, s.focus).observation == :live
+
+    assert entry(s, s.focus).last_event.timestamp ==
+             Enum.max(Enum.map(live, & &1.last_event.timestamp))
+
+    if length(live) == 1, do: assert(s.focus == id2)
 
     :gen_tcp.close(socket)
     Player.await_closed(id2)
     s = Projection.refresh()
-    # No connection is live now: focus is an instance whose last envelope is the newest (the
-    # session is shared, so another instance may tie with id1's 2026-10-12 envelopes).
-    newest = s.instances |> Enum.map(& &1.last_event.timestamp) |> Enum.max()
+    assert entry(s, id2).observation == :lost
+    # Neither of ours is live now. The focus rule over the shared session: a live instance if any
+    # (another test's instance may hold a connection record that never closed: after a socket
+    # re-attributes to another instance, the earlier instance's record stays open), else the
+    # instance whose last envelope is the newest (ties possible with id1's 2026-10-12 envelopes).
+    pool =
+      case Enum.filter(s.instances, &(&1.observation == :live)) do
+        [] -> s.instances
+        live -> live
+      end
+
+    newest = pool |> Enum.map(& &1.last_event.timestamp) |> Enum.max()
+    assert entry(s, s.focus) in pool
     assert entry(s, s.focus).last_event.timestamp == newest
     refute s.focus == id2
     assert entry(s, id1).report == session_report(id1)

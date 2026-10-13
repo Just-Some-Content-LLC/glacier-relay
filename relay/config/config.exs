@@ -21,6 +21,26 @@ config :glacier_relay, :dashboard,
   # controlled playback environment sets explicitly (GLACIER_RELAY_SOURCE=replay); never inferred.
   source: :live
 
+# M4-A (ADR 0008): the optional mission recorder. Disabled by default; `config/runtime.exs`
+# enables it when GLACIER_RELAY_RECORD=1 and takes the directory from GLACIER_RELAY_RECORD_DIR.
+config :glacier_relay, :recording,
+  enabled: false,
+  # Absolute recordings directory; nil means $XDG_STATE_HOME/glacier-relay/recordings or
+  # ~/.local/state/glacier-relay/recordings (the WSL2 filesystem, not a /mnt/ path).
+  dir: nil,
+  # Buffered records are written and synced at least this often (ms) or when the buffer reaches
+  # batch_bytes; one datasync per flush.
+  flush_ms: 100,
+  batch_bytes: 262_144,
+  # Segments roll at this size; the recordings directory stops recording (nothing deleted) at
+  # the budget.
+  segment_bytes: 67_108_864,
+  budget_bytes: 1_073_741_824,
+  # The soft overload policy: above the high-water mark records are discarded (with their exact
+  # numbers written) down to the low-water mark. Measured only while the recorder runs its loop.
+  mailbox_high: 10_000,
+  mailbox_low: 1_000
+
 # The HTTP endpoint. Loopback only, a different port from the wire listener (4747), never
 # conflated with it. Bandit serves it. No sockets, LiveViews or static assets are mounted in M3-A.
 config :glacier_relay, GlacierRelayWeb.Endpoint,

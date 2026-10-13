@@ -15,6 +15,15 @@ if System.get_env("GLACIER_RELAY_SOURCE") == "replay" do
   config :glacier_relay, :dashboard, source: :replay
 end
 
+# M4-A: the recorder starts only when explicitly asked for; the directory must be absolute.
+if System.get_env("GLACIER_RELAY_RECORD") in ["1", "true"] do
+  config :glacier_relay, :recording, enabled: true
+end
+
+if dir = System.get_env("GLACIER_RELAY_RECORD_DIR") do
+  config :glacier_relay, :recording, dir: dir
+end
+
 config :glacier_relay, GlacierRelayWeb.Endpoint,
   secret_key_base: Base.encode64(:crypto.strong_rand_bytes(48)),
   # The LiveView session-token salt, random per boot like the key base (a token never needs to

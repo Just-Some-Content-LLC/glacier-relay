@@ -18,6 +18,12 @@ defmodule GlacierRelayWeb.HeadlessTest do
     assert Application.get_env(:glacier_relay, :dashboard)[:enabled] == false
   end
 
+  test "the recorder is disabled by default and not running (M4-A headless invariance)" do
+    refute GlacierRelay.Application.recording_enabled?()
+    assert Application.get_env(:glacier_relay, :recording)[:enabled] == false
+    assert Process.whereis(GlacierRelay.Recording.Recorder) == nil
+  end
+
   test "the supervision tree holds exactly the three M2 children, in the M2 order" do
     ids =
       GlacierRelay.Supervisor
