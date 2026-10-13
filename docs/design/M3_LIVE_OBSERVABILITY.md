@@ -335,3 +335,110 @@ With the dashboard disabled (the default): `Supervisor.which_children/1` on the 
 **Subscription semantics (section 8 as accepted):** `MissionSession` subscription notifications are change signals, not authoritative snapshots. The projection subscribes; reads the current state after subscribing; coalesces subsequent notifications; rebuilds presentation snapshots from session-owned state; publishes revisions through `Phoenix.PubSub`. The envelope in a notification is never taken as the final folded instance, and the session's notification ordering is not changed. **Implementation boundary for M3-B:** `GlacierRelay.Dashboard.Projection` as a child between PubSub and the endpoint; `DashboardLive`, `ReportLive` and function components rendering `Report.report/1` data unchanged; the LiveView socket mounted in the endpoint with the loopback `check_origin`; the LiveView client served from the dependencies' `priv/static`; the decision on the two text routes (migrate to projection-owned cached data, or keep as justified on-demand diagnostic reads); the fixture player and the LiveView tests of section 7; the viewer-choice `handle_event/3` clauses, which change assigns only. Each needs its own authorization.
 
 **Stop here. M3-B and M3-C are not authorized by this record; nothing is deployed and HITMAN is not launched.**
+
+## 11. M3-B implementation and offline validation record (2026-10-12/13) — projection, dashboard and report page built and validated without the game; M3 not closed
+
+Authorization: M3-A accepted; M3-B authorized (projection, LiveView dashboard, report view, fixture-driven tests, offline validation); M3-C separately gated. Flow delivered exactly as required: Glacier Relay TCP → `MissionSession` → read-only `Projection` → `Phoenix.PubSub` → LiveView → browser. `MissionSession` owns evidence; `Report` owns report semantics; the projection owns cached presentation snapshots; LiveViews own viewer selection and rendering only. **Not delivered, by design:** M3-C, persistence, remote access, authentication, non-loopback hosting, heat maps, commands, M4/M5. Native repository unchanged at `c5152848` (DLL `6047a9a3…`); wire protocol and schemas unchanged; nothing deployed; HITMAN not launched.
+
+### 11.1 Commits
+
+| What | Ref |
+|---|---|
+| `Report` wording helpers made public (`@doc false`; `render/2` byte-identical) and `MissionSession.unidentified/0` (a read) | glacier-relay `main` **`251d6be`** |
+| Projection, web subtree, LiveViews, components, layout, client assets, fixture player, rendering checks, tests | glacier-relay `main` **`c9c95c9`** |
+| This record, handoff, roadmap, relay README | the commit that adds it |
+
+### 11.2 New modules and routes
+
+| Module / file | Role |
+|---|---|
+| `GlacierRelay.Dashboard.Projection` | the single web-side subscriber of `MissionSession`; cached snapshots; coalescing; revisions; PubSub publication (`dashboard:snapshot`, `dashboard:events`); `snapshot/0`, `stats/0`, `refresh/0`, pure `build/4` |
+| `GlacierRelayWeb.Supervisor` | `rest_for_one`: `Phoenix.PubSub` → `Projection` → `Endpoint`; started last under the application supervisor only when `:dashboard, enabled: true` |
+| `GlacierRelayWeb.Endpoint` | adds the LiveView socket (`/live`, WebSocket only, session for CSRF), three read-only `Plug.Static` mounts (`/assets/phoenix/phoenix.min.js`, `/assets/live_view/phoenix_live_view.min.js`, `/assets/app.css`, `/assets/app.js`) |
+| `GlacierRelayWeb.Router` | `live "/"` → `DashboardLive`, `live "/report"` → `ReportLive` under the browser pipeline (session, live flash, root layout, CSRF, secure headers); `GET /report.txt`, `GET /summary.txt`; the fallback now also answers 405 for other methods on `/` and `/report` |
+| `GlacierRelayWeb.Layouts` | the root layout: CSRF meta, stylesheet, the two prebuilt client scripts and `app.js` |
+| `GlacierRelayWeb.DashboardLive` | the dashboard; viewer choices only (`focus`, `select_attempt`, `select_pane`, `toggle`, `clear_events`); bounded event stream |
+| `GlacierRelayWeb.ReportLive` | every instance and attempt with the same components, plus the verbatim report text; `toggle` only |
+| `GlacierRelayWeb.Components` | function components that lay out report sub-maps unchanged, using `Report.overview_lines/1`, `group_lines/1`, `counts_text/1`, `activity_lines/1`, `line_text/1`, `tag_text/1`, `connection_line/1`, `stray_lines/1`; `dashboard_body/1` renders the whole page from a snapshot so the empty state is testable without a socket |
+| `priv/static/app.css`, `priv/static/app.js` | one stylesheet (two-column grid, one column under 960 px); ten lines of client code that connect the LiveSocket with the page's CSRF token |
+| `test/support/fixture_player.ex` | deterministic playback through the real listener with the instance id rewritten per test, optional pacing from envelope timestamps, waits on session notifications |
+| `test/support/rendering_checks.ex` | the established forbidden-word regex over the visible text of rendered HTML (limitation lines and verbatim JSON payload cells excluded) |
+
+Configuration added: `:dashboard, coalesce_ms: 50, stream_limit: 200, source: :live`; `GLACIER_RELAY_SOURCE=replay` (runtime) or a `source: :replay` start option labels a controlled playback environment; the label is never inferred from the traffic. `live_view: [signing_salt: …]` is random per boot like the key base.
+
+### 11.3 Projection snapshot contract (as implemented)
+
+```
+%{revision: n,                       # monotonic within the VM, across projection restarts (persistent term)
+  source: :live | :replay,           # configured provenance, never inferred
+  listener: %{ip, port, basis: :configured} | :not_configured,   # read from configuration, never by calling the listener
+  built_at: DateTime,
+  focus: instance_id | nil,          # an instance with a live connection, else the newest last envelope
+  instances: [%{id, observation: :never | :live | :lost, received, last_sequence, gaps,
+                connections: [..], last_event: %{sequence, event_type, timestamp} | nil,
+                current_attempt: n | nil, latest_attempt: n | nil,
+                report: <the Report.report/1 entry for this instance, unchanged>}],
+  unidentified: [..],                # connections that closed before naming an instance
+  report_text: "…"}                  # Report.render/2 over the same instances and unidentified list
+```
+
+Events topic: `{:event, instance_id, %Envelope{}}` for every envelope, `{:transport, instance_id | nil, :opened | :identified | :closed, info}` for transport notices; distinct, never merged, never a mission fact. Startup and restart: subscribe, then `state/0` + `unidentified/0`, build, publish; a notification is a change signal, never a snapshot. Coalescing: one pending timer at most (50 ms); each window reads the session once, recomputes only instances whose fingerprint `{received, last_sequence, connections, anomaly count}` changed, bumps the revision and publishes. `stats/0`: recomputes, snapshots published, events and transport notices seen, dirty ids, recomputed instances, read and recompute latencies (last, max, total).
+
+### 11.4 Measured coalescing and latency (`m3b-perf.txt`, `projection_perf_test.exs`; WSL2, no HITMAN)
+
+| Measurement | Result |
+|---|---|
+| b5_run1 (45 envelopes) at full speed | 1 snapshot, 1 recompute for 45 events; ingest (send → last notification) 2.5–3.1 ms with the dashboard enabled, 2.4–2.8 ms disabled |
+| `MissionSession.state/0` + `unidentified/0` read | 35–816 µs (max over runs) |
+| Recompute (`build/4` incl. `Report.report/1` and `render/2`) | warm 0.5–3.7 ms for a 45-envelope instance; **cold 80–102 ms** for the first recompute in a fresh VM (code loading), 44 ms in the live node's first replay |
+| B1 window (18 envelopes) at the observed publication rate (1.65 s) | 18 snapshots, 18 recomputes: every event sat in its own 50 ms window, as designed |
+| B1 window accelerated (full speed) | 1 snapshot, 1 recompute; final report identical to the authoritative report |
+| `GET /report.txt` (the M3-A exception) during the 45-envelope burst | 8 requests; min 0.4–3.1 ms, **max 76–254 ms** (the maximum includes the request that coincides with the cold recompute and the session's own `report_text` fold; warm requests are milliseconds) |
+| 200-row event window from real envelopes | 79,736 bytes flat size (about 80 KB per viewer) |
+| Snapshot broadcasts per burst | equal to recomputes (one per window) |
+| Observable ingestion backpressure | none measured: the dashboard adds one `send` per event to the session's path; end-to-end ingest differs by well under a millisecond per run |
+
+No threshold is set from these numbers. Recommendation for M3-C: treat a warm recompute above 50 ms per window, a session read above 5 ms, or an ingest difference above 10 ms against headless as a finding to investigate, and record cold-start separately (the first recompute after boot is expected to cost tens of milliseconds once).
+
+### 11.5 Tests (`m3b-mix5.txt`)
+
+**311 tests, 0 failures, five consecutive runs** with `--warnings-as-errors` (259 from M2, 20 from M3-A, 32 added here). Projection (`projection_test.exs`): `build/4` equals the B7 report and text on all ten fixtures with nothing recomputed on a second build; empty state; unidentified evidence; `:live` unless the environment says `:replay`; late start reads the session; burst coalescing with every event in the authoritative timeline and strictly increasing revisions; dirty recomputation; a connection close is never a stop and a reconnect continues the instance (the interruption stays on the record; the attempt then stops from `mission.stopped`); several adapters and the focus rule; the events topic's two message kinds per instance; crash and restart with a higher revision and untouched ingestion pids; no mutation of session evidence. Performance (`projection_perf_test.exs`): 11.4. Dashboard (`dashboard_live_test.exs`): the empty state renders without a socket and claims nothing; a replayed mission through the real listener, newest events first, with the limitations and the forbidden-word check; transport and mission status separate through live → lost → reconnect → stopped; viewer choices change presentation only with the session state unchanged; the bounded window (230 synthetic lifecycle envelopes: at most 200 rows in the pane, 115 attempts and 230 events in the report). Report page (`report_live_test.exs`): the structured panels, the four limitations, the verbatim `<pre>` text equal to the snapshot's and the session's `report_text/0`, collapsing changes presentation only; a later snapshot updates the page. Boundary (`boundary_test.exs`, now covering `GlacierRelay.Dashboard` too): compiled remote-call tables (no wire, socket, validation, folding or delivery calls; the projection's only session calls are `subscribe/0`, `state/0`, `unidentified/0`; LiveViews and components call the session not at all; no `GenServer.cast`), exported functions, source tokens, and the LiveViews' event names (`clear_events focus select_attempt select_pane toggle`; `toggle`). Endpoint (`endpoint_test.exs`): pages and assets served GET-only, the socket path refused without an upgrade, path traversal 404, every other method 405 on the known paths. Headless (`headless_test.exs`): unchanged.
+
+Two test-side lessons, recorded: `Phoenix.PubSub` subscriptions are `Registry` registrations and the registry links the subscriber, so a test that stops the web subtree traps exits first; the bounded-window test renders 230 inserts into a page carrying 115 attempts and needed a longer wait (it was flaky at 3 s, stable at 10 s; a presentation cost of the synthetic case, not of real runs).
+
+### 11.6 Browser asset provenance
+
+Served read-only from the resolved dependencies: `deps/phoenix/priv/static/phoenix.min.js` (25,556 B; defines the global `Phoenix`) and `deps/phoenix_live_view/priv/static/phoenix_live_view.min.js` (124,124 B; defines the global `LiveView`; LiveView 1.2.12), mounted with `Plug.Static` `from: {:phoenix, "priv/static"}` / `{:phoenix_live_view, "priv/static"}` restricted to those two files. No Node, bundler, Tailwind or generated asset; the application's own `app.js` (505 B) and `app.css` (3,969 B) are plain files under `priv/static`. Paths were verified against the installed versions, not assumed.
+
+### 11.7 Offline validation (2026-10-13, 03:50Z to 03:56Z; evidence `%TEMP%\glacier-m0\hitmen\m3b-offline\`, `sha256.txt`; no HITMAN)
+
+| Step | Result |
+|---|---|
+| Start `GLACIER_RELAY_DASHBOARD=1 elixir --sname relay -S mix run --no-halt` | `127.0.0.1:4747` and `127.0.0.1:4748` listening (one `beam.smp`); web subtree children `[Phoenix.PubSub.Supervisor, Dashboard.Projection, Endpoint]` |
+| Pages and assets (WSL2 curl) | `/` 200 html (empty state: "no adapter instance has delivered an event"), `/report` 200, `/report.txt` and `/summary.txt` 200 text, `app.css` 200 `text/css`, `app.js` and both client libraries 200 `text/javascript` |
+| Refusals | `POST /` 405, `POST /report` 405, `POST /events` (whole fixture) 404, `GET /live/websocket` without an upgrade 400, `GET /assets/../mix.exs` 404 |
+| WebSocket handshake (WSL2 curl; cookie + CSRF token from the page) | **`HTTP/1.1 101 Switching Protocols`**; foreign `Origin` → **403** (`check_origin`, logged as "Could not check origin", the only error line in the web log); without the CSRF token → 101 at the transport, but Phoenix then loads no session (`Phoenix.Socket.Transport.connect_session/4`), so the join is refused (next row) |
+| **LiveView join over a real WebSocket from the Windows host** (`ws-join.ps1`, .NET `ClientWebSocket`, `ws://localhost:4748/live/websocket`, Origin `http://localhost:4748`, the session cookie, the page's CSRF, session and static tokens) | state `Open`; `phx_join` → `phx_reply` **`"status":"ok"`**, 13,362 bytes rendered, `liveview_version 1.2.12`, carrying the replayed instance id, "stopped at #15" and the limitation line (`ws-join-reply.json`); clean close. The same join **without** the CSRF token → `{"status":"error","response":{"reason":"stale"}}`. Localhost forwarding carries the WebSocket upgrade from Windows to WSL2. (`curl.exe` on Windows could not be made to print the 101; the .NET client is the record.) |
+| Replay `b6_run1` through the wire listener, then read the pages | dashboard and report pages carry the instance, "observation lost", "stopped at #15", Michel Trier, the player-state line, the limitation line, the bounded-window label; `/report.txt` **byte-identical** to `MissionSession.report_text/0` over RPC; projection snapshot revision 2, source live, 1 instance, stats `recomputes 2, events_seen 16, transport_seen 3` |
+| Non-loopback | Windows `curl.exe` to `172.23.229.225:4748` → refused; bind list `127.0.0.1:4747`, `127.0.0.1:4748` only |
+| Stop via RPC `:init.stop` | both ports free, epmd name released, no `beam.smp` left |
+| Headless start, RPC inspection, stop | `127.0.0.1:4747` only; 4748 refused; children `[MissionSession, Wire.ConnectionSupervisor, Wire.Listener]`; `Web.Supervisor`, `Endpoint`, `PubSub`, `Projection` pids all nil; `dashboard_enabled?` false; both ports free after stop; headless log 0 errors |
+
+### 11.8 Headless, restart and security boundaries
+
+Headless mode is byte-for-byte the M2 tree (tested and inspected live). Inside the web subtree, a projection crash restarts the projection and the endpoint (rest_for_one; its LiveViews remount from the recovered snapshot, read from the session, with a higher revision); an endpoint crash restarts only the endpoint; neither touches `MissionSession` or the listener (tested). A browser disconnect remounts from the current snapshot; a projection restart never assumes its mailbox held history. Security assumptions unchanged from M3-A: loopback only, no authentication, any local process reaching the port can read the report; the LiveView socket accepts loopback origins only and a join needs the session cookie and the page's CSRF token; no write route, upload, API, socket command handler or path from the browser to the wire (the compiled-call boundary test now covers the projection as well). The two text routes keep their M3-A implementation (direct read-only session calls) so that their bytes stay comparable with the headless tools; their latency under the fixture burst is in 11.4 and shows no ingestion problem, so no migration is proposed.
+
+### 11.9 Unresolved issues (recorded, none blocking)
+
+1. The first recompute after boot costs tens of milliseconds (code loading); a warm-up is not added to production. M3-C should read `Projection.stats/0` after the run to separate cold from warm.
+2. `GET /report.txt` during a burst showed a 76–254 ms maximum in the test VM, dominated by cold paths and the session's own fold of `report_text/0`; warm requests are milliseconds. If M3-C shows it mattering, the M3-A exception can migrate to the projection's cached `report_text` (same bytes for the same state) as a separate refinement.
+3. Stopping a test-supervised endpoint logs a Phoenix `PoolDrainer` ETS error (`GlacierRelayWeb.Endpoint` config table already gone when the socket pool drainer terminates); cosmetic, test-only, not seen on `:init.stop` of the real node.
+4. `curl.exe` on Windows did not print the WebSocket 101 (the handshake was proven with the .NET client instead); not an endpoint issue.
+5. The B1 window at its observed rate produces one snapshot per event (events 50 ms or more apart); coalescing only merges denser bursts, as intended. The window is configurable (`coalesce_ms`).
+6. The `:replay` source label exists but no committed tool sets it yet; the fixture player in tests runs under `:live` through the real listener, and the projection test proves the label is not inferred.
+
+### 11.10 Proposed controlled M3-C runtime validation (its own authorization; ask the operator first)
+
+Artifacts frozen: the accepted M2 DLL `6047a9a3…` (hash-verified on install, unchanged), BEAM glacier-relay `main` at the M3-B record commit with `GLACIER_RELAY_DASHBOARD=1`, the Windows browser at `http://localhost:4748/`. Script: the B6 route (menu → Paris → enter and leave a trespass zone → draw and holster the loadout pistol → exit to menu → quit), with the dashboard open on a second screen. What only the live run validates: the browser's own LiveView client over localhost forwarding (the .NET join proved the transport); transport timing against a real process start, mission and quit; the event pane and the panels updating within one coalescing window at real publication rates; `Projection.stats/0` warm latencies under real bursts; `/report.txt` equal to the headless `final_state.exs` path over the same run; no change in the native log counters (`captured = normalized + malformed`, `published = received`) and no change in game behaviour. Evidence: operator screenshots at defined moments (menu, after the trespass, after the quit), `beam-events.ndjson`, `beam-final-state.txt`, `report.txt`, the projection stats over RPC, the native log and `compare.py` reconciliation as in every M2 run. Pass criteria: every M2 run criterion unchanged; the dashboard shows the attempt and its stop with transport and mission status separate; no fact on screen is absent from `/report.txt`; the forbidden-word check passes over the saved page HTML. Abort conditions and cleanup are the existing ones (`run-cleanup.sh`, hash-verified return to M0); nothing is fixed forward during the run.
+
+**Stop here. M3-C is not authorized by this record; nothing is deployed and HITMAN is not launched. M3 is not closed.**
