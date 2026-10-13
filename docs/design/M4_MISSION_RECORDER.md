@@ -680,3 +680,22 @@ No new threshold is introduced; nothing was materially above the M4-A range.
 The roadmap's M4 exit criterion as agreed on 2026-10-13 — one real attempt recorded, finalized, surviving the termination of the game and of the BEAM node, replayed by a fresh node into equal Lifecycle state and a byte-identical report, with a transparent completeness account — is **met by this run for one attempt on one route**, with the coverage limits of 20.9. Whether that satisfies M4, and whether M4-C analytics or M4-D spatial research are opened, are the operator's separate decisions; M4-C analytics and the milestone-completion decision remain gated. ADR 0008 is unchanged by this run.
 
 **Stop here. The controlled run, its clean restoration and this record are done; no analytics, spatial telemetry, replay-fed LiveView, native, protocol or semantic change was made; no crash experiment and no second session was run; M4 is not marked complete.**
+
+## 21. Acceptance of the M4 live recording and replay experiment (2026-10-13) — the §20 run accepted for its documented scope; M4 closure deferred to M4-C
+
+The controlled experiment recorded in section 20 passed architectural review and is **accepted for its documented scope**: the live recording and replay stage, not overall M4 completion. The record is `1acb391` (section 20); the evidence is `%TEMP%\glacier-m0\hitmen\m4-run1\` (117 files, hashed) and the recording `9fcb9a72-74bb-49fa-86c3-7e6e21820381`, preserved unchanged under `~/.local/state/glacier-relay-m4-run1/` and in the evidence directory.
+
+Accepted facts:
+
+- the frozen native artifact was used unchanged: ZHMModSDK `relay/m2` `c51528483a4f1f1eb9dcd63ae81f5272a6d5a8fe`, DLL SHA-256 `6047a9a3278fdd725c55bdc16ac47f832436afb2f5a6f2260488a436a6009d65`, hashed on the installed copy; the BEAM at `209bd71` (the section-19 corrected format);
+- twelve session records were durably persisted in one segment (connection opened, identified, envelopes #1–#9, closed), record numbers 1–12 continuous, footer `shutdown` at boundary 12;
+- nine envelopes reconciled across native publication, BEAM acceptance and recorder persistence with zero field mismatches, and the native counters reported zero queue drops;
+- a fresh node without the application reproduced term-equal Lifecycle instances, unidentified transport evidence, summary data and B7 report data;
+- the legacy summary text and the B7 report text were byte-identical to the live captures;
+- recording finalization and hash verification succeeded (`sha256.txt` OK, `CLOSED`, `finalization clean`);
+- the completeness account was authoritative for the recorded scope (12 verified, 0 unverified, no gap, no rejection, 1 exact close reason, `recorder_authoritative? true`), with native-side drops stated unknown by the recording and reconciled to zero only externally;
+- M0 restoration was verified 26/26, with the retail listing, hashes and `mods.ini` byte-identical to before the run.
+
+The limitations of section 20.9 stand unchanged: one run, one route, one connection, one segment; no roll, restart, write failure or qualified close reason exercised live; no actor outcome, item or objective occurred; the open-but-unidentified connection is visible in the recording and not in `unidentified/0` (the M2 model); native drops known only through the external log reconciliation.
+
+**The agreed M4 exit criterion has been demonstrated by one real mission recording on the observed build. Formal M4 closure is deferred until one bounded, offline-only M4-C analytics stage completes (its own record follows). M4-D spatial research and any further runtime experiment are not authorized.**
