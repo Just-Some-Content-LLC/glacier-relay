@@ -11,6 +11,11 @@ defmodule GlacierRelay.MissionSession do
   one; until then it is an unidentified connection, and if it closes first it stays that way. A
   connection closing never asserts anything about a mission; see `GlacierRelay.Lifecycle`.
 
+  Since M4-B the folding itself is the pure `GlacierRelay.Session.Fold`, shared with the offline
+  replay; this process owns what only a process can: the connection pids and their monitors, the
+  session-assigned connection and record numbers, the subscribers, the notifications and the
+  logging. The fold's state is what `state/0` and `unidentified/0` return.
+
   Subscribers receive `{:relay_event, %Envelope{}}` for every event and
   `{:relay_connection, :opened | :identified | :closed, info}` for connection evidence.
   No gameplay authority, no persistence.
@@ -22,18 +27,16 @@ defmodule GlacierRelay.MissionSession do
   listens), the session-assigned connection number, the validated envelope with its wire
   object, the evidence's own time (the envelope's BEAM receipt time; the connection's open or
   close time) and the close reason. Records are sent at the same points as the ordinary
-  notifications, by `send/2`, never acknowledged, and nothing here touches a disk. The fold,
-  the state and the read API are unchanged.
+  notifications, by `send/2`, never acknowledged, and nothing here touches a disk.
   """
 
   use GenServer
   require Logger
 
-  alias GlacierRelay.{Lifecycle, Summary}
   alias GlacierRelay.Recording.Record
+  alias GlacierRelay.Session.Fold
+  alias GlacierRelay.Summary
   alias GlacierRelay.Wire.Envelope
-
-  @max_unidentified 32
 
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -88,9 +91,9 @@ defmodule GlacierRelay.MissionSession do
   def init(_opts) do
     {:ok,
      %{
-       instances: %{},
-       connections: %{},
-       unidentified: [],
+       fold: Fold.new(),
+       # pid => %{conn: session connection number, monitor: ref}
+       pids: %{},
        subscribers: MapSet.new(),
        # M4-A: record subscribers and the two session-owned counters (records, connections).
        record_subscribers: MapSet.new(),
@@ -110,37 +113,44 @@ defmodule GlacierRelay.MissionSession do
     {:reply, :ok, %{state | record_subscribers: MapSet.put(state.record_subscribers, pid)}}
   end
 
-  def handle_call(:state, _from, state), do: {:reply, state.instances, state}
-  def handle_call(:summary, _from, state), do: {:reply, Summary.build(state.instances), state}
+  def handle_call(:state, _from, state), do: {:reply, state.fold.instances, state}
+
+  def handle_call(:summary, _from, state),
+    do: {:reply, Summary.build(state.fold.instances), state}
 
   def handle_call(:summary_text, _from, state),
-    do: {:reply, Summary.render(state.instances, state.unidentified), state}
+    do: {:reply, Summary.render(state.fold.instances, state.fold.unidentified), state}
 
-  def handle_call(:report, _from, state), do: {:reply, Summary.report(state.instances), state}
+  def handle_call(:report, _from, state),
+    do: {:reply, Summary.report(state.fold.instances), state}
 
   def handle_call(:report_text, _from, state),
-    do: {:reply, Summary.render_report(state.instances, state.unidentified), state}
+    do: {:reply, Summary.render_report(state.fold.instances, state.fold.unidentified), state}
 
-  def handle_call(:unidentified, _from, state), do: {:reply, state.unidentified, state}
+  def handle_call(:unidentified, _from, state), do: {:reply, state.fold.unidentified, state}
 
   @impl true
   def handle_cast({:connection_opened, pid, peer, at}, state) do
     ref = Process.monitor(pid)
     no = state.conn_no + 1
-    connection = %{peer: peer, opened_at: at, instance_id: nil, monitor: ref, no: no}
+    {fold, []} = Fold.connection_opened(state.fold, no, peer, at)
+
+    state = %{
+      state
+      | fold: fold,
+        conn_no: no,
+        pids: Map.put(state.pids, pid, %{conn: no, monitor: ref})
+    }
+
     notify(state, {:relay_connection, :opened, %{peer: peer, at: at}})
-    state = record(%{state | conn_no: no}, :connection_opened, %{conn: no, peer: peer, at: at})
-    {:noreply, put_in(state.connections[pid], connection)}
+    {:noreply, record(state, :connection_opened, %{conn: no, peer: peer, at: at})}
   end
 
   def handle_cast({:event, pid, %Envelope{} = envelope, received_at}, state) do
     id = envelope.adapter_instance_id
-    instance = Map.get_lazy(state.instances, id, fn -> Lifecycle.new(id) end)
-
-    {state, instance} = identify(state, pid, id, instance, received_at)
-    {instance, notes} = Lifecycle.apply_event(instance, envelope, received_at)
-
-    for note <- notes, do: log_note(id, note)
+    conn = connection_no(state, pid)
+    {fold, effects} = Fold.event(state.fold, conn, envelope, received_at)
+    state = Enum.reduce(effects, %{state | fold: fold}, &apply_effect/2)
 
     Logger.info(
       "relay: #{envelope.event_type} ##{envelope.sequence} from #{id} at #{envelope.timestamp}: #{inspect(envelope.payload)}"
@@ -150,14 +160,14 @@ defmodule GlacierRelay.MissionSession do
 
     state =
       record(state, :envelope, %{
-        conn: connection_no(state, pid),
-        peer: connection_peer(state, pid),
+        conn: conn,
+        peer: connection_peer(state, conn),
         instance: id,
         envelope: envelope,
         at: received_at
       })
 
-    {:noreply, put_in(state.instances[id], instance)}
+    {:noreply, state}
   end
 
   def handle_cast({:connection_closed, pid, reason, at}, state) do
@@ -167,7 +177,7 @@ defmodule GlacierRelay.MissionSession do
   @impl true
   def handle_info({:DOWN, _ref, :process, pid, reason}, state) do
     state =
-      if Map.has_key?(state.connections, pid),
+      if Map.has_key?(state.pids, pid),
         do: close_connection(state, pid, {:down, reason}, DateTime.utc_now()),
         else: state
 
@@ -181,108 +191,72 @@ defmodule GlacierRelay.MissionSession do
 
   # -- internals -----------------------------------------------------------------------------
 
-  # Attributes the connection to the instance on its first valid envelope. A connection that was
-  # never announced (direct callers in tests) is treated as opened at identification time.
-  defp identify(state, pid, id, instance, at) do
-    case state.connections[pid] do
-      %{instance_id: ^id} ->
-        {state, instance}
+  defp connection_no(state, pid), do: state.pids[pid] && state.pids[pid].conn
+  defp connection_peer(_state, nil), do: nil
 
-      %{instance_id: nil} = connection ->
-        instance =
-          Lifecycle.connection_identified(instance, connection.peer, connection.opened_at, at)
-
-        notify(
-          state,
-          {:relay_connection, :identified, %{peer: connection.peer, instance_id: id, at: at}}
-        )
-
-        state =
-          record(state, :connection_identified, %{
-            conn: connection.no,
-            peer: connection.peer,
-            instance: id,
-            previous_instance: nil,
-            at: at
-          })
-
-        {put_in(state.connections[pid], %{connection | instance_id: id}), instance}
-
-      %{instance_id: other} = connection ->
-        # The same socket switched instance ids: not something the native adapter does, but it is
-        # evidence, so record it as a new attribution rather than drop the event. (No ordinary
-        # notification, as before; the record subscribers see the re-attribution.)
-        Logger.warning("relay: #{connection.peer} delivered instance #{id} after #{other}")
-
-        instance =
-          Lifecycle.connection_identified(instance, connection.peer, connection.opened_at, at)
-
-        state =
-          record(state, :connection_identified, %{
-            conn: connection.no,
-            peer: connection.peer,
-            instance: id,
-            previous_instance: other,
-            at: at
-          })
-
-        {put_in(state.connections[pid], %{connection | instance_id: id}), instance}
-
-      nil ->
-        {state, instance}
-    end
-  end
-
-  defp connection_no(state, pid), do: state.connections[pid] && state.connections[pid].no
-  defp connection_peer(state, pid), do: state.connections[pid] && state.connections[pid].peer
+  defp connection_peer(state, conn),
+    do: state.fold.connections[conn] && state.fold.connections[conn].peer
 
   defp close_connection(state, pid, reason, at) do
-    case Map.pop(state.connections, pid) do
+    case Map.pop(state.pids, pid) do
       {nil, _} ->
         state
 
-      {%{monitor: ref} = connection, connections} ->
+      {%{conn: conn, monitor: ref}, pids} ->
         Process.demonitor(ref, [:flush])
-        state = %{state | connections: connections}
-
-        notify(
-          state,
-          {:relay_connection, :closed,
-           %{peer: connection.peer, instance_id: connection.instance_id, at: at, reason: reason}}
-        )
-
-        state =
-          record(state, :connection_closed, %{
-            conn: connection.no,
-            peer: connection.peer,
-            instance: connection.instance_id,
-            reason: reason,
-            at: at
-          })
-
-        case connection.instance_id do
-          nil ->
-            record = %{
-              peer: connection.peer,
-              opened_at: connection.opened_at,
-              closed_at: at,
-              close_reason: reason
-            }
-
-            %{state | unidentified: Enum.take([record | state.unidentified], @max_unidentified)}
-
-          id ->
-            instance = Lifecycle.connection_closed(state.instances[id], at, reason)
-
-            if Lifecycle.current_attempt(instance) do
-              Logger.warning(
-                "relay: connection for #{id} closed (#{inspect(reason)}) while attempt #{Lifecycle.current_attempt(instance).number} is last known playing; no mission.stopped observed"
-              )
-            end
-
-            put_in(state.instances[id], instance)
-        end
+        {fold, effects} = Fold.connection_closed(state.fold, conn, reason, at)
+        Enum.reduce(effects, %{state | fold: fold, pids: pids}, &apply_effect/2)
     end
+  end
+
+  # The fold's effects, in order: notify, record and log what it decided.
+  defp apply_effect({:identified, info}, state) do
+    notify(
+      state,
+      {:relay_connection, :identified,
+       %{peer: info.peer, instance_id: info.instance, at: info.at}}
+    )
+
+    record(state, :connection_identified, info)
+  end
+
+  defp apply_effect({:reattributed, info}, state) do
+    Logger.warning(
+      "relay: #{info.peer} delivered instance #{info.instance} after #{info.previous_instance}"
+    )
+
+    record(state, :connection_identified, info)
+  end
+
+  defp apply_effect({:note, id, note}, state) do
+    log_note(id, note)
+    state
+  end
+
+  defp apply_effect({:closed, info}, state) do
+    notify(
+      state,
+      {:relay_connection, :closed,
+       %{peer: info.peer, instance_id: info.instance, at: info.at, reason: info.reason}}
+    )
+
+    state =
+      record(state, :connection_closed, Map.take(info, [:conn, :peer, :instance, :reason, :at]))
+
+    if info.playing_attempt do
+      Logger.warning(
+        "relay: connection for #{info.instance} closed (#{inspect(info.reason)}) while attempt #{info.playing_attempt} is last known playing; no mission.stopped observed"
+      )
+    end
+
+    state
+  end
+
+  defp apply_effect({:unknown_connection, conn}, state) do
+    # Cannot happen live (every connection number comes from this process); kept for the fold's
+    # contract with the replay.
+    Logger.error("relay: evidence named unknown connection #{inspect(conn)}")
+    state
   end
 
   defp log_note(id, {:gap, expected, got}),
@@ -387,7 +361,16 @@ defmodule GlacierRelay.MissionSession do
   # the numbering is the session's and never depends on a listener.
   defp record(state, kind, fields) do
     no = state.record_no + 1
-    record = struct!(Record, Map.put(fields, :no, no) |> Map.put(:kind, kind))
+
+    record =
+      struct!(
+        Record,
+        fields
+        |> Map.take(Record.__struct__() |> Map.keys())
+        |> Map.put(:no, no)
+        |> Map.put(:kind, kind)
+      )
+
     for pid <- state.record_subscribers, do: send(pid, {:relay_record, record})
     %{state | record_no: no}
   end
