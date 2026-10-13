@@ -1,0 +1,259 @@
+# M4 Design — Mission Recorder
+
+Date: 2026-10-13. Status: **design proposal, awaiting architectural review.** Nothing in this document is implemented, installed or run: no recorder process exists, no persistence dependency is added, no file is written by the application, `MissionSession` and the wire are unchanged since M2, the native adapter stays at the M2 checkpoint (ZHMModSDK `relay/m2` `c5152848`, DLL `6047a9a3…`), and the game is at M0. The first M4 implementation stage needs its own authorization.
+
+Inputs: `ROADMAP.md` M4 ("Persist event streams, derive statistics, timelines and eventually spatial analysis/heat maps"); `ARCHITECTURE.md` (a `Recorder` under `MissionSession` as a hypothesis; two classes of state); `VISION.md`; ADR 0001–0007; `M2_TELEMETRY.md` sections 2, 19, 52 (the two B7 provenance notes); `M3_LIVE_OBSERVABILITY.md` sections 1, 8, 11–13; and the BEAM sources read as they are on `main` at the M3 checkpoint (`54bcc4f`): `application.ex`, `wire/listener.ex`, `wire/connection.ex`, `wire/envelope.ex`, `wire/framing.ex`, `events.ex`, `mission_session.ex`, `lifecycle.ex`, `attempt_history.ex`, `summary.ex`, `report.ex`, `dashboard/projection.ex`, `config/*.exs`, `mix.exs`, `test/support/fixture_player.ex`, `test/glacier_relay/stage_a_fixture_test.exs`, the ten `test/*_envelopes.ndjson` fixtures; the native sources `TcpRelaySink.{h,cpp}` and `TelemetryQueue.h`; the evidence directories (`m3c-run1`, `b0-run1`, `wire-probe/b6`) with `final_state.exs`, `compare.py`, `m3c_watch.exs`, `beam-events.ndjson` and the native logs.
+
+Position: M4 preserves what M0–M3 established. Glacier supplies evidence, Relay normalizes it, BEAM owns its interpretation, Phoenix presents it; a recorder must **persist what BEAM received, in the order BEAM interpreted it, with the time it was received and the transport evidence beside it**, and a replay must rebuild the same interpretation from the recording without inventing missing history. Statements below are marked **[fact]** (read from source or evidence), **[measured]** (a number taken on this machine today, stated with its conditions), **[hypothesis]** or **[recommendation]**.
+
+## 1. Verified current architecture (read-only inspection)
+
+### 1.1 Supervision tree and ingestion path **[fact]**
+
+```
+GlacierRelay.Supervisor (one_for_one)
+├── MissionSession                       GenServer; all evidence lands here; no persistence; a crash loses its state
+├── Wire.ConnectionSupervisor            DynamicSupervisor; one Wire.Connection (restart: :temporary) per socket
+├── Wire.Listener                        listen socket 127.0.0.1:4747; linked acceptor
+└── GlacierRelayWeb.Supervisor           optional (GLACIER_RELAY_DASHBOARD=1): PubSub → Dashboard.Projection → Endpoint
+```
+
+`Wire.Connection` frames NDJSON (`active: :once`, `max_line_bytes` 65,536), decodes and validates each line (`Envelope.decode/1`: `JSON.decode` → envelope fields → `Events.validate/3`), stamps **`received_at = DateTime.utc_now()` in the connection process** and **casts** `{:event, self(), envelope, received_at}` to `MissionSession`; it casts `{:connection_opened, self(), peer, at}` in `init/1` and `{:connection_closed, self(), reason, at}` on `tcp_closed` / `tcp_error` / line-too-long. A rejected line is logged and counted on the connection and never reaches the session. Nothing on this path waits for a consumer; the session's mailbox is the only buffer between the socket and the fold.
+
+`MissionSession.handle_cast({:event, pid, envelope, received_at})` looks up or creates the `Lifecycle.Instance` for the envelope's `adapter_instance_id`, runs `identify/5` (attributes the connection to the instance on its first valid envelope, calling `Lifecycle.connection_identified/4` and notifying `{:relay_connection, :identified, %{peer, instance_id, at}}`; a socket that switches instance ids is re-attributed **without** a notification), folds with the pure `Lifecycle.apply_event/3`, logs the fold notes and one info line, and sends `{:relay_event, %Envelope{}}` to every subscriber. `connection_opened` notifies `{:relay_connection, :opened, %{peer, at}}` before storing the connection; `connection_closed` (and a `:DOWN` for a connection pid) pops the connection, notifies `{:relay_connection, :closed, %{peer, instance_id, at, reason}}`, and either appends an unidentified record (bounded to 32, newest first) or folds `Lifecycle.connection_closed/3` into the instance. Subscribers are plain pids reached by `send/2`; their mailboxes are unbounded; there is no acknowledgement and no replay of missed messages.
+
+What the session holds per instance (`Lifecycle.Instance`): `last_sequence`, `received`, `gaps` (`{expected, got}`), `last_event` (the whole envelope), `attempts` (each with `playing`/`stopped` observations carrying `sequence`, `timestamp`, `received_at`, `game_session_id`; outcomes, disguise, item, objective and player-state occurrences each carrying `sequence`, `timestamp`, `received_at`, `payload`; interruptions; contract correlation; disposition), `unmatched_stops`, the unattributed lists, `connections` (`peer`, `opened_at`, `identified_at`, `closed_at`, `close_reason`), `contract_sessions`, `pending_contracts`, `unmatched_contract_ends`, `anomalies`. **Every received envelope's receipt time is therefore preserved in the state, but it is not in any notification**: a subscriber sees the envelope (native publication `timestamp`) and nothing about when BEAM received it, and it sees connection notices identified by their `peer` string only (no connection identity that survives a peer-port reuse).
+
+### 1.2 What the native side guarantees and what it loses **[fact, from `TcpRelaySink.cpp`, `TelemetryQueue.h`, M1 section 6, M2 section 30]**
+
+- `TelemetryQueue` (capacity 256): when full, the **newest** observation is dropped and counted (`dropped`); drained on the frame thread.
+- `TcpRelaySink` (queue 256): `Publish` appends and returns; while **not connected, the envelope is dropped** (counted, `WARN`) and **the sequence still advances**, so a later reconnect shows the loss to BEAM as a sequence gap; when the queue is full the **oldest** queued envelope is dropped (counted); one sender thread with connect timeout 2 s and backoff 1–30 s; nothing is retransmitted.
+- Consequence: BEAM's `gaps` are the union of native drops (both queues), delivery loss and anything lost between the socket and the fold; the native log's counters line (`seen = captured + unsupported …; queue pushed, dropped; normalized, malformed, outside attempt`) and the per-envelope `published` lines are the only native-side account, and every run so far reconciled them with `compare.py` against `beam-events.ndjson` (0 mismatches, 0 drops in every accepted run).
+- The native adapter never receives anything; a recorder cannot ask it for a resend and must not.
+
+### 1.3 Existing playback, reconstruction and comparison tooling **[fact]**
+
+- `relay/test/*_envelopes.ndjson`: ten committed fixtures (202 envelopes), among them the real runs `b5_run1` (45) and `b6_run1` (16); **envelope-only** — no transport evidence, no receipt time (M2 section 52.6, note 1).
+- `GlacierRelay.Test.FixturePlayer`: plays a fixture through the real listener (raw TCP, NDJSON, optional pacing from the envelopes' own timestamps, instance id rewritten per test); the M3 tests use it; it runs under the `:live` source label because BEAM cannot tell a fixture from the game.
+- `stage_a_fixture_test.exs`: folds a fixture directly through `Lifecycle.apply_event/3` with `received_at = nil` — a pure, process-free replay path already exists for envelopes.
+- `final_state.exs` (named node, RPC): dumps `summary_text/0`, `summary/0`, `state/0` and reconstructs `beam-events.ndjson` from the state (one line per event BEAM attached); `compare.py` compares it field by field with the native `published` lines. These two scripts are the de-facto M2/M3 reconciliation tool and define the comparison a recording must support.
+- `Dashboard.Projection` is the only in-tree subscriber model: subscribe-then-read, coalesce, rebuild from session-owned state; `config :glacier_relay, :dashboard, source: :live | :replay` is a label set only by the environment, never inferred.
+- Direct callers of `MissionSession.handle_event/2`, `connection_opened/2`, `connection_closed/2` outside `Wire.Connection`: **none** in `lib/` or `test/` (grep). Every piece of evidence enters through a connection process.
+
+### 1.4 Observations made while reading (not defects claimed; to be covered by replay tests) **[fact from source; behaviour not exercised]**
+
+1. `Lifecycle.connection_closed/3` closes the **head** of `instance.connections` if it is open. If a second connection were identified for the same instance while the first was still open (overlapping sockets), the first socket's later close would mark the newer connection closed and leave the older record open. The native client reconnects only after its own socket closed and at least 1 s of backoff, and BEAM saw every close within milliseconds in the runs, so overlap has not been observed; a recorder must nonetheless carry a per-connection identity so that a replay reproduces exactly what the session did, whatever that is.
+2. The `:identified` notification is sent only when a connection with `instance_id: nil` delivers its first envelope; the re-attribution branch (`instance_id: other`) notifies nothing. A replay that re-derives identification from records must follow the same two branches.
+3. `received_at` is wall-clock UTC from the connection process; the session's `opened_at`/`closed_at` are stamped in the connection process as well (defaults of the API functions). Replay must carry these values as data, never restamp them.
+
+### 1.5 Environment facts relevant to persistence **[measured 2026-10-13 on this machine; `bench.exs`, 500-byte lines, 500 iterations, not kept]**
+
+| Where | append (`:file.write`, raw) | append + `:file.datasync` | 50-line batch + one `datasync` |
+|---|---|---|---|
+| ext4 (`~`, the WSL2 root disk) | 1.7 µs/line | 1,374 µs/line | 1,489 µs per batch of 25 KB |
+| 9p (`/mnt/c`, where both repositories live; mounted `dirsync`) | 90 µs/line | 725 µs/line | 739 µs per batch |
+| OTP `disk_log` (external, halt), `blog` + `sync` on ext4 | — | 1,358 µs/record | — |
+| OTP `dets`, `insert` + `sync` on ext4 | — | 2,190 µs/record | — |
+
+A synced write costs about a millisecond regardless of batch size up to tens of kilobytes, so **one sync per flush window, not per record** is the obvious policy; unsynced appends on ext4 are two orders of magnitude cheaper than on the 9p mount. Available without installing anything: `:file`, `disk_log` (kernel), `dets` (stdlib), `mnesia` (loaded fine). Not present: any SQLite binding, Ecto, or other persistence dependency (`mix.lock` has none; the README rules out Ecto, a database and distributed Erlang for the core). Sizes observed: the M3-C run's nine envelopes total about 4.2 KB of JSON (407–652 B each); the B5 run's 45 envelopes about 20 KB; the wire bounds a line at 65,536 B.
+
+## 2. Recorder placement: decision and alternatives
+
+Requirement: every validated incoming envelope persisted, with the time at which it was received, without changing `MissionSession`'s semantics or blocking ingestion; transport evidence recorded beside it; an ordering that lets a replay reproduce the session's interpretation.
+
+| Placement | Order it can guarantee | What it has | What it loses | Change needed |
+|---|---|---|---|---|
+| **A. Plain subscriber of `MissionSession`** (like the projection) | the session's fold order exactly (one sender, one mailbox) | envelopes and connection notices in fold order | **`received_at`** (not in the notification: only a later `recorded_at` could be stamped); connection identity beyond the `peer` string; events folded while the recorder is down (no hole accounting: nothing numbers the notifications); anything the session crashed on | none |
+| **B. Boundary immediately after validation in `Wire.Connection`** (a second cast, or a tee) | per-connection order only; cross-connection order is the recorder's arrival order, which can differ from the session's | the exact `received_at`, the connection's own identity, the raw JSON, opened/closed from the same process; records exist even if the session crashes | the session's identification decisions (re-derived, must match); a global order equal to the fold order | `Wire.Connection` (a second delivery per event) |
+| **C. Inside `MissionSession` (write-ahead in `handle_cast`)** | exact | everything | **blocks ingestion on disk I/O** (about 1 ms per sync, unbounded on a stalled disk); a recorder failure becomes a session failure | `MissionSession` on the hot path — rejected |
+| **D. Dedicated recorder process fed by a recording-grade notification from `MissionSession`** | the session's fold order exactly, with a **session-assigned record number** | envelope (wire JSON), `received_at`, a session-assigned connection number, the session's identification decisions, open/close with reasons — everything the fold saw, in the order it saw it | nothing the session saw; what the session never saw is lost either way (rejected lines stay on the connection log) | `MissionSession`: two counters and one additive subscription option; `Wire.Envelope`: keep the decoded wire object |
+
+**Decision [recommendation]: D.** The recorder is a dedicated process outside the ingestion path (one `send` per record from the session, as the projection costs today), fed by a recording-grade notification that carries what the session already holds at fold time. The additive change to `MissionSession` is: a `record_no` counter (incremented once per record of any kind), a `conn_no` counter (assigned at `connection_opened`, kept in the connection map beside the pid), and `subscribe(detail: :records)` — record subscribers receive `{:relay_record, record}` at exactly the points where the existing subscribers receive the existing messages, built in the same `notify` loop; the existing messages, the fold, the state and the read API are unchanged, and every existing test must pass byte-identically. `Wire.Envelope.decode/1` keeps the decoded wire object (string-keyed map, before validation) on the struct as `raw`, so the record carries the JSON values the wire delivered (value-exact; float values preserved by the shortest-roundtrip encoder; key order irrelevant to the field comparison `compare.py` performs) and a replay re-validates exactly as live did.
+
+Why not A for M4-A: it is zero-change and tempting, but it cannot satisfy "preserve the distinction between a received event and the time at which it was received" — a recorder stamping its own clock would present a later time as the receipt time or have to invent a third timestamp — and it cannot account for holes after a restart. **Fallback [recommendation]:** if review rejects any change to `MissionSession`, build A with the honest labels (`recorded_at`, never `received_at`; `transport` keyed by peer string; "records may be missing after a recorder restart" stated in the header and the health) and schedule D as a later refinement.
+
+Why not B: it preserves the receipt time but not the session's global order, and equivalence then depends on a replay re-deciding identification and cross-connection interleaving; it also doubles the connection's casts. B stays the right place for one thing D cannot see — rejected lines — which M4 does not record (they never became evidence); recording them is listed as a later option.
+
+Ordering guarantee under D: records are totally ordered by `record_no`; a replay folding records in `record_no` order reproduces the session's fold order by construction. Loss under D: whatever is in the recorder's mailbox when the recorder dies (bounded by the flush window and the mailbox policy, section 6) and whatever the session sends while the recorder is restarting; both are **computable holes** in `record_no` and are written as recorder-gap records.
+
+## 3. Persistent data model and format comparison
+
+### 3.1 Requirements, from the project as it is (not preference)
+
+1. **Comparable with the existing evidence** — the native log's `published` lines, `beam-events.ndjson`, the committed fixtures and `compare.py` are all one JSON object per line; a recording that reads the same way needs no new tooling to reconcile and can become a fixture by extraction.
+2. **Append-only, ordered, bounded per record** (≤ 65,536 B of envelope plus a small record frame), low rate (the densest observed is 45 envelopes in ten minutes; bursts of tens within a second at mission end), no updates, no queries during recording.
+3. **Survives process termination** of the BEAM node (normal stop, kill, VM crash) with a known, bounded tail loss and a self-describing recovery.
+4. **Corruption recoverable at the record boundary** without external tools; a partial tail must be detectable and reported, never silently dropped.
+5. **Human-readable and diffable** (the operator reads evidence directly in every run record).
+6. **Schema evolution** by additive fields and a format version; unknown record kinds skippable with a count.
+7. **No new dependency** for the evidence log (the README's stance; the authorization's hard stop; nothing in `mix.lock`).
+8. Disk use bounded by configuration, stated, never silently reclaimed.
+
+### 3.2 Comparison
+
+| Option | Fit to 1–8 | Failure modes | Verdict |
+|---|---|---|---|
+| **NDJSON, one file** | 1 ✓ 2 ✓ 3 ✓ (sync per flush) 4 ✓ (newline-framed; a partial last line is the only corruption a crash produces on a local filesystem; detectable by decode failure or missing trailing newline) 5 ✓ 6 ✓ 7 ✓ 8 ✓ (size budget) | a torn write inside a line (recoverable: the tail is dropped and reported); silent disk corruption (out of scope; the evidence hashes catch it) | **chosen, with segments** |
+| **Segmented append-only NDJSON** (roll at N MB, `segment` in the header, `record_no` continuous) | as above; bounds the loss domain of a corrupt segment and keeps files diffable | more files to hash and copy | **chosen** (the segmenting is trivial; default 64 MB, never reached by a mission) |
+| OTP `disk_log` (external or internal format, halt/wrap) | 1 ✗ (external = raw bytes, so NDJSON inside it is possible but gains nothing; internal = term format, not readable) 3 ✓ 4 partial (repair on open for the internal format; external has no framing) 5 ✗ for internal 7 ✓ | wrap logs overwrite oldest silently — the opposite of requirement 8 | rejected: nothing over `:file` for this shape |
+| OTP `dets` | 1 ✗ 2 (hash file, not ordered; order must be a key) 3 ✓ with `sync` per record at 2.2 ms 4 (repair on open, can be slow, may lose the last transactions) 5 ✗ 6 ✓ 8 (2 GB limit) | repair after a crash is opaque; not an append log | rejected |
+| `mnesia` (disc_copies / disc_only_copies) | 1 ✗ 5 ✗ 7 ✓ but a schema directory, node-name coupling, distribution machinery; disc_copies keep the table in RAM | the node name becomes part of the data location; recovery semantics heavier than the problem | rejected for an evidence log |
+| Erlang term storage (`:erlang.term_to_binary` per record, length-prefixed) | 2 ✓ 3 ✓ 4 ✓ (length framing) 5 ✗ 1 ✗ 6 (struct versioning is implicit) | unreadable without BEAM; atoms and structs tie the file to the code version | rejected for the log; acceptable for a derived cache (M4-C) if ever needed |
+| Embedded database (SQLite via a NIF binding, or similar) | 3 ✓ (WAL) 4 ✓ 6 ✓ (migrations) 2 ✓ but 1 ✗ 5 ✗ **7 ✗** (dependency + NIF in the core) | a NIF crash takes the VM with it; a schema and migrations to maintain | rejected for M4-A/B; **re-evaluated in M4-C** if cross-recording queries need an index larger than memory (unlikely at observed volumes) |
+
+### 3.3 Chosen model **[recommendation]**
+
+One **recording per node lifetime** (from the recorder's start to the node's stop), written as segmented NDJSON under one directory named by the recording id; the mission/attempt/instance structure is not a file structure — it is derived at replay by the same pure model that derives it live. Rationale: the session's evidence includes facts that belong to no instance (unidentified connections, the order across instances); a per-attempt file would have to decide attempt boundaries at write time, which is interpretation.
+
+```
+<recordings_dir>/<recording_id>/
+  segment-000001.ndjson         records r=1..k   (header first)
+  segment-000002.ndjson         records r=k+1..  (continuation header first)
+  CLOSED                        written last on a clean close (empty marker; absence = not closed cleanly)
+  sha256.txt                    written at close (one line per segment); absent after a crash
+```
+
+Record frame (every line): `{"r": <record_no>, "k": "<kind>", "at": "<UTC ISO 8601, the evidence's own time>", ...kind fields}`. Kinds:
+
+| `k` | Fields | Meaning |
+|---|---|---|
+| `recording.opened` | `format: 1`, `recording_id`, `segment`, `previous_segment` (null or the file name), `node`, `started_at`, `app: {name, vsn}`, `otp`, `elixir`, `listener: {ip, port}` (from configuration, as the projection reads it), `origin: "live" \| "replay"` (the configured source label, never inferred), `transport: "recorded"`, `first_record_expected` (the `record_no` the recorder was started at, if known) | the header; the first line of every segment |
+| `connection.opened` | `conn`, `peer` | a socket accepted (`at` = `opened_at`) |
+| `connection.identified` | `conn`, `instance`, `peer` | the session attributed the connection to an adapter instance on its first valid envelope (`at` = the identifying envelope's `received_at`); a session decision, recorded so replay can be checked against it |
+| `envelope` | `conn`, `instance`, `sequence`, `event_type`, `envelope: {…the wire JSON object…}` | one validated envelope (`at` = `received_at`); `envelope` is the decoded wire object before validation, value-exact |
+| `connection.closed` | `conn`, `instance` (null if never identified), `reason` (`"peer_closed"`, `"line_too_long"`, `{"tcp_error": …}`, `{"down": …}` rendered as strings) | a socket closed (`at` = `closed_at`) |
+| `recorder.gap` | `from`, `to`, `reason: "restart" \| "overflow" \| "write_failure"` | records `from..to` were **not recorded by this recorder**; computed from `record_no` continuity; never confused with native drops or sequence gaps |
+| `recorder.degraded` / `recorder.recovered` | `error` | the writer failed (e.g. `enospc`) / resumed; records between are accounted by a `recorder.gap` |
+| `recording.closed` | `records`, `bytes`, `reason: "stop" \| "budget" \| "shutdown"` | a clean close; the last line |
+
+No record carries interpretation beyond `connection.identified` (which is the session's own decision, recorded as such). Attempts, pairing, dispositions, standing, counts and reports are **never** written; they are derived at replay. No BEAM-only field is named like an engine field. Rendered forbidden words never appear (the recorder renders nothing).
+
+**Location [recommendation]:** default `~/.local/state/glacier-relay/recordings/` (ext4 inside WSL2; `XDG_STATE_HOME` honoured), created `0700`, configurable by an absolute path only; a path under `/mnt/c` is accepted with a logged warning (9p: `dirsync`, 50× slower unsynced appends). Copying a closed recording into `%TEMP%\glacier-m0\hitmen\<run>\` is an evidence step after a run, mechanical, like every hash and listing today.
+
+## 4. Transport-evidence schema and the distinctions it must keep
+
+| Situation | How the recording represents it | How the replay must read it |
+|---|---|---|
+| A connection was **never observed** for an instance | the recording has `transport: "recorded"` and no `connection.*` record names that instance | `observation: :never` **and** "transport evidence recorded; none for this instance" |
+| **Historical data where transport evidence was not recorded** (the ten M2 fixtures; `beam-events.ndjson`) | imported through a legacy reader that writes a synthetic header with `transport: "not_recorded"` and only `envelope` records (with `conn: null`, `at: null`) | `observation` reported as `:not_recorded`-qualified: the pure model still yields `:never` (it has no connections), and the replay layer states "transport evidence not recorded in this source" beside it; the dashboard refinement 13.5(3) consumes exactly this |
+| **Connection opening** | `connection.opened` with `conn`, `peer`, `at` | an unidentified open connection exists from `at` (the M3-C finding 12.2 becomes representable: an adapter connected before any envelope) |
+| **Connection identification** | `connection.identified` | the session's attribution; a replay that re-derives it must produce the same record (tested) |
+| **Connection closing** | `connection.closed` with the reason | an interruption on the open attempt if one is open — **and nothing else**; `mission` stays `:playing` (last known) exactly as `Lifecycle.connection_closed/3` does today |
+| **Mission lifecycle** | only `envelope` records whose `event_type` is `mission.playing` / `mission.stopped` | attempts open and close from these alone |
+
+**Never synthesize mission stops from connection closes** — enforced by construction: the replay folds records through the unchanged pure `Lifecycle`, which has no path from a close to a stop; a test asserts that a recording ending in `connection.closed` with an open attempt replays to `mission: :playing`, `observation: :lost`.
+
+## 5. Recording-session identity and provenance policy **[recommendation]**
+
+- `recording_id`: a random UUID (v4) generated by the recorder when it opens a recording; never derived from time, node name or game data; the directory name.
+- The header binds the recording to its producer: node name, application version, OTP/Elixir versions, listener configuration, the configured `origin` label. The git commit is **not** knowable by the application and stays an evidence-directory fact (as today: `preflight.txt` records the commits and hashes); the design does not add a build step to embed it.
+- Adapter instance identity (`adapter_instance_id`), Relay sequences, native timestamps (`timestamp`), engine timestamps (inside payloads, e.g. `engine_timestamp_s`) and contract session ids are carried **verbatim inside the envelope object**; the record frame adds only `record_no`, `conn`, `instance` (a copy of the envelope's id for grep-ability) and `at` (BEAM receipt).
+- `origin` is the same label M3 uses (`GLACIER_RELAY_SOURCE=replay` → `"replay"`, else `"live"`): BEAM cannot tell the game from a fixture player on the wire, so the label is the environment's statement and is recorded as such. A recording made from a fixture playback therefore says `origin: "replay"` only if the operator set it; the replay reader surfaces the header's `origin` and marks its own output `source: :recording` so that "replay of a recording" and "the M3 replay label" are never the same word.
+- Every replay output names the `recording_id`, the segments read, and the header; nothing derived is presented without that provenance.
+
+## 6. Queue, backpressure and loss semantics **[recommendation]**
+
+- The session sends one record per evidence item to the recorder (a `send`, as for any subscriber); ingestion is never blocked. The recorder appends records to an in-memory batch and flushes on a timer (`flush_ms`, default 100 ms) or when the batch reaches `batch_bytes` (default 256 KB), writing the batch with one `:file.write` and one `:file.datasync` (about 1.4 ms measured, independent of batch size at these volumes).
+- **Bounded mailbox, explicit loss:** the recorder checks `Process.info(self(), :message_queue_len)` at each flush; above `mailbox_high` (default 10,000 records — two orders of magnitude above anything observed) it drains and **discards** records until below `mailbox_low` (default 1,000), then writes **one** `recorder.gap` with the exact `from..to` record numbers discarded and `reason: "overflow"`. The health shows the event. This can only happen if the disk stalls for seconds under a burst the native side has never produced; the policy exists so that the failure mode is stated, bounded and visible, not so that it is expected.
+- **Three gap classes, kept apart in the data and the text:** native queue drops (native log counters; invisible to BEAM except as sequence gaps), Relay **sequence gaps** (`Lifecycle.gaps`, `{expected, got}` on the envelope stream, which include delivery loss while the sink was disconnected), and **recorder gaps** (`recorder.gap` records, in `record_no` space, which say "BEAM saw this but did not record it"). A replay reports all three separately and never sums them.
+- **Completeness claim:** a replay states `complete` only when the recording has a header, a `recording.closed` footer, continuous `record_no`, no `recorder.gap` and no decode failure; otherwise it lists the reasons (`{:not_closed}`, `{:recorder_gap, from, to, reason}`, `{:corrupt_tail, segment, bytes}`), in the style of `AttemptHistory.history/2`. Native drops and sequence gaps are reported from the evidence, not as recorder completeness.
+
+## 7. Durability and recovery behaviour **[recommendation]**
+
+| Event | Behaviour | What the replay sees |
+|---|---|---|
+| Clean stop (`init.stop`, supervisor shutdown) | the recorder's `terminate/2` flushes, syncs, writes `recording.closed`, `CLOSED` and `sha256.txt` | complete |
+| Recorder crash | the supervisor restarts it; the new process reads the last `record_no` from the previous segment's tail (last complete line), opens a new segment with `previous_segment` set, and writes `recorder.gap from: last+1, to: first_seen-1, reason: "restart"` when the first record it receives is not `last+1` | the exact hole; the previous segment has no footer |
+| Node killed / VM crash | the last flush window of records (≤ `flush_ms`) and possibly a torn last line are lost | no footer; a partial last line reported as `corrupt_tail` and dropped; records up to the last complete line kept |
+| Disk full / write error | the write fails (`enospc` or other): the recorder keeps the batch, writes nothing, logs once, marks itself `degraded`, retries at each flush with backoff; records received meanwhile accumulate under the mailbox policy; on recovery it writes `recorder.recovered` and any `recorder.gap` the overflow caused | the degraded interval and its gap, if any |
+| Budget exceeded (`budget_bytes` for the recordings directory, default 1 GB; checked at open and at each segment roll) | the recorder refuses to open (at start) or closes the recording with `reason: "budget"` (at a roll) and stays up in `stopped` state with the reason in its health; **nothing is deleted** | the footer's reason |
+| Segment roll (`segment_bytes`, default 64 MB) | close the segment with a sync; open the next with a continuation header carrying the same `recording_id` and the next `segment` | continuity by `record_no` |
+| Corrupted middle of a segment (not produced by a crash on a local filesystem; possible on copy or media failure) | the reader skips undecodable lines, counts them, and reports a `record_no` discontinuity as `{:corrupt, segment, line}` | explicit |
+| Schema evolution | `format` in the header; new record kinds and fields are additive; a reader skips unknown kinds with a count; an envelope whose `event_type`/`schema_version` the **current** validator rejects is counted as `rejected_by_current_validator` and listed, never silently dropped (the recording stays the wire's account; the code's validator may have moved) | explicit |
+
+Headless operation: the recorder is an optional child (`GLACIER_RELAY_RECORD=1`, `config :glacier_relay, :recording, enabled: false` by default) appended after the three M2 children and before the web subtree; when disabled the tree is exactly today's (an invariance test, as for the dashboard). Resource cleanup: one file descriptor per open segment; closed on terminate; the flush timer cancelled. Observability: `Recorder.health/0` (read-only call) returns `%{status: :recording | :degraded | :stopped, recording_id, segment, records_written, bytes_written, last_flush_at, last_sync_us, mailbox_len, gaps: [...], last_error}` and logs only on state changes; showing it on the dashboard is an M3 presentation change and is **not** part of M4-A (listed for the review). Secure paths: absolute configured directory only, created `0700`, file names from the recording id and segment number only, no user input in any path, the web and dashboard namespaces may not reference `GlacierRelay.Recording.*` write functions (the boundary test grows one rule; the recorder exposes only `health/0`).
+
+## 8. Replay model and equivalence requirements **[recommendation]**
+
+`GlacierRelay.Recording.Reader` (pure over files: segments → records, with the recovery report) and `GlacierRelay.Recording.Replay` (pure over records): fold the records in `record_no` order into `%Replay{recording: header, instances: %{id => %Lifecycle.Instance{}}, unidentified: [...], completeness: :complete | {:incomplete, reasons}, counts: %{records, envelopes, rejected_by_current_validator, unknown_kinds, corrupt_lines}, source: :recording}`.
+
+Equivalence requirement: for a recording made while a session was live, **`replay.instances == MissionSession.state()` as Erlang terms** and `replay.unidentified == MissionSession.unidentified()` (the session's `connections` map, which holds pids and monitor refs, is process state and is not compared), hence `Summary.report/1`, `render_report/2`, `build/1` and `render/2` equal and the report text byte-identical. To make this a guarantee rather than a re-implementation, **extract the session's fold into a pure module** (`GlacierRelay.Session.Fold`: `open/…`, `event/…`, `close/…` over `%{instances, connections (keyed by conn_no), unidentified}`), have `MissionSession` call it (the GenServer keeps pids, monitors, logging and notification), and have the replay call the same functions. This touches `MissionSession` (M4-B, its own authorization) and must leave every existing test and the ten legacy snapshots byte-identical.
+
+Preserved by construction: Relay sequences, native timestamps and engine timestamps (inside the envelopes), adapter instance identity, contract session identity, transport observations when recorded, observation gaps (`Lifecycle.gaps`, interruptions) and the three uncertainty classes of section 6, source provenance (header + `source: :recording`). Replay **never** sends anything, never opens a socket, never touches `MissionSession`, the listener or HITMAN; it is a function from files to values. Feeding the M3 projection from a `%Replay{}` instead of the session (a "load a recording into the dashboard" mode) is an M3 dashboard change and is **not** proposed inside M4-B; it is listed as optional M4-B2 for a separate decision.
+
+Legacy sources: a `Recording.Legacy.from_envelopes/1` importer turns an `*_envelopes.ndjson` fixture (or `beam-events.ndjson`) into records under a synthetic header with `transport: "not_recorded"`, `at: null` for receipt times; replaying it must equal `stage_a_fixture_test`'s direct fold (received_at nil) — the existing fixtures remain usable and their transport ambiguity becomes explicit.
+
+## 9. Analytics opportunities and evidence limits
+
+All derivable from the existing records without new engine evidence, each carrying the provenance tag of its inputs and the attempt's completeness (`AttemptHistory.history/2`) **[fact: the inputs exist; recommendation: the groupings]**:
+
+| Class | Examples | Basis |
+|---|---|---|
+| **Straightforward observed occurrence counts** | envelopes per event type per attempt; actor outcomes by engine classification (`death_type`, `kill_class`, `method_broad`, target flag); disguise occurrences by type; item occurrences per definition (B4's direct counts); objective occurrences; player-state occurrences and **observed value changes** (B6's definition); interruptions; sequence gaps | `:engine` counts, `:transport` for interruptions |
+| **Derived mission statistics** | attempt duration (Relay clock, rise to fall; `nil` when not stopped); time from rise to first/last occurrence of a type **within one contract clock domain** (B7's comparability rule); disposition from the paired session; disguise standing at the attempt's end; counts per attempt side by side | `:derived`, with the rule named |
+| **Historical comparisons across attempts and recordings** | durations per scene resource / contract id / difficulty; occurrence counts per attempt over time; interruption and gap frequency per recording; per-recording completeness | an index over replays (`index.ndjson`, derived, rebuildable from the recordings; no database) |
+| **Requiring identity or spatial evidence not yet established — not proposed** | kills "by Agent 47" (attribution not established, M2 52.5); number of distinct NPCs affected (repository ids are shared, engine actor ids unstable); target survival or "all targets eliminated" (absence is not survival); mission success/failure, SA rating, score; inventory contents; current disguise; time spent in rooms (`room_id` meaning unknown); any heat map | stated as not derivable |
+
+M4-C output: `GlacierRelay.Statistics` (pure, over one or many `%Replay{}`), a text rendering in the B7 style (every number with its tag and the attempt's completeness) and a JSON form for tooling. No metric that implies a complete inventory, target survival, kill attribution or mission outcome is produced.
+
+## 10. Spatial analysis: feasibility and missing prerequisites
+
+**Facts.** No Relay event carries a coordinate; no validated payload has a position field; the observed telemetry names include no movement or transform event. The B0 corpus (`b0-run1`, captured through the engine's own JSON writer) shows that the engine's `Kill` payload carries `ActorPosition` and `HeroPosition` rendered as **strings of three decimal numbers** (`"-184.128, 11.5253, -5.53225"`; 16 of 16 kill payloads), and that `setpieces.Position` is an `SVector3` the engine's writer could **not** render (`"ZDynamicObject::ToString() unknown type: SVector3"`). `Pacify` shares the `Kill` shape (33 fields, B0 taxonomy). The accepted native normalizer does not read either position field (no `ActorPosition`/`HeroPosition` in `Mods/GlacierRelay/Src`), so they are copied into the observation's object and ignored. The SDK declares `ZSpatialEntity::m_mTransform` (`SMatrix43` at offset 0x20, `static_assert`-pinned) and `ZHM5BaseCharacter`; `FreeCam` reads the camera transform through it.
+
+**Hypotheses.** The kill/pacify positions are world-space metres in the scene's frame (the B0 Paris values cluster plausibly; unverified). In the typed intake, the live `Kill` value's `ActorPosition` is a `ZString` (consistent with the engine's writer rendering it; a `SVector3` would have rendered as unknown) — confirmable only by the shape diagnostic the M2 design describes (§33/§38.9 style, observation-only, allowlisted).
+
+**Conclusion.** Current telemetry contains **event-time positions for kills and pacifications only**, as unparsed strings that no Relay event carries, and **no movement data**. Spatial heat maps therefore require a separate native observation/research stage with its own gates: (1) a shape diagnostic for the two fields; (2) a native normalizer change adding `actor_position`/`hero_position` (three numbers, engine-independent) to `actor.died`/`actor.pacified` **as a new schema version**, gated like every B-stage (clean build, 25 tests, imports diff, hash, ×5, wire probe, one controlled run); (3) coordinate-frame validation across attempts and scenes; (4) a per-scene coordinate-to-map projection — the repository holds no map imagery or calibration, and the licensing of game map images is unresolved; (5) for movement heat maps, a new **continuous-state** observation class (per-frame or sampled transforms of the player; ARCHITECTURE.md's second class, with its own reliability policy under ADR 0003), a new envelope type, a sampling-cost gate on the frame thread, and its own runtime experiment. Scene names, room ids, actor-definition ids and `room_id` are **not** substitutes for coordinates and will not be projected onto any map. This is M4-D, separately authorized, and may be deferred indefinitely without affecting M4-A/B/C.
+
+## 11. Staged plan (proposal; stage names from the authorization, boundaries adjusted to the code)
+
+| Stage | Delivers | Changes | Gate | Live run |
+|---|---|---|---|---|
+| **M4-A — Recording foundation** | `Wire.Envelope.raw`; `MissionSession` record subscription with `record_no`/`conn_no` (additive; existing messages unchanged); `GlacierRelay.Recording.{Recorder, Segment, Health}`; config `:recording` (disabled by default; `GLACIER_RELAY_RECORD=1`); segmented NDJSON per section 3; flush/sync, mailbox, degraded, budget, roll, restart-gap behaviour per sections 6–7; headless invariance; boundary rule | `relay/` only; no native, wire-schema or dependency change | compile `--warnings-as-errors`; suite ×5; recorder tests (section 12); offline validation: a fixture played through the listener with recording on → records == session notifications; kill/restart → exact gap; `CLOSED` + hashes on `init.stop` | **none** (the live run comes after M4-B so that one authorization validates recording and replay together); an earlier recording-only run is possible if the operator prefers |
+| **M4-B — Deterministic replay** | `Session.Fold` extraction (byte-identical behaviour); `Recording.Reader`, `Recording.Replay`, `Recording.Legacy`; a `mix`-free script in the style of `final_state.exs` (`replay.exs <recording-dir>`) printing the report and the completeness account; equivalence tests over all ten fixtures and over recordings made in tests | `MissionSession` refactored around the pure fold (no behaviour change) | as above plus: replay == live state for every fixture played with recording on; legacy import == direct fold; corrupt-tail and not-closed cases; snapshots byte-identical | **the M4 controlled run** (section 13): record a real attempt, terminate the node, replay in a fresh node, compare with the live captures and the native log |
+| **M4-B2 (optional, separate decision)** | the M3 projection fed from a `%Replay{}` ("open a recording in the dashboard"), source `:recording` labelled; the 13.5(3) refinement | `Dashboard.Projection` (M3 expansion) | M3 tests | none |
+| **M4-C — Analytics** | `GlacierRelay.Statistics` (pure), text and JSON renderings, a rebuildable `index.ndjson` over recordings; cross-recording comparisons with completeness | `relay/` only; SQLite re-evaluated only if an index larger than memory is needed | suite; provenance checks (every number tagged; forbidden words absent from renderings) | none required (uses recordings from M4-B's run and the fixtures) |
+| **M4-D — Spatial research** | the shape diagnostic; then, if justified, the positioned outcome schema; frame validation; projection feasibility; the continuous-state question | native (separately authorized per step) | every B-stage gate | each step its own run |
+
+Exit for M4 overall is proposed in section 14; stages A and B are required for it, C is the milestone's "derive statistics" deliverable, D is explicitly optional.
+
+## 12. Test strategy (existing fixtures and infrastructure)
+
+- **Record codec**: every envelope of the ten fixtures round-trips `wire JSON → Envelope (raw) → record → line → record → Envelope.decode` with equal validated structs; floats and nested objects (the B6 weapon object) preserved value-exact.
+- **Recorder through the real listener** (`FixturePlayer`, recorder enabled on a test directory): records equal the sequence of session notifications with `received_at` equal to the session state's; `connection.opened/identified/closed` present with the right `conn`; the header and footer present after a supervised stop; `sha256.txt` matches.
+- **Restart hole**: kill the recorder with `Process.exit(pid, :kill)` mid-playback; after restart the new segment's `previous_segment` and `recorder.gap` state exactly the missed `record_no` range (the session's counter continues).
+- **Overflow policy**: a stub writer that blocks on a test-controlled latch; drive `mailbox_high` low in config; assert one `recorder.gap` with the exact range and the health flags.
+- **Write failure and recovery**: a writer behaviour injected by config (`:file` in production; a failing writer in the test) returning `{:error, :enospc}` then succeeding; assert `degraded`/`recovered` records and the gap accounting.
+- **Budget and roll**: `segment_bytes` and `budget_bytes` set tiny; assert continuation headers, continuity, and the `budget` close with nothing deleted.
+- **Corrupt tail / not closed**: truncate a segment inside its last line; delete `CLOSED`; the reader reports `corrupt_tail` with the byte offset and `not_closed`, keeps every complete record, and the replay's completeness lists both.
+- **Replay equivalence**: for each fixture, play it with recording on, capture `MissionSession.state/0`, `unidentified/0`, `report/0`, `report_text/0`; replay the recording; assert term equality of instances and unidentified, equality of report data, byte-identical text. Also the connection-close-is-not-a-stop case and the overlapping-connection case of 1.4 (whatever the session does, the replay does the same).
+- **Legacy import**: each fixture imported with `transport: "not_recorded"` replays equal to the direct `Lifecycle` fold (`received_at` nil) and its legacy summary snapshot stays byte-identical.
+- **Headless invariance**: with `:recording` disabled the supervision tree equals today's list (extends `headless_test.exs`); with the dashboard also enabled, the web children are unchanged.
+- **Boundary**: compiled remote-call tables show the recorder calling only `MissionSession.subscribe/1`; the web and dashboard namespaces reference no `Recording.*` write function; no `GenServer.cast` to the session from any new module.
+- **Performance measurement (no invented threshold)**: ingest time of the 45-envelope burst with recording on vs off; flush and sync latencies from the health; recorded as numbers in the implementation record, as M3-B did.
+
+## 13. Controlled live-game validation plan (M4-B's run; its own authorization; ask the operator first)
+
+Frozen artifacts: the unchanged accepted DLL `6047a9a3…` (hash-verified on install), BEAM `main` at the M4-B record commit with `GLACIER_RELAY_RECORD=1` (dashboard optional), the recordings directory empty and its budget stated. Pre-flight as in M3-C (both trees clean at the frozen commits, tags verified, game at M0, ports free, `beam.log`, the in-node watcher). Script: the B6/M3-C route (menu → Paris → trespass zone in and out → draw and holster the loadout pistol → exit to menu → quit). Gates: R1 menu (expect `connection.opened` recorded, no envelope — the first representable "adapter connected, no instance yet"); R2 mission entry; R3 player state; R4 natural outcomes only; R5 exit then quit (expect `mission.stopped`, `contract.ended`, then `connection.closed peer_closed`). Then: capture `state/0`, `report/0`, `report_text/0`, `unidentified/0` and `Recorder.health/0` over RPC; `final_state.exs` as usual; **stop the node** (`init.stop`) and confirm `CLOSED` and `sha256.txt`; copy the recording into the evidence directory and hash it; **start a fresh node without the game** (`mix run --no-start replay.exs <dir>`, or the script's equivalent) and compare: replay instances == captured state (term equality), report text byte-identical, completeness `complete`, record count = envelopes + transport records + 2; run `compare.py` over the recording's envelope records against the native `published` lines (0 mismatches expected; counters reconciled as in every run). Also exercise one **unclean** termination on the same evidence basis if the operator agrees: `kill -9` of the BEAM after the quit, then replay the not-closed recording and confirm the completeness account says so (nothing of the game is involved in this step). Abort conditions, cleanup (`run-cleanup.sh`, exact PIDs, M0 hash verification) and the no-fix-forward rule are the existing ones.
+
+## 14. Proposed M4 exit criterion (for approval; not added to the roadmap as accepted)
+
+> **M4 exit (proposed):** with recording enabled, one real HITMAN mission attempt on the observed build is recorded by the Relay node into a local recording that survives the termination of the game and of the BEAM node; a fresh node without the game replays that recording into a mission report whose data equals, and whose text is byte-identical to, the live node's report captured at quiescence; and the replay states the recording's identity, its transport evidence (connections opened, identified and closed, with reasons) and its completeness — records written, recorder-side gaps, native queue drops and Relay sequence gaps, each accounted separately — so that no recording is presented as complete when the system knows evidence was dropped or unavailable.
+
+Measurable parts: term-equal instances; byte-identical `report_text`; the completeness account present and `complete` on a clean stop; `compare.py` 0 mismatches between the recording's envelopes and the native log; the three gap classes reported as separate fields.
+
+## 15. ADR proposal and open questions for the review
+
+**ADR 0008 (proposed, `docs/adr/0008-mission-recordings-are-append-only-evidence-logs.md`):** mission recordings are append-only logs of what BEAM received — wire-level envelope values with their BEAM receipt time, transport records, and the session's identification decisions — written outside the ingestion path in the session's fold order with session-assigned record numbers, as human-readable NDJSON segments on the Linux filesystem; replay folds a recording through the same pure model and never acts as a live adapter; recorder gaps, native drops and sequence gaps are three different facts; a recording never claims completeness it cannot show. Alternatives rejected: write-ahead inside the session (blocks ingestion); a second model for recordings (diverges from the session's interpretation); a database or term storage for the evidence log (unreadable, a dependency, or no gain over `:file`); per-attempt files (interpretation at write time).
+
+Questions the review should settle:
+
+1. Accept the additive `MissionSession` change (record subscription, two counters) for M4-A, or require the zero-change fallback (section 2) first?
+2. Record rejected wire lines (a connection-level record kind) in M4-A, or leave them in the connection log as today?
+3. Record `connection.identified` as the session's decision (proposed) or re-derive it at replay only?
+4. One recording per node lifetime (proposed) versus per adapter instance?
+5. Disk policy: refuse-and-stop at the budget with nothing deleted (proposed) versus an explicit retention rule?
+6. Show recorder health on the M3 dashboard (an M3 presentation change) — in M4-A, later, or never?
+7. Perform the first live run after M4-B (one authorization for recording and replay, proposed) or a recording-only run after M4-A?
+8. Is M4-B2 (open a recording in the dashboard) wanted, and if so under which milestone?
+
+**Stop here. Nothing in this document is implemented; no dependency is installed; no database exists; `MissionSession`, the wire and the native adapter are unchanged; no runtime experiment is proposed for execution without its own authorization.**
