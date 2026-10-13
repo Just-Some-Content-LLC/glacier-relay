@@ -699,3 +699,149 @@ Accepted facts:
 The limitations of section 20.9 stand unchanged: one run, one route, one connection, one segment; no roll, restart, write failure or qualified close reason exercised live; no actor outcome, item or objective occurred; the open-but-unidentified connection is visible in the recording and not in `unidentified/0` (the M2 model); native drops known only through the external log reconciliation.
 
 **The agreed M4 exit criterion has been demonstrated by one real mission recording on the observed build. Formal M4 closure is deferred until one bounded, offline-only M4-C analytics stage completes (its own record follows). M4-D spatial research and any further runtime experiment are not authorized.**
+
+## 22. M4-C analytics — implementation and offline validation record (2026-10-13): a pure statistics layer over replay results; M4 not complete
+
+Authorized after the acceptance of section 21: one bounded, offline-only analytics stage over the existing recorded evidence, then a stop for architectural review. Nothing of the game, the native adapter, the wire protocol, `MissionSession`, `Session.Fold`, the recorder, the reader, the replay or the M3 LiveView was changed; no database, no new dependency (`mix.lock` unchanged), no index file. Evidence: `%TEMP%\glacier-m0\hitmen\m4c-offline\` (`validate-statistics.sh`, `validate.log`, the fresh-node outputs, the five full runs, `sha256.txt`).
+
+### 22.1 Implementation
+
+| Commit | Content |
+|---|---|
+| `6fc3662` | `GlacierRelay.Statistics` (per-recording and per-attempt statistics of a `Recording.Replay` result), `Statistics.Comparison` (cross-recording comparison over attempt rows), `Statistics.JSON` (deterministic, sorted-key JSON), `Statistics.Text` (text presentation), `relay/statistics.exs` (fresh-node tool); tests `statistics_test.exs` (pure) and `statistics_live_test.exs` (recordings made in the test VM); five recordings copied unchanged into `relay/test/recordings/` as committed evidence: the accepted M4 live recording `m4-run1-9fcb9a72` (section 20; `sha256.txt` verifies), M4-A `m4a-A` (clean close), `m4a-B` (SIGKILL, unclosed), `m4a-C` (recorder restart, two segments) and M4-B hardening `m4b-D` (restart with a trusted boundary, three connections) |
+
+The input of the statistics is the replay result only: `replay.instances` (the Lifecycle values), `replay.summary` (the derived views the live session also builds: outcome counts, `Disguise.derive`, `Items.derive`, `Objectives.derive`, `PlayerState.derive`, `AttemptHistory.history`), `replay.completeness`, `replay.reader` (segment headers and record kinds, for a recording), `replay.unidentified` and `replay.rejected`. A legacy envelope-only input (`Replay.from_envelopes/2`) is accepted under its documented limits. `Statistics.of_replay/1` is a pure function; the recording directory is never written (checked by hash before and after every run, 22.9).
+
+### 22.2 Statistics data schema (`glacier-relay.statistics/1`)
+
+The schema identifier is versioned independently of the Relay wire schema (`protocol_version` / `schema_version` 1, which the result records under `recording.schema_versions`). Top-level blocks of the structured result (`%GlacierRelay.Statistics{}`):
+
+| Block | Content |
+|---|---|
+| `recording` | `id`, `source` (`:recording` \| `:legacy`), `dir`, `format`, `first_record_no`, `boundary`, `node`, `app_version` (from the first segment header; `:not_recorded` for legacy input), `schema_versions` observed |
+| `evidence` | inherited from the completeness account: `classification` (`:authoritative` \| `:includes_unverified` \| `:ambiguous` \| `:legacy`), `recorder_authoritative?`, `finalization`, `format`, `records` (first, last, resolved, verified, durable_by_trusted_boundary, unverified_used, duplicates, conflicts, ambiguous), `segments`, `boundaries` (trusted / untrusted / unstated counts), `recorder_gaps`, `open_ended_gaps`, `unexplained_missing`, `corrupt_lines`, `malformed_records`, `relay_sequence_gaps` (per instance, `expected`/`got`/`missing`), `rejected_envelopes`, `reader_issues`, `transport`, `receipt_times`, `native_drops`, `close_reasons` (exact / qualified), `attempt_history` (intact / broken), `counts_are: :observed_occurrences`, `observed_only_reasons` (never empty: at least "native-side drops unknown"), `limitations` (the account's own) |
+| `instances` | `observed`, sorted `ids`, `observation` (live / lost / never) |
+| `attempts` | `observed`, `starts_observed`, `stops_observed` (incl. `stops_with_no_open_attempt`), `stopped`, `stop_not_observed`, `last_known_playing`, `superseded`, `by_scene_resource`, `by_disposition`, `history` (intact / broken), `durations` (rule, bounded, unbounded, total/min/max ms over bounded attempts only) |
+| `envelopes` | `received` (the instances' received counts), `accounted` (every folded envelope counted once by type across attempts, unattributed lists, unmatched stops and contract sessions), `reconciled?` (received == accounted), `rejected_by_validator`, `by_event_type` (the fifteen supported types), `by_family`, `per_instance` |
+| `actor_outcomes` | `occurrences`, `died`, `pacified`, `target` / `non_target` per kind, `accidents`, `by_actor_type`, `by_death_type`, `by_death_context`, `by_kill_class`, `by_method_broad`, `by_method_strict`, `with_item`, `unattributed`, `counted: :occurrences`, note |
+| `contracts` | `sessions_observed`, `started`, `ended`, `paired`, `unpaired`, `unmatched_ends`, `by_paired_by`, `by_reason_kind`, `by_contract_id`, `by_location_id`, `by_difficulty_level`, `correlation: :derived` |
+| `disguise` | occurrences by type and kind, `changes`, `compromise_episodes`, `worn_standing_by_attempt`, `anomalies`, `unattributed`, `standing_tag: :derived` |
+| `items` | `occurrences`, `picked_up`, `thrown`, `removed_from_inventory`, `unattributed`, note (nothing paired, no inventory) |
+| `objectives` | `occurrences`, `conflicts`, `by_basis`, `unattributed` (total, by basis), note (says nothing about how the mission ended) |
+| `player_state` | per subject: `occurrences`, `observed_value_changes`, `standing_by_attempt`, `notes`; `unattributed`; `tag: :last_observed` |
+| `transport` | `status` (`:recorded` \| `:not_recorded`), `openings`, `identifications`, `closes` (from the recorder's record kinds), `closed_unidentified`, `still_open_at_boundary`, `by_close_reason`, `close_reasons` (exact / qualified) |
+| `anomalies` | `total`, `by_kind` |
+| `per_attempt` | one row per attempt, in instance and attempt order: identity (instance, number, scene, hint), `mission`, `start`, `stop` (observed or the reason it was not), `duration` (bounded with ms and rule, or unbounded with reason), `contract` (`:not_observed`, `:ambiguous` with candidates, or the paired session's fields with `correlation: :derived`), `disposition` (value, reason, tag), `engine_times` (22.3), `history` (`:intact` or the broken reasons), `interruptions`, `gaps_in_attempt`, `superseded_by`, `actor_outcomes` (incl. `display_groups`, labelled "not actors"), `disguise` (incl. `worn`, `worn_standing`, `standing_reason`), `items`, `objectives` (incl. `by_basis`), `player_state` (per subject with `last` value and sequence), `families` |
+| `unattributed` | one row per instance: unattributed occurrences by family and basis, stops with no open attempt, unpaired contract sessions, unmatched contract ends, `total`, the attribution rule |
+| `rules` | the counting rules as text: occurrences, duration, engine times, attribution, standing, `not_inferred` ("victory, failure, rating, target survival, inventory contents, current player state and anything the stream did not carry") |
+
+### 22.3 Counts and timing
+
+- **Every count is an occurrence count** of what the engine recorded, exactly as the Lifecycle and the B7 views hold it: a pacified-then-died actor is two occurrences; display groups (`{actor_name, repository_id}`) are counted as groups and labelled as not being actors; no distinct-actor, distinct-item or state count exists in the result (tested: no key matches distinct/unique/actors/victory/success/failure/rating/surviv/inventory/current_state).
+- **Attribution** is the Lifecycle's, fixed at receipt: an occurrence on an attempt is counted on that attempt; an unattributed one (no open attempt; an objective vetoed by its session) is counted in `unattributed`, never attached by proximity. A stop with no open attempt is a stop observed, not an attempt.
+- **Reconciliation**: `envelopes.accounted` sums every folded envelope once over attempts, unattributed lists, unmatched stops and contract sessions, per type; `reconciled?` states that it equals the instances' `received`. It holds for every committed input.
+- **Duration**: Relay clock (native publication timestamps), rise to fall, only when both were observed (`Lifecycle.duration_ms/1`); an attempt last known playing or superseded is `unbounded` with its reason and contributes nothing to the totals. Aggregate `durations` report how many attempts were bounded and how many not.
+- **Engine times** (per attempt): the attempt's paired contract session id is the clock domain; the engine-timed occurrences carrying that id (outcomes, disguise, item, objective and player-state occurrences, and the session's start and end) are `occurrences_in_domain`, with `first_s`, `last_s` and `observed_span_s`; `contract_span_s` is the session's end minus start when both were observed; occurrences carrying another session id are counted as `occurrences_outside_domain` and never compared; an attempt without a paired session has `domain: :none` and compares nothing.
+- **Standing readings** (disguise worn standing, player-state standing and last value) are the B7 report's derived readings, carried with their tags (`:derived`, `:last_observed`); the statistics never present a last value as a current state.
+
+### 22.4 Provenance and completeness
+
+The statistics inherit the completeness account of their replay rather than summarising it into a score. `evidence.classification` is the account's class; `recorder_authoritative?`, finalization, the record counts by authority (verified / durable by a trusted boundary / unverified used), recorder gaps, open-ended gaps, unexplained missing records, Relay sequence gaps per instance, rejected envelopes, transport and receipt-time availability and the native-drop status are carried as they are. `observed_only_reasons` lists, in order, why the counts must be read as observed counts: legacy input; not recorder-authoritative (with the finalization and class); records from unverified evidence; ambiguous records withheld; known recorder gaps; open-ended gaps; unexplained missing records; Relay sequence gaps; rejected envelopes; attempts with a broken history; attempts whose stop was not observed; and always "native-side drops unknown: a recording cannot show them to be zero". `attempt_history` counts attempts with an intact and a broken observation history. Missing evidence never contributes a zero: a gap appears as a gap, an unbounded attempt as unbounded, an unverified record as unverified.
+
+### 22.5 Cross-recording comparison (`glacier-relay.statistics-comparison/1`)
+
+`Statistics.Comparison.compare/2` takes a list of statistics results and a `group_by` basis — any of `:recording_id`, `:instance`, `:scene_resource`, `:contract_id`, `:location_id`, `:difficulty_level`, `:attempt_number`, `:disposition`, `:mission`, `:event_family` (an unsupported key raises). The unit is the attempt: one row per attempt from every result, sorted by recording id, instance and attempt number; `:event_family` expands each row into one row per family. Each group reports its `key`, attempts, the recordings and instance count it spans, `evidence_classes`, how many rows are recorder-authoritative, history intact / broken, mission and disposition frequencies, durations (bounded / unbounded, min / max / total over bounded only) and contract spans (engine clock, when both ends were observed), family counts, actor-outcome occurrences, `counts_are: :observed_occurrences` and `mixed_evidence` (true when any row is not recorder-authoritative or has a broken history). A field a row does not carry (no paired contract) groups under the explicit value `"not_observed"` and sorts last within its position; groups sort by the basis in the order given. The `recordings` list carries every result's identity, class, finalization, transport, app and schema versions, attempt counts and gap counts. `limitations` state the row and result counts and evidence classes, the legacy and non-authoritative counts, that the engine build is not part of the recorded evidence (so comparability across builds is not established; schema and recorder versions are listed), what `mixed_evidence` means, and that native drops are unknown. The comparison is independent of the input order (tested).
+
+### 22.6 Output contracts
+
+- **Structured**: the `%Statistics{}` struct and the comparison map; deterministic for the same input (tested twice in-process and across two fresh VMs).
+- **Text** (`Statistics.Text.render/1`, `render_comparison/1`): one fact per line with its evidence class and rule; frequencies rendered in sorted key order; the word "complete" never appears (per-event-type counts stay in the structured result because one vocabulary name contains it; the text shows the family counts).
+- **JSON** (`Statistics.JSON.encode/1`): object keys sorted whatever the map order; structs as objects, tuples as arrays, atoms as strings (`true`/`false`/`null` literals), `DateTime` as ISO-8601; the `schema` field identifies the version. A derived artifact: `statistics.exs --json <file>` writes it beside, never inside, a recording.
+- **Tool**: `elixir -S mix run --no-start statistics.exs [--json <file>] [--group-by k1,k2] <recording-dir | fixture.ndjson>...` — no application, no listener (checked), the inputs read only.
+
+### 22.7 Historical index — deferred
+
+A rebuildable `index.ndjson` was considered and not implemented: the evidence volume is five recordings and ten fixtures, and `statistics.exs` over a list of directories produces the comparison in one fresh-VM run (22.9 measures it). An index would add a second derived artifact to keep consistent with the recordings without improving the workflow at this volume. Decision: deferred; if implemented later it must be derived entirely from the recording files, rebuildable and disposable, never authoritative over them, carry recording ids and the evidence classes, and never write into a recording directory.
+
+### 22.8 Tests
+
+`statistics_test.exs` (pure, async): for each of the ten fixtures — deterministic result, JSON and text; evidence class legacy with transport not recorded; every envelope accounted for and reconciled; per-type counts equal to the fixture's own line counts; attempts, stops, outcomes, contracts, disguise, items, objectives and player-state totals (attributed plus unattributed) equal to the stream's; no forbidden key; no "complete" in the text; the replay's own report and summary unchanged. Known values of `b6_run1` (2 died, 1 pacified, all non-target guards; kill classes, methods, items; 5 disguise occurrences with 1 change and a compromised standing; player state 2+2 with one observed change each; a 181 s bounded duration; a 154.709 s contract span with no occurrence outside the domain). `stage1`: three rises, no fall — three unbounded attempts (two superseded, one last known playing), broken history on the superseded ones, no contract, no clock domain, the reasons in `observed_only_reasons`. `b2_probe`: a restart — two attempts, two sessions and clock domains, dispositions restarted and exited to menu. Synthetic streams: the B6 run without its rise (every attempt-gated occurrence unattributed, the stop counted with no open attempt, the session unpaired, the missing rise reported as a Relay gap, nothing attached by proximity); a dropped sequence inside the attempt (broken history, the gap reported, the count reduced, never filled); two deaths given the same display name and repository id (two occurrences, two display groups labelled not actors); an outcome moved to another contract-session clock (counted outside the domain, the spans unchanged); absent contract fields (`:not_observed`, grouped last). The committed recordings: the accepted live recording (authoritative, clean, 12 verified records, transport 1/1/1, `peer_closed` exact, 9 envelopes, 207,718 ms, contract span 205.202 s, 7 occurrences in the domain); M4-A B (unclosed, 19 records unverified, not authoritative, the reasons stated); M4-A C and M4-B D (19 records durable by a trusted boundary; 2 and 3 connections; one closed unidentified in D); the input files unchanged by hash and mtime; deterministic JSON and text for all five. Comparison: by scene resource over all fifteen results (26 rows, two groups, the Paris group spanning 15 recordings with its evidence classes 6 / 1 / 17, 22 intact and 2 broken histories, 22 bounded durations, `mixed_evidence`); order independence; by contract id and difficulty with the unknown group last; by instance, by recording and attempt, by event family (rows = attempts × 7 families); an unsupported key raises; two authoritative intact recordings form an unmixed group. JSON: sorted keys, atoms, tuples and `DateTime`; the live recording's JSON decodes with its identity and classification and no record log.
+
+`statistics_live_test.exs` (recordings made through the real listener and a test recorder in the VM): a clean recording of `b6_run1` counts exactly what the legacy fixture counts in every observed block, differing only in evidence (authoritative vs legacy) and transport; a rolled recording with its last segment marked unverified becomes `includes_unverified` with the reason stated while its counts stay what the records say, and groups as mixed with its intact twin; a recorder crash leaves an unclosed, non-authoritative recording; a removed middle segment reports the missing segment, the unexplained missing records and the resulting Relay gaps, with fewer envelopes received — never zero for the missing ones.
+
+### 22.9 Offline gate (`m4c-offline\validate.log`)
+
+| Check | Result |
+|---|---|
+| `mix compile --warnings-as-errors` (dev and test) | clean |
+| `mix format --check-formatted` on the seven changed files (project-wide formatting still fails only on the pre-existing `player_state.ex`, unchanged) | ok |
+| Fresh-node statistics of the accepted recording (`--no-start`; no listener bound) | exit 0; 23 text lines; 9,414 B JSON (`live-statistics.txt/.json`) |
+| Comparisons by scene resource, by contract id and difficulty, by recording and attempt (10 fixtures + 5 recordings) | exit 0 (`comparison-*.txt/.json`) |
+| Determinism across two fresh VMs | statistics JSON and text byte-identical; comparison JSON byte-identical |
+| Input recordings unchanged | sha256 of every file under `relay/test/recordings/` identical before and after |
+| Rendered text | "complete" count 0 in the statistics and the comparison text |
+| Existing replay output | the B7 report of the accepted recording replayed by `replay.exs` still byte-identical to the live capture of section 20 |
+| Five consecutive full runs | 437 tests, 0 failures ×5 (seeds 511448, 719307, 784962, 375150, 510608); 404 before M4-C plus 33 new; `mix-run-1..5.txt` |
+| Dependencies, native, environment | `mix.lock` unchanged (`24d1e73a…`); ZHMModSDK `c5152848` clean; no `beam.smp` left; ports 4747 and 4748 free; 29 evidence files hashed |
+
+Measured, not guaranteed: a fresh VM (code loading included) replays and summarises the 12-record recording in about 1.5 s wall clock end to end, and the fifteen-input comparison in about 1.8 s; `Statistics.of_replay/1` itself is a single pass over the summary and instances.
+
+### 22.10 Sample output — the accepted real recording (`live-statistics.txt`, abridged)
+
+```
+== statistics (glacier-relay.statistics/1)
+recording 9fcb9a72-74bb-49fa-86c3-7e6e21820381: source recording, format 1, records 1..12, schema versions [1], app "0.1.0"
+evidence: authoritative; recorder-authoritative true; finalization clean; records verified 12, durable by trusted boundary 0, unverified used 0, ambiguous 0; recorder gaps 0 (+0 open-ended), unexplained missing 0; Relay sequence gaps on 0 instance(s); transport recorded; receipt times recorded; native drops unknown; close reasons 1 exact, 0 qualified
+counts are observed occurrences, not exhaustive totals:
+  - native-side drops unknown: a recording cannot show them to be zero
+instances: 1 observed ["cf52cc2d-e6cf-4de6-b8d4-3833cc151378"]; observation lost 1
+attempts: 1 observed (1 stopped, 0 last known playing, 0 superseded); starts observed 1, stops observed 1 (0 with no open attempt); stop not observed 0; history intact 1, broken 0; by disposition exited_to_menu 1
+durations: 1 bounded, 0 unbounded; total 207718 ms, min 207718, max 207718 [Relay clock (native publication timestamps), rise to fall; only when both were observed; a stop not observed leaves the attempt unbounded]
+envelopes: 9 received, 9 accounted (reconciled true), 0 rejected by the validator; by family actor 0, contract 2, disguise 1, item 0, lifecycle 2, objective 0, player_state 4 (per event type in the structured result)
+actor outcomes: 0 occurrences; died 0 (target 0, non-target 0), pacified 0 (target 0, non-target 0); accidents 0; unattributed died 0, pacified 0 [occurrence counts, never distinct actors; an absent outcome is not evidence of survival]
+  by death type none; by death context none; by kill class none; by method none; by actor type none
+contracts: 1 sessions (1 ended, 1 paired, 0 unpaired, 0 unmatched ends); paired by next_rise 1; end reasons exit_to_menu 1; contract ids 00000000-0000-0000-0000-000000000200 1; locations LOCATION_PARIS 1; difficulty 2 1 [correlation BEAM-derived]
+disguise: 1 occurrences (initial 1, change 0, compromised 0, cleared 0); changes 0; compromise episodes 0; worn standing by attempt not_observed 1; anomalies 0; unattributed 0 [standing BEAM-derived]
+items: 0 occurrences (picked up 0, thrown 0, removed 0); unattributed 0 [direct occurrence counts; nothing paired, no inventory]
+objectives: 0 occurrences; conflicts 0; by basis none; unattributed 0 none [occurrences reported done; says nothing about how the mission ended]
+player state: 4 occurrences; trespassing 2 (1 observed value changes, standing last_observed 1); illegal weapon 2 (1 observed value changes, standing last_observed 1); unattributed 0 [last observed, never current state]
+transport: 1 openings, 1 identifications, 1 closes (0 closed unidentified, 0 still open at the boundary); by close reason peer_closed 1; 1 exact, 0 qualified
+anomalies: 0 none
+per attempt:
+  cf52cc2d-e6cf-4de6-b8d4-3833cc151378 attempt 1: Peacock (assembly:/_PRO/Scenes/Missions/Paris/_Scene_FashionShowHit_01.entity); stopped; start #2; stopped #8; duration 207718 ms (Relay clock); contract 00000000-0000-0000-0000-000000000200 LOCATION_PARIS difficulty 2 (paired by next_rise); disposition exited_to_menu; history intact; engine times: domain 25161037…, 7 in domain (0 outside), span 205.2023162841797 s, contract span 205.2023162841797 s; outcomes 0 (died 0, pacified 0; 0 display groups, not actors); disguise 1 occurrences, 0 changes, worn "874c4c48-0a8b-49e9-883e-49fc5f1fb051" standing not_observed; items 0 (0/0/0); objectives 0 (0 ids); player state 4 (trespassing 2/1 changes/last_observed, illegal weapon 2/1 changes/last_observed)
+unattributed per instance:
+  cf52cc2d-e6cf-4de6-b8d4-3833cc151378: 0 unattributed (died 0, pacified 0, disguise 0, items 0, objectives 0 none, player state 0, stops with no open attempt 0); unpaired contract sessions 0, unmatched contract ends 0
+
+```
+
+Comparison sample (`comparison-scene.txt`, the groups and limitations):
+
+```
+groups:
+  [scene_resource=assembly:/_PRO/Scenes/Missions/CoastalTown/Mission01.entity] attempts 2 across 2 recording(s), 2 instance(s); evidence legacy 2; history intact 2, broken 0; mission playing 1, stopped 1; disposition not_observed 2; durations 1 bounded (min 202, max 202 ms), 1 unbounded; contract spans 0 (min nil, max nil s); families actor 0, contract 0, disguise 0, item 0, lifecycle 3, objective 0, player_state 0; died 0, pacified 0 (occurrences); mixed evidence true
+  [scene_resource=assembly:/_PRO/Scenes/Missions/Paris/_Scene_FashionShowHit_01.entity] attempts 24 across 15 recording(s), 17 instance(s); evidence authoritative 6, includes_unverified 1, legacy 17; history intact 22, broken 2; mission stopped 22, superseded 2; disposition exited_to_menu 12, not_observed 7, restarted 5; durations 22 bounded (min 203, max 1429393 ms), 2 unbounded; contract spans 17 (min 105.089394, max 907.95282 s); families actor 67, contract 36, disguise 57, item 82, lifecycle 46, objective 8, player_state 35; died 44, pacified 23 (occurrences); mixed evidence true
+limitations:
+  - observed counts over 15 replay result(s) and 26 row(s); evidence classes %{"authoritative" => 4, "includes_unverified" => 1, "legacy" => 10}; not exhaustive totals
+  - 10 legacy envelope-only input(s): no transport evidence, no receipt times
+  - 11 result(s) not recorder-authoritative: their counts may miss evidence the recorder or the Relay stream lost
+  - the engine build is not part of the recorded evidence, so comparability across game builds is not established; schema versions observed [1]; recorder app versions [:not_recorded, "0.1.0"]
+  - a group with a row that is not recorder-authoritative or whose attempt history is broken is marked mixed_evidence: its counts are observed, not comparable totals
+  - native-side drops are unknown for every recording unless reconciled outside it
+```
+
+### 22.11 Accepted live-recording evidence
+
+Section 21 accepted the section-20 run; its recording `9fcb9a72-74bb-49fa-86c3-7e6e21820381` is committed unchanged under `relay/test/recordings/m4-run1-9fcb9a72` (its `sha256.txt` verifies; byte-identical to the preserved copies) and is the real input of 22.8–22.10: 12 verified records, 9 envelopes, one attempt of 207.7 s bounded on the Relay clock and 205.2 s on the contract clock, player state 2+2, one `peer_closed` close reconstructed exactly, `recorder_authoritative? true`, native drops unknown to the recording.
+
+### 22.12 Limitations and data-model observations
+
+- The statistics are only as complete as the replay: they add no evidence and inherit every limitation of the account; the per-event-type counts of a legacy input count what the fixture carried, with no transport evidence and no receipt times.
+- No data-model defect was found that required a change. Observations carried for review, none repaired here: (1) an open, not-yet-identified connection appears in the recording and in the fold's open-connections map but not in `unidentified/0`, so `transport.closed_unidentified` counts only closed unidentified connections while `still_open_at_boundary` counts the open identified ones (the M2 model, 20.9); (2) a damaged copy of a recording keeps the recording id of its header, so a comparison groups the original and the copy together by `recording_id` — intended, since the id is the recording's identity, and the copy's class marks the group mixed; (3) the reader reports a missing segment by number (`segments.missing: [2]`), carried as is; (4) the engine build is absent from the evidence, so cross-build comparability cannot be established from recordings alone.
+- Not implemented, by decision or scope: an index file (22.7), a dashboard or LiveView presentation, spatial or positional statistics (M4-D; the engine payload carries no movement data, section 13), any inference beyond the vocabulary.
+- Test conditions carried unchanged from section 19.5: the seed-1230 `DashboardLiveTest` cold-start failure and the once-observed `EndpointTest` timeout, both M3.
+
+### 22.13 Recommendation and proposed checkpoint
+
+Recommendation: **close M4** on the basis of sections 20–22 — the exit criterion demonstrated by one real recording (20), accepted (21), with a bounded analytics layer that summarises observed evidence without filling in what was not observed (22) — and tag the closure `research/m4-mission-recorder` on glacier-relay only (the native adapter is unchanged at `c5152848`, DLL `6047a9a3…`). The decision is the operator's. Proposed checkpoint: this record's commit. Deferred: M4-D spatial research (needs a separate native stage, not authorized), a second runtime experiment covering a roll, a restart or an unclean stop under the game and a qualified close reason (20.9), the historical index (22.7).
+
+**Stop here. M4-C is implemented and validated offline; no game, native, protocol, session, fold, recorder, reader, replay or dashboard change; no index, no database; M4-D and any runtime experiment not started; M4 not marked complete.**
