@@ -29,9 +29,18 @@ case Replay.replay(Path.expand(dir)) do
 
     for s <- reader.segments do
       h = s.header || %{}
+      b = Enum.find(reader.boundaries, &(&1.segment == s.name))
+
+      boundary =
+        cond do
+          b && b.trusted -> "; durable boundary r=#{b.boundary} (trusted)"
+          b -> "; durable boundary r=#{b.boundary} NOT TRUSTED (#{b.reason})"
+          s.number > 1 -> "; no durable boundary stated"
+          true -> ""
+        end
 
       IO.puts(
-        "segment #{s.name}: #{s.status}; #{s.lines} line(s), #{s.bytes} B; previous #{inspect(h["previous_segment"])}#{if h["previous_unverified"], do: " (unverified)"}#{if h["resumed"], do: "; resumed at durable boundary #{h["durable_boundary"]}"}#{if s.header_only, do: "; header only"}#{if s.corrupt_tail, do: "; partial last line (#{s.corrupt_tail} B)"}"
+        "segment #{s.name}: #{s.status}; #{s.lines} line(s), #{s.bytes} B; previous #{inspect(h["previous_segment"])}#{if h["previous_unverified"], do: " (unverified)"}#{if b && b.continuation, do: "; continuation #{b.continuation}"}#{boundary}#{if s.header_only, do: "; header only"}#{if s.corrupt_tail, do: "; partial last line (#{s.corrupt_tail} B)"}"
       )
     end
 
@@ -43,7 +52,7 @@ case Replay.replay(Path.expand(dir)) do
     IO.puts("== records")
 
     IO.puts(
-      "first r=#{inspect(c.records.first)}, last r=#{inspect(c.records.last)}; resolved #{c.records.resolved} (authoritative #{c.records.authoritative}, unverified used #{c.records.unverified_used}); duplicates #{c.records.duplicates}; conflicts #{c.records.conflicts}; ambiguous #{inspect(c.records.ambiguous)}"
+      "first r=#{inspect(c.records.first)}, last r=#{inspect(c.records.last)}; resolved #{c.records.resolved} (verified #{c.records.verified}, durable by trusted boundary #{c.records.durable}, unverified used #{c.records.unverified_used}); duplicates #{c.records.duplicates}; conflicts #{c.records.conflicts}; ambiguous #{inspect(c.records.ambiguous)}"
     )
 
     IO.puts("replay boundary: r=#{inspect(r.boundary)}")

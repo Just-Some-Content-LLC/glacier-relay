@@ -390,6 +390,8 @@ defmodule GlacierRelay.Recording.RecorderTest do
              h_2["previous_unverified"] == true
 
     assert h_2["resumed"] == true and h_2["durable_boundary"] == boundary
+    assert h_2["continuation"] == "restart"
+    assert h_1["continuation"] == nil and h_1["durable_boundary"] == nil
 
     # Segment 1 has no footer; segment 2 carries the restart gap before the first record it saw.
     seg1 =
@@ -496,6 +498,27 @@ defmodule GlacierRelay.Recording.RecorderTest do
              &(&1["previous_unverified"] == false and &1["recording_id"] == summary.recording_id)
            )
 
+    # Every continuation header states the roll and the boundary established at that moment:
+    # the last record of the segment it follows (nothing beyond a successful sync).
+    [first_header | continuations] = headers
+    assert first_header["continuation"] == nil and first_header["durable_boundary"] == nil
+
+    for h <- continuations do
+      assert h["continuation"] == "roll" and h["resumed"] == false
+      previous = Path.join(rdir, h["previous_segment"])
+
+      last_in_previous =
+        previous
+        |> File.read!()
+        |> String.split("\n", trim: true)
+        |> Enum.map(&elem(Codec.decode_line(&1), 1))
+        |> records()
+        |> List.last()
+        |> Map.fetch!("r")
+
+      assert h["durable_boundary"] == last_in_previous
+    end
+
     rs = lines(rdir) |> records() |> Enum.map(& &1["r"])
     assert rs == Enum.to_list(hd(rs)..List.last(rs))
 
@@ -570,6 +593,11 @@ defmodule GlacierRelay.Recording.RecorderTest do
 
     assert hd(seg2)["previous_segment"] == "segment-000001.ndjson" and
              hd(seg2)["previous_unverified"] == true
+
+    # The failure-reopened header states the continuation and the boundary before the failure
+    # (here nothing had been synced in this recording: 0, not null, not the last record seen).
+    assert hd(seg2)["continuation"] == "write_failure" and hd(seg2)["resumed"] == false
+    assert hd(seg2)["durable_boundary"] == 0
 
     assert Enum.any?(seg2, &(&1["k"] == "recorder.recovered" and &1["error"] == ":enospc"))
     # Nothing of a or b is missing: every number from the first record is present (no gap at all).

@@ -7,7 +7,7 @@ defmodule GlacierRelay.Test.RecordingFixtures do
 
   alias GlacierRelay.{MissionSession, Summary}
   alias GlacierRelay.Recording.Recorder
-  alias GlacierRelay.Test.FixturePlayer
+  alias GlacierRelay.Test.{FixturePlayer, StubWriter}
 
   @doc "Starts a test recorder on a fresh temporary directory; returns its name."
   def start_recorder(opts \\ []) do
@@ -103,6 +103,51 @@ defmodule GlacierRelay.Test.RecordingFixtures do
     live = capture([id])
     {:ok, summary} = Recorder.close(rec)
     %{dir: summary.recording_dir, id: id, live: live, summary: summary}
+  end
+
+  @doc """
+  A recording continued after writer failures, with one successful sync first: fixture `a` is
+  recorded and synced (the durable boundary `boundary` is its close record); then, with the
+  writer failing in `mode`, fixture `b` is flushed and segment 1 abandoned; a retry leaves a
+  header-only segment 2 when the header's sync fails (`{:fail_sync, _}`) or no file at all when
+  its append fails (`{:fail_append, _}`); then the writer recovers and the retained records of
+  `b` are written to the next segment, which closes cleanly. The buffer never fills, so no
+  record is discarded.
+  """
+  def failed_writer_recording(mode \\ {:fail_sync, :eio}) do
+    {:ok, agent} = StubWriter.start()
+
+    {rec, _pid, _dir} =
+      start_recorder(writer: {StubWriter, agent}, flush_ms: 20, mailbox_high: 100_000)
+
+    a = play("stage1", "fw-a")
+    boundary = flush(rec).durable_boundary
+    StubWriter.mode(agent, mode)
+    b = play("b2_probe", "fw-b")
+    %{status: :degraded} = flush(rec)
+    %{status: :degraded} = flush(rec)
+    StubWriter.mode(agent, :ok)
+    %{status: :recording} = flush(rec)
+    live = capture([a, b])
+    {:ok, summary} = Recorder.close(rec)
+    %{dir: summary.recording_dir, a: a, b: b, boundary: boundary, live: live, summary: summary}
+  end
+
+  @doc "Replaces text in one segment's header line (the first line) and writes the file back."
+  def edit_header(dir, n, from, to) do
+    edit_lines(segment(dir, n), fn [h | t] ->
+      edited = String.replace(h, from, to)
+      if edited == h, do: raise("header of segment #{n} does not contain #{inspect(from)}")
+      [edited | t]
+    end)
+
+    dir
+  end
+
+  @doc "The header map of a segment."
+  def header(dir, n) do
+    {:ok, h} = dir |> segment(n) |> lines() |> hd() |> GlacierRelay.Recording.Codec.decode_line()
+    h
   end
 
   @doc "A copy of a recording directory to damage (the original stays as it was)."

@@ -11,8 +11,13 @@ defmodule GlacierRelay.Recording.Reader do
 
   1. **authoritative** — a record in a verified segment (its hash equals the one in
      `sha256.txt`), or in an unverified segment at or below the durable boundary that the next
-     segment's resume header states;
-  2. **unverified** — a parseable record in an unverified segment beyond any stated boundary;
+     segment's continuation header states (after a roll, a restart or a write failure alike),
+     when that boundary is *trusted*: the header's chain is consistent, its segment is not
+     hash-mismatched, the boundary does not decrease along the chain, does not exceed any record
+     number present in the segments before it, and does not exceed the footer's boundary. A
+     boundary failing any check is reported and elevates nothing; a header with no boundary
+     (format 1 before correction A) elevates nothing and is not an issue;
+  2. **unverified** — a parseable record in an unverified segment beyond any trusted boundary;
   3. a **duplicate** is a record number seen again with identical content (kept as a note);
   4. a **conflict** is the same number with different content; an authoritative record wins
      over an unverified one (reported, never silent); two differing candidates with no
@@ -40,6 +45,7 @@ defmodule GlacierRelay.Recording.Reader do
               hashes_file: nil,
               closed_marker: false,
               footer: nil,
+              boundaries: [],
               gaps: [],
               recovered: [],
               records: [],
@@ -75,8 +81,9 @@ defmodule GlacierRelay.Recording.Reader do
         }
         |> check_chain()
         |> collect_diagnostics()
-        |> resolve_records()
         |> check_footer()
+        |> evaluate_boundaries()
+        |> resolve_records()
 
       {:ok, result}
     end
@@ -320,10 +327,97 @@ defmodule GlacierRelay.Recording.Reader do
     }
   end
 
+  # -- durable boundaries ------------------------------------------------------------------------
+
+  # The durable boundary each continuation header states for the segment before it, and whether
+  # it is trusted. A stated boundary is the recorder's own claim; it is cross-checked against
+  # the header chain and the evidence present, never inferred from file order or parseable
+  # lines, and a claim that fails a check is reported and elevates nothing.
+  defp evaluate_boundaries(%Result{segments: segments, footer: footer} = r) do
+    present = MapSet.new(segments, & &1.number)
+
+    stated =
+      for seg <- segments,
+          seg.number > 1,
+          seg.header != nil,
+          Map.get(seg.header, "durable_boundary") != nil,
+          do: {seg, seg.header["durable_boundary"]}
+
+    {valid, invalid} = Enum.split_with(stated, fn {_, b} -> is_integer(b) and b >= 0 end)
+    claims = Enum.map(valid, fn {seg, b} -> {seg.number, b} end)
+    footer_boundary = footer && footer["boundary"]
+
+    entries =
+      Enum.map(valid, fn {seg, b} ->
+        n = seg.number
+        h = seg.header
+
+        evidence_max =
+          segments
+          |> Enum.filter(&(&1.number < n))
+          |> Enum.flat_map(fn s ->
+            for {_, {:ok, %{"r" => no, "k" => k}}} <- s.parsed, k in @session_kinds, do: no
+          end)
+          |> Enum.max(fn -> 0 end)
+
+        reason =
+          cond do
+            h["segment"] != n or h["previous_segment"] != Segment.name(n - 1) or
+              h["recording_id"] != r.recording_id or seg.format != Codec.format() ->
+              :chain
+
+            seg.status == :hash_mismatch ->
+              :segment_hash_mismatch
+
+            not MapSet.member?(present, n - 1) ->
+              :previous_segment_missing
+
+            Enum.any?(claims, fn {m, c} -> (m < n and c > b) or (m > n and c < b) end) ->
+              :not_monotonic
+
+            b > evidence_max ->
+              :beyond_evidence
+
+            is_integer(footer_boundary) and b > footer_boundary ->
+              :beyond_footer
+
+            true ->
+              nil
+          end
+
+        %{
+          segment: seg.name,
+          applies_to: Segment.name(n - 1),
+          applies_to_number: n - 1,
+          boundary: b,
+          continuation: continuation(h),
+          trusted: reason == nil,
+          reason: reason
+        }
+      end)
+
+    issues =
+      for(
+        e <- entries,
+        not e.trusted,
+        do: {:untrusted_durable_boundary, e.segment, e.boundary, e.reason}
+      ) ++
+        for({seg, b} <- invalid, do: {:invalid_durable_boundary, seg.name, b})
+
+    %{r | boundaries: entries, issues: r.issues ++ issues}
+  end
+
+  # Why the segment was opened, as the header states it; a header before correction A states
+  # it only for a restart (`resumed`), and nothing is inferred for the others.
+  defp continuation(%{"continuation" => c}) when is_binary(c), do: c
+  defp continuation(%{"resumed" => true}), do: "restart"
+  defp continuation(_), do: nil
+
   # -- record resolution ---------------------------------------------------------------------------
 
   defp resolve_records(%Result{segments: segments} = r) do
-    boundaries = boundaries(segments)
+    boundaries =
+      for e <- r.boundaries, e.trusted, into: %{}, do: {e.applies_to_number, e.boundary}
 
     candidates =
       for seg <- segments,
@@ -420,18 +514,6 @@ defmodule GlacierRelay.Recording.Reader do
         unexplained_missing: missing,
         open_ended_gaps: open_ended
     }
-  end
-
-  # The durable boundary a later resume header states for the segment before it.
-  defp boundaries(segments) do
-    for seg <- segments,
-        seg.header,
-        seg.header["resumed"] == true,
-        is_integer(seg.header["durable_boundary"]),
-        seg.number > 1,
-        into: %{} do
-      {seg.number - 1, seg.header["durable_boundary"]}
-    end
   end
 
   defp gap_cover(gaps) do

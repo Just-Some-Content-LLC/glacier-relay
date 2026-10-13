@@ -4,8 +4,9 @@ defmodule GlacierRelay.Recording.Completeness do
   it missed, what is unverifiable, what the current code rejected, what the Relay stream itself
   lost, and what remains unknown — each kept apart, never collapsed into one boolean. The one
   boolean it does carry, `recorder_authoritative?`, says only that every record between the
-  first and the boundary came from verified or durable evidence, with no gap, no corruption, no
-  ambiguity and a clean finalization; it says nothing about the Relay stream or the game.
+  first and the boundary came from verified or durable (trusted-boundary) evidence, with no
+  gap, no corruption, no ambiguity, no reader issue of any kind and a clean finalization; it
+  says nothing about the Relay stream or the game.
   """
 
   alias GlacierRelay.Recording.Replay
@@ -28,11 +29,14 @@ defmodule GlacierRelay.Recording.Completeness do
               last: nil,
               resolved: 0,
               authoritative: 0,
+              verified: 0,
+              durable: 0,
               unverified_used: 0,
               duplicates: 0,
               conflicts: 0,
               ambiguous: []
             },
+            boundaries: %{trusted: [], untrusted: [], unstated: []},
             recorder_gaps: [],
             open_ended_gaps: [],
             unexplained_missing: [],
@@ -66,6 +70,8 @@ defmodule GlacierRelay.Recording.Completeness do
         last: replay.boundary,
         resolved: replay.boundary || 0,
         authoritative: 0,
+        verified: 0,
+        durable: 0,
         unverified_used: 0,
         duplicates: 0,
         conflicts: 0,
@@ -96,18 +102,37 @@ defmodule GlacierRelay.Recording.Completeness do
       header_only: for(s <- r.segments, s.header_only, do: s.name)
     }
 
-    authoritative = Enum.count(r.records, &(&1.authority != :unverified))
+    verified = Enum.count(r.records, &(&1.authority == :verified))
+    durable = Enum.count(r.records, &(&1.authority == :durable))
     unverified_used = Enum.count(r.records, &(&1.authority == :unverified))
 
     records = %{
       first: r.first_record_no,
       last: r.last_record_no,
       resolved: length(r.records),
-      authoritative: authoritative,
+      authoritative: verified + durable,
+      verified: verified,
+      durable: durable,
       unverified_used: unverified_used,
       duplicates: length(r.duplicates),
       conflicts: length(r.conflicts),
       ambiguous: r.ambiguous
+    }
+
+    boundaries = %{
+      trusted: for(b <- r.boundaries, b.trusted, do: b),
+      untrusted: for(b <- r.boundaries, not b.trusted, do: b),
+      # Continuation headers that state no boundary (format 1 before correction A): valid
+      # historical evidence with reduced certainty; the preceding segment's records are not
+      # elevated and nothing is inferred.
+      unstated:
+        for(
+          s <- r.segments,
+          s.number > 1,
+          s.header != nil,
+          Map.get(s.header, "durable_boundary") == nil,
+          do: s.name
+        )
     }
 
     finalization =
@@ -149,7 +174,7 @@ defmodule GlacierRelay.Recording.Completeness do
         r.unexplained_missing == [] and
         r.corrupt_lines == 0 and r.corrupt_tails == [] and r.malformed_records == 0 and
         r.unknown_kinds == %{} and
-        replay.rejected == [] and replay.issues == [] and r.conflicts == []
+        replay.rejected == [] and replay.issues == [] and r.issues == [] and r.conflicts == []
 
     %__MODULE__{
       source: :recording,
@@ -160,6 +185,7 @@ defmodule GlacierRelay.Recording.Completeness do
       footer_boundary: r.footer && r.footer["boundary"],
       segments: segments,
       records: records,
+      boundaries: boundaries,
       recorder_gaps: gaps,
       open_ended_gaps: open_ended,
       unexplained_missing: r.unexplained_missing,
@@ -177,6 +203,7 @@ defmodule GlacierRelay.Recording.Completeness do
       recorder_authoritative?: authoritative?,
       limitations:
         limitations(finalization, format, segments, records, gaps, open_ended, r, replay) ++
+          boundary_limitations(boundaries) ++
           rejected_limitation(replay.rejected) ++
           gap_limitation(sequence_gaps) ++
           [
@@ -247,6 +274,26 @@ defmodule GlacierRelay.Recording.Completeness do
       if(replay.issues != [] or r.issues != [],
         do:
           "#{length(replay.issues) + length(r.issues)} issue(s) reported by the reader or the replay"
+      )
+    ]
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp boundary_limitations(%{untrusted: untrusted, unstated: unstated}) do
+    [
+      if(untrusted != [],
+        do:
+          "durable boundary claim(s) not trusted (nothing elevated): " <>
+            Enum.map_join(
+              untrusted,
+              "; ",
+              &"#{&1.segment} states r=#{&1.boundary} (#{&1.reason})"
+            )
+      ),
+      if(unstated != [],
+        do:
+          "continuation header(s) without a stated durable boundary (format 1 before correction A): " <>
+            Enum.join(unstated, ", ") <> "; the preceding segment's records are not elevated"
       )
     ]
     |> Enum.reject(&is_nil/1)

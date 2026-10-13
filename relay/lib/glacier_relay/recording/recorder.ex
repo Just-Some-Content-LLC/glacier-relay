@@ -23,6 +23,11 @@ defmodule GlacierRelay.Recording.Recorder do
   - **Restart**: a crashed recorder resumes the same recording from the durable boundary kept in
     `:persistent_term` (lost with the VM: a new VM is a new recording), never reads or appends to
     the previous segment, and reports the detected hole only once a later record bounds it.
+  - **Continuation headers**: every segment after the first states why it was opened
+    (`continuation`: `roll`, `restart` or `write_failure`), the segment before it, whether that
+    segment is unverified, and the durable boundary established at that moment — the last record
+    number a successful sync covered, whichever segment held it (M4-B correction A). Nothing past
+    a successful sync is ever stated as durable.
   - **Budget**: at the configured byte budget the recording is finalized with `reason: "budget"`
     and the recorder stops accepting; nothing is deleted.
   """
@@ -209,7 +214,7 @@ defmodule GlacierRelay.Recording.Recorder do
       state = %{state | recording_id: id, recording_dir: rdir, status: :recording}
       Logger.info("recorder: recording #{id} in #{rdir}")
 
-      case open_segment(state, 1, nil, false) do
+      case open_segment(state, 1, nil, false, nil) do
         {:ok, state} -> state
         {:error, reason, state} -> degrade(state, reason)
       end
@@ -243,7 +248,7 @@ defmodule GlacierRelay.Recording.Recorder do
       "recorder: resuming recording #{saved.recording_id} after a restart; durable boundary r=#{saved.durable_boundary}; #{previous} unverified"
     )
 
-    case open_segment(state, next_segment_number(state), previous, true) do
+    case open_segment(state, next_segment_number(state), previous, true, :restart) do
       {:ok, state} -> state
       {:error, reason, state} -> degrade(state, reason)
     end
@@ -251,8 +256,9 @@ defmodule GlacierRelay.Recording.Recorder do
 
   # Opens segment `n` and writes its header, synced, so a segment file always starts with a
   # synced header. On failure the header is taken back out of the buffer (the next attempt
-  # pushes its own) and the state is returned for the caller to degrade.
-  defp open_segment(state, n, previous, previous_unverified) do
+  # pushes its own) and the state is returned for the caller to degrade. `continuation` says
+  # why a segment after the first was opened (`:roll`, `:restart`, `:write_failure`).
+  defp open_segment(state, n, previous, previous_unverified, continuation) do
     case Segment.open(state.recording_dir, n, state.config[:writer]) do
       {:ok, seg} ->
         # The header is written alone, ahead of whatever the buffer holds (after a failure the
@@ -260,7 +266,7 @@ defmodule GlacierRelay.Recording.Recorder do
         buffered = Map.take(state, [:pending, :pending_count, :pending_bytes, :pending_last_no])
         empty = %{pending: [], pending_count: 0, pending_bytes: 0, pending_last_no: nil}
         state = state |> Map.merge(empty) |> Map.put(:segment, seg)
-        header = header_line(state, n, previous, previous_unverified)
+        header = header_line(state, n, previous, previous_unverified, continuation)
         state = push_line(state, header, nil)
 
         case write_pending(state) do
@@ -290,7 +296,12 @@ defmodule GlacierRelay.Recording.Recorder do
     end
   end
 
-  defp header_line(state, n, previous, previous_unverified) do
+  # The first segment of a recording states no boundary (nothing of it has been synced). Every
+  # continuation states the boundary established when it opened: the last record number a
+  # successful sync covered, in whichever segment — after a restart the one kept in the
+  # persistent term, after a write or sync failure the last sync before the failure, at a roll
+  # the last record of the segment just closed. Never the last record received.
+  defp header_line(state, n, previous, previous_unverified, continuation) do
     listener =
       case Application.get_env(:glacier_relay, GlacierRelay.Wire.Listener) do
         nil -> nil
@@ -305,8 +316,9 @@ defmodule GlacierRelay.Recording.Recorder do
       {"segment", n},
       {"previous_segment", previous},
       {"previous_unverified", previous_unverified},
-      {"resumed", state.resume != nil},
-      {"durable_boundary", if(state.resume, do: state.resume.durable_boundary, else: nil)},
+      {"resumed", continuation == :restart},
+      {"continuation", continuation && Atom.to_string(continuation)},
+      {"durable_boundary", if(continuation, do: state.durable_boundary, else: nil)},
       {"node", Atom.to_string(node())},
       {"app",
        %{
@@ -587,7 +599,7 @@ defmodule GlacierRelay.Recording.Recorder do
   defp reopen_after_failure(state) do
     previous = List.last(state.unverified_segments)
 
-    case open_segment(state, next_segment_number(state), previous, true) do
+    case open_segment(state, next_segment_number(state), previous, true, :write_failure) do
       {:ok, state} -> state
       {:error, reason, state} -> degrade(state, reason)
     end
@@ -644,7 +656,7 @@ defmodule GlacierRelay.Recording.Recorder do
             segment_hashes: state.segment_hashes ++ [{seg.name, hash}]
         }
 
-        case open_segment(state, next_segment_number(state), seg.name, false) do
+        case open_segment(state, next_segment_number(state), seg.name, false, :roll) do
           {:ok, state} -> state
           {:error, reason, state} -> degrade(state, reason)
         end
