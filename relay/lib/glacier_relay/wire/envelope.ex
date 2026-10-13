@@ -18,8 +18,13 @@ defmodule GlacierRelay.Wire.Envelope do
           timestamp: String.t(),
           event_type: String.t(),
           schema_version: pos_integer(),
-          payload: map()
+          payload: map(),
+          raw: map() | nil
         }
+  # `raw` (M4-A): the decoded wire object exactly as the line carried it (string keys, values
+  # untouched, before validation), kept beside the validated payload so a recording can preserve
+  # the wire's values. Nil on envelopes built in code rather than decoded. Nothing reads it except
+  # the recorder; decoding, validation and every consumer of the validated fields are unchanged.
   defstruct [
     :protocol_version,
     :adapter_instance_id,
@@ -27,7 +32,8 @@ defmodule GlacierRelay.Wire.Envelope do
     :timestamp,
     :event_type,
     :schema_version,
-    :payload
+    :payload,
+    :raw
   ]
 
   def protocol_version, do: @protocol_version
@@ -72,7 +78,8 @@ defmodule GlacierRelay.Wire.Envelope do
          timestamp: timestamp,
          event_type: event_type,
          schema_version: schema_version,
-         payload: payload
+         payload: payload,
+         raw: map
        }}
     end
   end
