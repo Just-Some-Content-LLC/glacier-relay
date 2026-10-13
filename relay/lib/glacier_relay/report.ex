@@ -752,15 +752,7 @@ defmodule GlacierRelay.Report do
     header =
       "adapter #{r.adapter_instance_id}: #{r.received} event(s), last sequence #{r.last_sequence}, gaps #{inspect(r.gaps)}, observation #{r.observation}"
 
-    connections =
-      Enum.map(r.connections, fn c ->
-        closed =
-          if c.closed_at,
-            do: "closed #{fmt(c.closed_at)} (#{inspect(c.close_reason)})",
-            else: "still open"
-
-        "  connection #{c.peer}: opened #{fmt(c.opened_at)}, identified #{fmt(c.identified_at)}, #{closed} [transport]"
-      end)
+    connections = Enum.map(r.connections, &connection_line/1)
 
     attempts =
       case r.attempts do
@@ -768,43 +760,57 @@ defmodule GlacierRelay.Report do
         list -> Enum.flat_map(list, &render_attempt/1)
       end
 
-    strays =
-      Enum.map(
-        r.unmatched_stops,
-        &"  mission.stopped ##{&1.sequence} at #{&1.timestamp} with no open attempt (#{&1.scene_resource}) [engine]"
-      ) ++
-        Enum.map(
-          r.unattributed.outcomes,
-          &"  actor.#{&1.kind} ##{&1.sequence} #{&1.actor_name} with no open attempt [engine, unattributed]"
-        ) ++
-        Enum.map(
-          r.unattributed.disguise,
-          &"  disguise #{&1.type} #{short(&1.disguise_repository_id)} ##{&1.sequence} with no open attempt [engine, unattributed]"
-        ) ++
-        Enum.map(
-          r.unattributed.items,
-          &"  item #{&1.type} #{short(&1.item_repository_id)} ##{&1.sequence} with no open attempt [engine, unattributed]"
-        ) ++
-        Enum.map(
-          r.unattributed.objectives,
-          &"  objective #{short(&1.objective_id)} ##{&1.sequence} not attached (#{&1.attribution.basis}) [engine, unattributed]"
-        ) ++
-        Enum.map(
-          r.unattributed.player_state,
-          &"  player state #{&1.subject} ##{&1.sequence} with no open attempt [engine, unattributed]"
-        ) ++
-        Enum.map(
-          r.unpaired_contract_sessions,
-          &"  contract session #{short(&1.contract_session_id)} (#{&1.location_id}, started ##{&1.started_sequence}) not correlated to any attempt [engine; correlation not observed]"
-        ) ++
-        Enum.map(
-          r.unmatched_contract_ends,
-          &"  contract.ended ##{&1.sequence} for session #{short(&1.contract_session_id)} (#{reason(&1.reason_kind, &1.reason)}) with no open contract session [engine]"
-        )
+    strays = stray_lines(r)
 
     anomalies = Enum.map(r.anomalies, &"  anomaly: #{inspect(&1)} [BEAM-derived]")
 
     [header] ++ connections ++ attempts ++ strays ++ anomalies
+  end
+
+  @doc false
+  def connection_line(c) do
+    closed =
+      if c.closed_at,
+        do: "closed #{fmt(c.closed_at)} (#{inspect(c.close_reason)})",
+        else: "still open"
+
+    "  connection #{c.peer}: opened #{fmt(c.opened_at)}, identified #{fmt(c.identified_at)}, #{closed} [transport]"
+  end
+
+  @doc false
+  def stray_lines(r) do
+    Enum.map(
+      r.unmatched_stops,
+      &"  mission.stopped ##{&1.sequence} at #{&1.timestamp} with no open attempt (#{&1.scene_resource}) [engine]"
+    ) ++
+      Enum.map(
+        r.unattributed.outcomes,
+        &"  actor.#{&1.kind} ##{&1.sequence} #{&1.actor_name} with no open attempt [engine, unattributed]"
+      ) ++
+      Enum.map(
+        r.unattributed.disguise,
+        &"  disguise #{&1.type} #{short(&1.disguise_repository_id)} ##{&1.sequence} with no open attempt [engine, unattributed]"
+      ) ++
+      Enum.map(
+        r.unattributed.items,
+        &"  item #{&1.type} #{short(&1.item_repository_id)} ##{&1.sequence} with no open attempt [engine, unattributed]"
+      ) ++
+      Enum.map(
+        r.unattributed.objectives,
+        &"  objective #{short(&1.objective_id)} ##{&1.sequence} not attached (#{&1.attribution.basis}) [engine, unattributed]"
+      ) ++
+      Enum.map(
+        r.unattributed.player_state,
+        &"  player state #{&1.subject} ##{&1.sequence} with no open attempt [engine, unattributed]"
+      ) ++
+      Enum.map(
+        r.unpaired_contract_sessions,
+        &"  contract session #{short(&1.contract_session_id)} (#{&1.location_id}, started ##{&1.started_sequence}) not correlated to any attempt [engine; correlation not observed]"
+      ) ++
+      Enum.map(
+        r.unmatched_contract_ends,
+        &"  contract.ended ##{&1.sequence} for session #{short(&1.contract_session_id)} (#{reason(&1.reason_kind, &1.reason)}) with no open contract session [engine]"
+      )
   end
 
   defp render_attempt(%{overview: o} = a) do
@@ -817,20 +823,21 @@ defmodule GlacierRelay.Report do
       "  attempt #{o.number}: #{name}",
       "    mission overview"
     ] ++
-      render_overview(o) ++
+      overview_lines(o) ++
       [
         "    actor outcomes [engine telemetry; grouping by name and definition id is display only, never an actor identity]"
       ] ++
       render_outcomes(a) ++
       ["    gameplay activity"] ++
-      render_activity(a.activity) ++
+      activity_lines(a.activity) ++
       ["    timeline [#{a.timeline.policy}]"] ++
-      Enum.map(a.timeline.lines, &render_line/1) ++
+      Enum.map(a.timeline.lines, &line_text/1) ++
       ["    uncertainty and limitations"] ++
-      Enum.map(a.uncertainty, &"      - #{&1.detail} [#{tag(&1.tag)}]")
+      Enum.map(a.uncertainty, &"      - #{&1.detail} [#{tag_text(&1.tag)}]")
   end
 
-  defp render_overview(o) do
+  @doc false
+  def overview_lines(o) do
     contract =
       case o.contract do
         %{status: :paired} = c ->
@@ -901,7 +908,7 @@ defmodule GlacierRelay.Report do
 
         groups ->
           ["      target outcomes observed (#{a.targets.note}):"] ++
-            Enum.flat_map(groups, &render_group/1)
+            Enum.flat_map(groups, &group_lines/1)
       end
 
     non =
@@ -910,19 +917,20 @@ defmodule GlacierRelay.Report do
           ["      non-target outcomes observed: none in the stream [not observed]"]
 
         groups ->
-          ["      non-target outcomes observed:"] ++ Enum.flat_map(groups, &render_group/1)
+          ["      non-target outcomes observed:"] ++ Enum.flat_map(groups, &group_lines/1)
       end
 
     targets ++
       non ++
       [
         "      counts: " <>
-          render_counts(a.outcome_counts) <>
+          counts_text(a.outcome_counts) <>
           " [engine classifications; occurrence counts, not an actor count]"
       ]
   end
 
-  defp render_group(g) do
+  @doc false
+  def group_lines(g) do
     [
       "        #{g.actor_name} (#{short(g.repository_id)}): #{length(g.occurrences)} occurrence#{plural(length(g.occurrences))}"
     ] ++
@@ -933,7 +941,8 @@ defmodule GlacierRelay.Report do
       end)
   end
 
-  defp render_counts(counts) do
+  @doc false
+  def counts_text(counts) do
     Enum.map_join([:died, :pacified], "; ", fn kind ->
       c = counts[kind]
 
@@ -942,7 +951,8 @@ defmodule GlacierRelay.Report do
     end)
   end
 
-  defp render_activity(act) do
+  @doc false
+  def activity_lines(act) do
     d = act.disguise.view
 
     worn =
@@ -1014,7 +1024,8 @@ defmodule GlacierRelay.Report do
   defp standing_text(%{worn_standing: :not_observed}), do: "no compromise observed"
   defp standing_text(%{worn_standing: s}), do: to_string(s)
 
-  defp render_line(l) do
+  @doc false
+  def line_text(l) do
     seq = if l.sequence, do: "##{l.sequence}", else: "--"
 
     engine =
@@ -1026,7 +1037,7 @@ defmodule GlacierRelay.Report do
           " engine #{t}s#{if l.engine_t_rel, do: " (t+#{Float.round(l.engine_t_rel / 1, 3)}s)", else: ""}#{clock_text(l.clock)}"
       end
 
-    "      #{seq} #{fmt(l.relay_at)}#{engine} #{l.fact} [#{tag(l.tag)}]"
+    "      #{seq} #{fmt(l.relay_at)}#{engine} #{l.fact} [#{tag_text(l.tag)}]"
   end
 
   defp clock_text(%{comparability: :new_domain}), do: " (new contract clock)"
@@ -1034,11 +1045,12 @@ defmodule GlacierRelay.Report do
   defp clock_text(%{regression: true}), do: " (engine time earlier than the previous line)"
   defp clock_text(_), do: ""
 
-  defp tag(:engine), do: "engine-authored"
-  defp tag(:derived), do: "BEAM-derived"
-  defp tag(:last_observed), do: "last observed"
-  defp tag(:not_observed), do: "not observed"
-  defp tag(:transport), do: "transport"
+  @doc false
+  def tag_text(:engine), do: "engine-authored"
+  def tag_text(:derived), do: "BEAM-derived"
+  def tag_text(:last_observed), do: "last observed"
+  def tag_text(:not_observed), do: "not observed"
+  def tag_text(:transport), do: "transport"
 
   defp disposition_text(:restarted), do: "restarted"
   defp disposition_text(:exited_to_menu), do: "exited to menu"
@@ -1076,8 +1088,9 @@ defmodule GlacierRelay.Report do
   defp engine_at(nil), do: ""
   defp engine_at(t), do: " @#{t}s"
 
-  defp short(id) when is_binary(id) and byte_size(id) > 8, do: binary_part(id, 0, 8) <> "…"
-  defp short(id), do: to_string(id)
+  @doc false
+  def short(id) when is_binary(id) and byte_size(id) > 8, do: binary_part(id, 0, 8) <> "…"
+  def short(id), do: to_string(id)
 
   defp plural(1), do: ""
   defp plural(_), do: "s"

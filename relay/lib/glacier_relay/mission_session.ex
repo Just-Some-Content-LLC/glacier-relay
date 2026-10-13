@@ -56,6 +56,12 @@ defmodule GlacierRelay.MissionSession do
   @doc "The mission-oriented report as text (M2 B7)."
   def report_text, do: GenServer.call(__MODULE__, :report_text)
 
+  @doc """
+  Connections that closed before delivering an envelope that named an instance (bounded, newest
+  first). Transport evidence only; a read for presentations (M3-B projection).
+  """
+  def unidentified, do: GenServer.call(__MODULE__, :unidentified)
+
   @impl true
   def init(_opts) do
     {:ok, %{instances: %{}, connections: %{}, unidentified: [], subscribers: MapSet.new()}}
@@ -77,6 +83,8 @@ defmodule GlacierRelay.MissionSession do
 
   def handle_call(:report_text, _from, state),
     do: {:reply, Summary.render_report(state.instances, state.unidentified), state}
+
+  def handle_call(:unidentified, _from, state), do: {:reply, state.unidentified, state}
 
   @impl true
   def handle_cast({:connection_opened, pid, peer, at}, state) do
@@ -234,11 +242,15 @@ defmodule GlacierRelay.MissionSession do
         "relay: #{id}: objective event ##{sequence} arrived with no open attempt; kept as unattributed"
       )
 
-  defp log_note(id, {:unattributed_objective_event, sequence, {:session_contradiction, attempt, attempt_session, occurrence_session}}),
-    do:
-      Logger.warning(
-        "relay: #{id}: objective event ##{sequence} names session #{occurrence_session} while attempt #{attempt} is paired with #{attempt_session}; kept as unattributed, not attached"
-      )
+  defp log_note(
+         id,
+         {:unattributed_objective_event, sequence,
+          {:session_contradiction, attempt, attempt_session, occurrence_session}}
+       ),
+       do:
+         Logger.warning(
+           "relay: #{id}: objective event ##{sequence} names session #{occurrence_session} while attempt #{attempt} is paired with #{attempt_session}; kept as unattributed, not attached"
+         )
 
   defp log_note(id, {:contract_started_again, session_id, sequence}),
     do:
