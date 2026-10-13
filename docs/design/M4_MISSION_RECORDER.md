@@ -556,3 +556,127 @@ Unchanged. Both corrections act inside its decisions — the recording remains a
 A replay claims exact equivalence only for evidence and types the format reconstructs exactly — records verified by hash or made durable by a cross-checked boundary, and close reasons inside the typed vocabulary — and every uncertain boundary (an untrusted or unstated boundary, a qualified reason, a gap, a tail, an ambiguity) stays visible in the account rather than repaired by assumption.
 
 **Stop here. Corrections A and B are implemented, tested, validated offline and committed; the first live M4 recording, M4-C, M4-D, the dashboard, the native and wire schemas and the re-attribution behaviour are untouched; M4 is not complete.**
+
+## 20. M4 controlled live recording and replay — run 1 (2026-10-13 19:55–20:07Z): recorded, finalized cleanly, reconstructed on a fresh node; M4 not complete
+
+Authorized as one controlled HITMAN runtime experiment to validate durable recording and deterministic replay with the frozen native adapter and the corrected recorder (sections 18.14 and 19.8): a recording-and-replay experiment, not analytics, spatial tracking or dashboard work. Evidence: `%TEMP%\glacier-m0\hitmen\m4-run1\` (117 files hashed in `sha256.txt`, verified). All times UTC.
+
+### 20.1 Frozen checkpoint and pre-flight
+
+| Item | Verified |
+|---|---|
+| glacier-relay `main` | `209bd71aa655d9746aa77f1388d80f71e2513c00` (section 19 record on `9b7dac8` on `7a858e4`), clean; tags `research/m0-baseline` `2d67579`, `m1` `53d4346`, `m2` `135d6da`, `m3` `54bcc4f` present |
+| ZHMModSDK `relay/m2` | `c51528483a4f1f1eb9dcd63ae81f5272a6d5a8fe`, clean; not rebuilt |
+| DLL | `b6-accepted-artifacts\GlacierRelay.dll` SHA-256 `6047a9a3278fdd725c55bdc16ac47f832436afb2f5a6f2260488a436a6009d65`, 10,155,008 B; the installed copy hashed identically (`installed-dll.sha256`) |
+| Game before | M0 26/26, 107 retail files (`retail-before.*`), `mods.ini` `b90b4c5e…`, no relay/hitmen/probe file under `mods/`, HITMAN not running |
+| BEAM environment | ports 4747 and 4748 free, no `beam.smp`; recording root `~/.local/state/glacier-relay-m4-run1/` created empty on ext4; 222 GB free; recorder defaults (budget 1 GiB, segment 64 MiB, flush 100 ms / 256 KiB, mailbox high 10,000); `GLACIER_RELAY_RECORD=1`, dashboard disabled (`GLACIER_RELAY_DASHBOARD` unset) |
+| Prior recordings | `m4a-offline`, `m4b-offline`, `m4b-hardening` recordings re-verified by hash before the run; never written |
+| Tooling | `watch-m4.sh` (native log tail, process watch), `m4_watch.exs` (in-node session subscriber with receipt times; prints the children and the recorder health at start), `capture_boundary.exs` (RPC capture of `state/0`, `unidentified/0`, `summary/0`, `report/0` as `term_to_binary` and inspect text, `summary_text/0`, `report_text/0` raw, `Recorder.health/0`, process and node memory), `final_state.exs` (unchanged M3-C tool; `beam-events.ndjson`), `compare_replay.exs` (fresh node: term and byte comparisons against the `.bin` captures plus the account), `compare3.py` (native `published` vs BEAM-reconstructed vs recorder-persisted envelopes, native severities and counters, record-number continuity), `run-cleanup.sh` (unchanged). The whole chain was dry-run offline before the run with the `b6_run1` fixture over the wire port and the B6 native log (`tooling-dry-run/`: six comparisons held, 0 mismatches, `recorder_authoritative? true`), so nothing was changed during the run |
+
+Operator readiness was asked and confirmed before the BEAM node was started and the DLL installed; each R-step was operator-directed.
+
+### 20.2 Runtime script and observations
+
+| Step | Observed |
+|---|---|
+| BEAM first (19:55:47Z) | `elixir --sname relay -S mix run --no-halt m4_watch.exs` with `GLACIER_RELAY_RECORD=1`: listener `127.0.0.1:4747`; children `[MissionSession, Wire.ConnectionSupervisor, Wire.Listener, Recording.Recorder]`; `GlacierRelayWeb.Supervisor`, `Endpoint` and `PubSub` not registered; port 4748 not bound; recorder `:recording`, recording `9fcb9a72-74bb-49fa-86c3-7e6e21820381`, segment 1 header written (`continuation: null`, `durable_boundary: null`, `origin: live`, `transport: recorded`), `records_received 0`, `flushes 1`, no error (`beam-baseline.txt`) |
+| Install | the accepted DLL copied to `retail/mods/`, `mods.ini` → the relay variant `a66a44ed…`; listing 108 files = before + `./mods/GlacierRelay.dll` (`retail-installed.*`) |
+| R1 menu (19:59Z) | native: module attached (built Oct 12 2026 13:16:23), one read-only detour, adapter instance `cf52cc2d-e6cf-4de6-b8d4-3833cc151378`, TCP sink connected; BEAM: `connection opened 127.0.0.1:55348` at 19:59:23.632667Z; recorder: `r=1 connection.opened conn 1`, nothing else; `state/0` `%{}`; `unidentified/0` `[]` (an open, not-yet-identified connection is held in the fold's open-connections map and listed by `unidentified/0` only once it closes unidentified — the M2 model; the recording holds it as r=1 with its peer and opening time, and no mission or adapter event was invented); durable boundary 1 (`r1-check.txt`) |
+| R2 Paris (20:00:59Z) | `contract.started #1`, `mission.playing #2` (same native ms), `disguise.equipped #3` (initial, 874c4c48…); connection identified at 20:00:59.171850Z; records r=2 identified, r=3–5 envelopes with `sequence` 1–3 and `event_type`; the native timestamps inside the stored raw envelope, the BEAM receipt in the record's `at`; durable boundary 5; no gap (`r2-check.txt`) |
+| R3 player state (20:02–20:03Z) | `player.trespassing` #4 true / #5 false (room_id 6), `player.illegal_weapon` #6 true (ICA19 Red Trinity `fca954f6…`, instance `5507116a…`) / #7 false; r=6–9; the summary's player-state line matched M3-C's shape; durable boundary 9 (`r3-check.txt`) |
+| R4 | nothing provoked; no actor outcome, item or objective occurred; none invented |
+| R5a exit to menu (20:04Z) | `mission.stopped #8` (the predicate fell, 20:04:26.869Z), `contract.ended #9` (`exit_to_menu`, "Contract ended manually: User pressed exit to Main menu", 20:04:30.248Z); native counters at attempt end: seen 23, captured 6, unsupported 17, **queue pushed 6, dropped 0**, malformed 0; r=10–11; durable boundary 11; connection still open (`r5a-check.txt`) |
+| R5b quit (20:05Z) | HITMAN exited; BEAM `127.0.0.1:55348 disconnected after 9 line(s), 0 rejected`; `connection closed :peer_closed` at 20:05:20.998129Z under connection 1 with the instance id; recorder `r=12 connection.closed reason "peer_closed"`; the attempt stayed stopped at #8 with disposition exited to menu; no mission stop was derived from the close; the one instance went `observation lost` (`r5b-check.txt`) |
+
+### 20.3 The authoritative comparison boundary (20:05:51Z)
+
+Captured over RPC with `capture_boundary.exs` (`final-*.bin/.txt`), then `final_state.exs` (`beam-final-state.txt`, `beam-events.ndjson`: 9 events, 0 unattributed of any kind). Recorder health at the boundary: `last_record_no 12`, `durable_boundary 12`, `records_received 12`, `pending_count 0`, `pending_bytes 0`, `mailbox_len 0`, `mailbox_max 0`, `lines_written 13`, `bytes_written 6741`, `flushes 11`, `write_errors 0`, `gaps []`. A second capture three seconds later found `state/0` term-equal and `report_text/0` byte-equal to the first and the same health: quiescent, no further game or connection evidence expected, nothing pending in the recorder. The recorder's boundary (12) and the session's last record (12, the close) coincide; nothing was filtered.
+
+Live state at the boundary (`final-summary_text.txt`, `final-report_text.txt`): one instance, 9 events, `gaps []`, observation lost; connection opened 19:59:23.632667Z, identified 20:00:59.171850Z, closed 20:05:20.998129Z (`:peer_closed`); attempt 1 Peacock playing #2 20:00:59.151Z, stopped #8 20:04:26.869Z, duration 207.7 s; contract session `2516103791559076396-c3fc6af7-…`, LOCATION_PARIS, difficulty 2, ended #9 by exit to menu at 205.2 s on the contract clock; disguise worn 874c4c48… since #3, no compromise; player state trespassing last false at #5, illegal weapon last false at #7, 2+2 occurrences, history intact; `unidentified/0` `[]`.
+
+### 20.4 Clean shutdown and the recording
+
+`init.stop` over RPC at 20:06:19.9Z; the launcher exited and port 4747 was released within 1.24 s of the stop command (that span includes the RPC client's own start); recorder log `recording 9fcb9a72-… closed (shutdown); boundary r=12` and `closed on shutdown`, footer `recorder_at` 20:06:20.074380Z. The recording directory `~/.local/state/glacier-relay-m4-run1/9fcb9a72-74bb-49fa-86c3-7e6e21820381/`:
+
+| File | Content |
+|---|---|
+| `segment-000001.ndjson` | 14 lines, 6,881 B: header (`recording.opened`, format 1, segment 1, `previous_segment null`, `continuation null`, `durable_boundary null`, node `relay@VENGEANCE`, OTP 28, Elixir 1.19.6, listener 127.0.0.1:4747, origin live, transport recorded), records r=1…12 continuous (1 opened, 1 identified, 9 envelopes #1–#9 in order, 1 closed), footer `recording.closed` (`boundary 12, records 12, lines 14, bytes 6741, reason "shutdown"`) |
+| `sha256.txt` | `a96547b0380594456784713a0de3de00b11b387fa1532acf51ab4450cf4e2a69  segment-000001.ndjson`; `sha256sum -c` OK |
+| `CLOSED` | present (empty marker) |
+
+No segment roll, recorder restart or write failure occurred, so the recording has a single segment and no continuation header; the recording was copied unchanged into the evidence directory (`recording-9fcb9a72-…`, byte-identical to the on-disk copy, which is preserved) together with the native log `relay-20261013-195902-28076.log` (80 lines, SHA-256 `371156dc…`). Nothing was repaired or rewritten.
+
+### 20.5 Fresh-node replay and exact reconstruction (sections 12–13 of the authorization)
+
+After the original node had terminated (no `beam.smp`, ports free), a fresh VM with no application started (`elixir -S mix run --no-start`) replayed the recording from disk: `replay.exs` (`replay.out`; no listener bound during or after the replay) and `compare_replay.exs` against the `final` captures (`compare-replay.out`):
+
+| Comparison | Result |
+|---|---|
+| `Replay.instances` vs live `state/0` | **term-equal** (Lifecycle instances with attempts, observations and receipt times, connections, last event) |
+| `Replay.unidentified` vs live `unidentified/0` | term-equal (both `[]`) |
+| `Replay.summary` vs live `summary/0` | term-equal |
+| `Replay.report` vs live `report/0` (B7 data) | term-equal |
+| `summary_text` | byte-identical |
+| `report_text` (B7 report) | byte-identical |
+
+Account printed by the fresh node: format 1; `finalization clean`; `CLOSED true`; footer `shutdown` at boundary 12; records first 1, last 12, resolved 12 (**verified 12**, durable by trusted boundary 0, unverified used 0), duplicates 0, conflicts 0, ambiguous []; recorder gaps [], open-ended [], unexplained missing []; corrupt lines 0, partial tails [], malformed 0, unknown kinds []; rejected by the current validator []; replay issues []; reader issues []; Relay sequence gaps `%{}`; transport `recorded`; receipt times `recorded`; **close reasons 1 exact, 0 qualified** (`peer_closed` reconstructed to the identical term); boundaries trusted/untrusted/unstated all empty (single segment); `evidence: authoritative`; **`recorder_authoritative?: true`**; the single limitation: "native-side drops unknown: no native evidence supplied; a recording cannot show them to be zero". Fresh-VM timings: read 37.6 ms, fold 48.8 ms, render 86.3 ms (cold code loading included).
+
+Semantic invariants, all held by the term equality above and visible in the texts: one attempt in the same order; contract pairing (`next_rise`) and disposition (exited to menu) unchanged; player-state last observations unchanged; the disguise occurrence unchanged; native and engine timestamps unchanged; receipt timestamps unchanged; transport opening, identification and closure preserved with the connection number; no mission stop inferred from the close.
+
+### 20.6 Native versus BEAM versus recorder (section 14)
+
+`compare3.py` over the native log, `beam-events.ndjson` and the recording (`native-beam-recorder-compare.txt`): native published 9 (queued 9, sent 9), BEAM reconstructed 9, recorder envelope records 9; sequences 1–9 on all three; **0 field mismatches** (the recorder's stored envelope equals the native `published` object field for field, including `protocol_version`, `schema_version`, `adapter_instance_id`, `timestamp` and every payload field; every record stores the raw wire object); recorder records 1–12 with no discontinuity, envelope sequences monotonic in record order; one adapter instance id on both sides; native severities INFO 80, WARN 0, ERROR 0, FAULT 0; native counters `queue pushed 6, dropped 0` (the predicate transitions and `contract.ended` are published outside the telemetry queue, hence 9 published for 6 queued telemetry rows and one ungated row, as in M3-C). Native-side drops are therefore **0 by external reconciliation**; the recording's own account keeps them `unknown`, which is the intended separation.
+
+### 20.7 Recorder completeness verdict (section 15)
+
+Every sought property held: format 1; finalization `:clean`; the segment hash verified; record numbers continuous 1–12; zero recorder gaps; zero ambiguous records; zero unverified-used records; zero validator rejections; zero reader issues; exact close-reason fidelity; `recorder_authoritative? true`. This is a statement about the evidence the Relay received and the recorder persisted, not complete knowledge of HITMAN's event production (the report's own uncertainty lines remain: success or failure not observable, target status not established, player state last-observed only).
+
+### 20.8 Operational performance (section 16)
+
+| Measure | Observed |
+|---|---|
+| BEAM receipt after native publication (record `at` − envelope `timestamp`) | 0.95–2.26 ms for #3–#9; 20.9 ms for #1 and #2 (the identifying envelopes; native timestamps have ms resolution) (`timing-and-performance.txt`) |
+| Recorder sync per flush | 11 flushes, total 28.8 ms, mean 2.6 ms, max 4.07 ms (M4-A's 1.5–4.4 ms range); write max 152 µs |
+| Recorder mailbox / buffer | `mailbox_max 0`, `pending_count 0`, `pending_bytes 0` at every capture; `overflow_events 0`; `records_discarded 0` |
+| Recorder process memory | 68,120 B (heap 8,370 words); session process 68,776 B; node total 72.1 MB, 170 processes |
+| Recording | 1 segment, 6,881 B with footer; 12 records |
+| Finalization | within the 1.24 s between the stop command and the launcher's exit (RPC client start included); not instrumented more finely |
+| BEAM log | 0 warnings, 0 errors, 0 rejected lines, no web or LiveView activity |
+| Game | stable throughout; quit normally; 0 native WARN/ERROR/FAULT |
+
+No new threshold is introduced; nothing was materially above the M4-A range.
+
+### 20.9 Negative observations and coverage limits
+
+- One run, one route, one connection, one segment of 6.9 KB: segment roll, recorder restart, write failure, overload, budget and the continuation-header trust path (correction A) were not exercised live (they are exercised offline: M4-A runs B/C, M4-B hardening run D, the tests); only `peer_closed` occurred, so the qualified close-reason path (correction B) was not exercised live.
+- The open-but-unidentified connection at R1 appears in the recording (r=1) and in the replayed fold's open-connections map, but `unidentified/0` lists only closed unidentified connections, so that list was empty at every capture; the replay reproduced the same empty list. The M2 connection model was not changed.
+- No actor outcome, item, objective, disguise change or compromise occurred; their absence is not a regression and nothing was invented.
+- Native drops are known to be zero only through the native log's counters, reconciled outside the recording.
+- The dashboard was not started; the operator observed through the game and the in-node watcher only.
+- Finalization duration is bounded, not measured; the stop was issued after a quiescent boundary, not under load.
+- No intentional crash, kill or second session was run; the unclean-recording account was not shown live (it is covered by M4-A run B and the tests).
+
+### 20.10 Cleanup (section 18) — confirmed
+
+`run-cleanup.sh m4-run1` (`cleanup.out`): the relay node was already stopped by `init.stop` (not reachable; launcher pid exited); port 4747 free; watcher exited; HITMAN not running; `GlacierRelay.dll` removed; `mods.ini` restored and byte-identical to `mods.ini.before` (`b90b4c5e…`); retail listing identical (107 files); retail hashes identical; **M0 hashes OK 26/26**; no relay/hitmen/probe artifact under `mods/`; ports 4747 and 4748 free; no `beam.smp`. The recording stays on ext4 under `~/.local/state/glacier-relay-m4-run1/` and in the evidence directory; nothing was deleted. Evidence hashed: 117 files.
+
+### 20.11 Verdicts
+
+| | Verdict | Basis |
+|---|---|---|
+| A. The recorder captured a live HITMAN session, transport and semantic envelopes | **PASS** | r=1 opened, r=2 identified, r=3–11 envelopes #1–#9, r=12 closed (20.2, 20.4) |
+| B. Session record numbering preserved the order in which MissionSession processed evidence | **PASS** | records 1–12 continuous; envelope sequences monotonic in record order; the watcher's receipt order matches (20.6) |
+| C. BEAM receipt times and native event timestamps preserved separately | **PASS** | record `at` vs the raw envelope's `timestamp`; both reproduced term-equal in the replayed observations (20.5, 20.8) |
+| D. The recording finalized cleanly and passed its segment/hash verification | **PASS** | footer `shutdown` at 12, `sha256.txt` OK, `CLOSED`; `finalization clean` on the fresh node (20.4, 20.5) |
+| E. A fresh node reconstructed term-equal Lifecycle instances and unidentified transport evidence | **PASS** | `instances` and `unidentified` term-equal (20.5) |
+| F. The legacy summary and the B7 report were byte-identical | **PASS** | both texts byte-identical; `summary/0` and `report/0` data term-equal too (20.5) |
+| G. Native-published, BEAM-received and recorder-persisted envelopes reconciled with no unexplained discrepancy | **PASS** | 9/9/9, 0 field mismatches, counters `dropped 0`, 0 rejected, no record discontinuity (20.6) |
+| H. The completeness account accurately represented verified evidence, gaps, transport and native-side uncertainty | **PASS** | 12 verified, 0 durable-by-boundary, 0 unverified, no gaps, transport recorded, receipt times recorded, native drops stated unknown until reconciled externally (20.5, 20.7) |
+| I. The recorder introduced no meaningful game or ingestion regression | **PASS** | receipt latency as in M3-C, sync ≤ 4.1 ms, mailbox never above 0, game stable, 0 native or BEAM warnings (20.8) |
+| J. The game was restored to M0 with hash verification | **PASS** | 26/26, listing and hashes identical, `mods.ini` byte-identical (20.10) |
+
+### 20.12 Status and stop
+
+The roadmap's M4 exit criterion as agreed on 2026-10-13 — one real attempt recorded, finalized, surviving the termination of the game and of the BEAM node, replayed by a fresh node into equal Lifecycle state and a byte-identical report, with a transparent completeness account — is **met by this run for one attempt on one route**, with the coverage limits of 20.9. Whether that satisfies M4, and whether M4-C analytics or M4-D spatial research are opened, are the operator's separate decisions; M4-C analytics and the milestone-completion decision remain gated. ADR 0008 is unchanged by this run.
+
+**Stop here. The controlled run, its clean restoration and this record are done; no analytics, spatial telemetry, replay-fed LiveView, native, protocol or semantic change was made; no crash experiment and no second session was run; M4 is not marked complete.**
