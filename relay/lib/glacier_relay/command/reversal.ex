@@ -14,7 +14,12 @@ defmodule GlacierRelay.Command.Reversal do
   one `command.received` and exactly one `command.terminal`, in that order, no `command.unknown`
   and no refinement; the terminal must be `applied` with `previous_*` and `current_*` tuples all
   observed and an `effect` of `changed` (an `unchanged` effect is nothing to reverse; an
-  `uncertain` effect needs a journaled later-frame read-back observation that is consistent);
+  `uncertain` effect — an unexpected tuple, a post-call generation change, a missing read-back —
+  is never planned, whatever later observations were journaled: M5 pre-C-3 hardening, correction
+  B / finding N3 — a complete tuple inside an uncertain result does not establish that the command
+  changed state safely, and a later inspection may inform a separate explicit operator recovery
+  decision but never rewrites the original effect; a `failed` terminal with a possible effect and
+  an `unknown` outcome are refused likewise);
   the `peer.identified` entry of the command's link generation must name the adapter identity;
   the journal must not be degraded (`journal_status`) and the authority's audit must be intact;
   when the in-memory record is supplied it must agree with the journal (status, result,
@@ -50,6 +55,8 @@ defmodule GlacierRelay.Command.Reversal do
          previous: terminal.previous,
          current: terminal.current,
          effect: terminal.effect,
+         frame: terminal.frame,
+         terminal_mono_ms: terminal.mono_ms,
          status: "applied",
          audit: :continuous,
          ambiguous_stages: [],
@@ -126,14 +133,22 @@ defmodule GlacierRelay.Command.Reversal do
     end
   end
 
-  defp check_terminal(terminal, observations) do
+  defp check_terminal(terminal, _observations) do
     observed = terminal["observed"]
 
     with "applied" <- terminal["status"] || {:error, :terminal_status_missing},
          {:ok, previous} <- tuple_or(observed, "previous", :previous_tuple_unobserved),
          {:ok, current} <- tuple_or(observed, "current", :current_tuple_unobserved),
-         {:ok, effect} <- effect(observed, observations) do
-      {:ok, %{previous: previous, current: current, effect: effect, seq: terminal["seq"]}}
+         {:ok, effect} <- effect(observed) do
+      {:ok,
+       %{
+         previous: previous,
+         current: current,
+         effect: effect,
+         seq: terminal["seq"],
+         frame: terminal["frame"],
+         mono_ms: terminal["mono_ms"]
+       }}
     else
       {:error, _} = error -> error
       other when is_binary(other) -> {:error, {:not_applied, other}}
@@ -147,34 +162,20 @@ defmodule GlacierRelay.Command.Reversal do
     end
   end
 
-  defp effect(observed, observations) when is_map(observed) do
+  # Only a verified `changed` effect is reversible by an ordinary plan. An `uncertain` effect is
+  # refused however many later-frame observations say "consistent": they are testimony about a
+  # later frame, never a rewrite of what the setter did on its own frame (correction B / N3).
+  defp effect(observed) when is_map(observed) do
     case Schema.observed_value(observed["effect"]) do
-      {:ok, "changed"} ->
-        {:ok, "changed"}
-
-      {:ok, "unchanged"} ->
-        {:error, :effect_unchanged}
-
-      {:ok, "uncertain"} ->
-        later =
-          Enum.any?(
-            observations,
-            &(&1["type"] == "later_frame_read_back" and &1["conclusion"] == "consistent")
-          )
-
-        if later,
-          do: {:ok, "uncertain; later-frame read-back consistent"},
-          else: {:error, :effect_uncertain}
-
-      {:ok, other} ->
-        {:error, {:effect_unexpected, other}}
-
-      :unobserved ->
-        {:error, :effect_unreported}
+      {:ok, "changed"} -> {:ok, "changed"}
+      {:ok, "unchanged"} -> {:error, :effect_unchanged}
+      {:ok, "uncertain"} -> {:error, :effect_uncertain}
+      {:ok, other} -> {:error, {:effect_unexpected, other}}
+      :unobserved -> {:error, :effect_unreported}
     end
   end
 
-  defp effect(_, _), do: {:error, :effect_unreported}
+  defp effect(_), do: {:error, :effect_unreported}
 
   defp adapter_identity(entries, generation) do
     case Enum.find(

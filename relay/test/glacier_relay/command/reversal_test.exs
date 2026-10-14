@@ -193,8 +193,17 @@ defmodule GlacierRelay.Command.ReversalTest do
     for {reason, entries} <- cases do
       assert {:error, ^reason} = Reversal.plan(write(entries), @id), inspect(reason)
     end
+  end
 
-    # an uncertain effect is planable only with a journaled consistent later-frame read-back
+  test "an uncertain outcome is never planned, whatever later observations say (correction B / N3): unexpected tuple, post-call generation change, missing read-back, fault, unknown, conflicting observations" do
+    [h, c, p, a, t, r, _term] = base_entries()
+
+    elsewhere = %{
+      "disguise_repository_id" => "2018db77-aa8a-4bf9-9afb-56bdaa161156",
+      "charset" => 0,
+      "variation" => 0
+    }
+
     later = %{
       "event" => "operator.observation",
       "command_id" => @id,
@@ -202,14 +211,59 @@ defmodule GlacierRelay.Command.ReversalTest do
       "conclusion" => "consistent"
     }
 
-    assert {:ok, plan} =
-             Reversal.plan(write([h, c, p, a, t, r, terminal("uncertain"), later]), @id)
-
-    assert plan.effect =~ "uncertain; later-frame read-back consistent"
-    inconsistent = Map.put(later, "conclusion", "inconsistent")
+    # an unexpected tuple (complete tuples, effect uncertain), with and without a consistent later read-back
+    assert {:error, :effect_uncertain} =
+             Reversal.plan(
+               write([h, c, p, a, t, r, terminal("uncertain", @previous, elsewhere)]),
+               @id
+             )
 
     assert {:error, :effect_uncertain} =
-             Reversal.plan(write([h, c, p, a, t, r, terminal("uncertain"), inconsistent]), @id)
+             Reversal.plan(
+               write([h, c, p, a, t, r, terminal("uncertain", @previous, elsewhere), later]),
+               @id
+             )
+
+    # a post-call generation change: the tuples equal the request, the effect is still uncertain
+    assert {:error, :effect_uncertain} =
+             Reversal.plan(
+               write([h, c, p, a, t, r, terminal("uncertain", @previous, @current), later]),
+               @id
+             )
+
+    # a missing read-back: no current tuple at all
+    missing = terminal("uncertain", @previous, @current)
+    missing = put_in(missing, ["observed", "current_outfit_id"], field("unavailable"))
+
+    assert {:error, :current_tuple_unobserved} =
+             Reversal.plan(write([h, c, p, a, t, r, missing, later]), @id)
+
+    # a native fault: a failed terminal with a possible effect
+    faulted = terminal("uncertain", @previous, @current) |> Map.put("status", "failed")
+
+    assert {:error, {:not_applied, "failed"}} =
+             Reversal.plan(write([h, c, p, a, t, r, faulted, later]), @id)
+
+    # an unknown outcome, even with a later observation
+    unknown = %{"event" => "command.unknown", "command_id" => @id, "link_generation" => 1}
+
+    assert {:error, :outcome_unknown} =
+             Reversal.plan(write([h, c, p, a, t, r, unknown, later]), @id)
+
+    # conflicting observations change nothing: uncertain stays unplannable; the original journal
+    # status and every observation remain in the file
+    inconsistent = Map.put(later, "conclusion", "inconsistent")
+
+    path =
+      write([h, c, p, a, t, r, terminal("uncertain", @previous, elsewhere), later, inconsistent])
+
+    assert {:error, :effect_uncertain} = Reversal.plan(path, @id)
+    assert {:ok, read} = Journal.read(path)
+    assert Enum.count(read.entries, &(&1["event"] == "operator.observation")) == 2
+
+    assert Enum.find(read.entries, &(&1["event"] == "command.terminal"))["observed"]["effect"][
+             "value"
+           ] == "uncertain"
   end
 
   test "an unreadable, non-contiguous or mixed journal, a degraded journal or audit, fails closed" do
