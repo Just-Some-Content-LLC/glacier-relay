@@ -922,3 +922,50 @@ Threads: 46608 carried module attach, `Init`, `OnEngineInitialized`, all 28 `tel
 Single build (HITMAN 3.280.0.0, SDK 4.1.1) and single run; the thread relationship is an observation, not a guarantee. The narrow-window inspections (first second after a rise; contract end to fall) were not attempted. Journal write latencies and the time inside the reads are not instrumented. The hero-at-menu finding and the persisting registry id are observations of this build's frontend, not engine documentation. Nothing in this run establishes that an effectful command is safe: it establishes what the engine exposes to a frame-local observer, as the authorization states.
 
 **Stop here. One controlled inert C-1 experiment done, restored and recorded; no effectful command, no native change, no rebuild, no token, no detour; C-2 and C-3 not started; M5 not complete.**
+
+---
+
+## 24. M5 C-1 runtime acceptance record (2026-10-14; the section 23 experiment accepted for its demonstrated scope; M5 not complete)
+
+Authorized by "C-1 Runtime Acceptance and C-2 Design Authorization". The controlled C-1 HITMAN experiment of section 23 is **accepted for its demonstrated scope**. Nothing was rebuilt or installed for this record; the checkpoint was re-verified first: glacier-relay `main` `555df5413af0966b210b578907f215056649ae7d` = origin, clean; ZHMModSDK `relay/m2` `c1bfe0c502675b6f47bc32ff59c01957ce5991b6` = origin, clean; the five glacier-relay research tags unchanged (`m0` → `2d675792…`, `m1` → `53d43461…`, `m2` → `135d6da3…`, `m3` → `54bcc4f2…`, `m4` → `491ef141…`); C-1 DLL `7fecf31ad477891ddaac62c935cbde7df99100a8935fcc6bf7add02b7783e639` (`c1-offline\`), M5-B DLL `15dd58e3…` (`m5b-offline\`) and the accepted M2 observer DLL `6047a9a3278fdd725c55bdc16ac47f832436afb2f5a6f2260488a436a6009d65` (`b6-accepted-artifacts\`) preserved with their recorded hashes; `c1-run1\` 228/228 and `c1-offline\` 5/5 verify; game at M0 26/26, no relay file under `mods/`, `mods.ini` `b90b4c5e…`, no HITMAN or relay process, 4747–4749 free on WSL and Windows.
+
+### 24.1 Demonstrated facts (what the acceptance rests on; each from section 23's evidence)
+
+1. **Five live inspections** (`a52dc353`, `cb9e8d6d`, `05fab718`, `c1f65faa`, `a6e7b8d9`) reached `applied` on frames 8191, 18066, 38743, 40012 and 48420, 53–57 ms after issue and 0–6 ms after native receipt.
+2. **Frame-thread execution**: every inspection's reads and emit on thread 46608, the thread of the detour, the frame update and every publish line; the network thread 14160 carried only link lines.
+3. **The current hero outfit id equals the initial disguise telemetry**: `hero_outfit_id 874c4c48-0a8b-49e9-883e-49fc5f1fb051` on all three mission inspections = `contract.started.starting_disguise_repository_id` = `disguise.equipped (initial)` of both attempts.
+4. **A HeroA-compatible current kit, charset 0 and variation 0**: one charset, one HeroA variation, `hero_heroa_valid true`, `hero_suit true`, on all three mission inspections.
+5. **A bounded kit-map scan of 153 entries** found the candidate on each of the three candidate inspections (`candidate_found true`, `candidate_heroa_usable true`, `candidate_suit true`, `kits_scanned 153`, under the 4,096 bound).
+6. **`ZHitman5_SetOutfit` available on this build**: `set_outfit_available true` on all five inspections, through `Exists()` only; 0 call sites by source.
+7. **Stable mission-generation comparisons**: `generation_expected` = `generation_at_receipt` = `generation_cached` = `generation_fresh` on the three mission inspections (`…5fd4f3e1…`, then `…1d02b337…` twice); absent or unavailable, with reasons, at both menus.
+8. **The transition epoch advanced on the restart evidence**: 1 at the first rise, 2 at the contract end for the active generation (0.97 s before the fall), 3 at the fall, 4 at the second rise, 5 at the exit's fall; the hypothetical precondition true on stable frames and false with explicit reasons at both menus.
+9. **10 / 10 / 10 matching semantic envelopes** (native log = BEAM = recorder, 0 field mismatches, native `dropped 0`); the inspections produced no envelope.
+10. **Six successful replay comparisons** on a fresh node (instances, unidentified, summary, report term-equal; summary and report texts byte-identical), finalization clean, recorder authoritative.
+11. **35 contiguous command-journal entries**, monotonic, 0 anomalies, 0 unknown, 0 audit failures, every stage correlated to its id on link generation 1.
+12. **Zero native warnings, errors or faults** in 116 native lines across load, restart, exit and quit.
+13. **M0 restoration**: 26/26 hashes, listing (107) and hashes identical, `mods.ini` byte-identical, both relay files removed, ports free, no leftover process.
+
+### 24.2 Findings preserved (not weakened by the acceptance)
+
+- **The hero resolves at the main menu** (`4fc9396e-2619-4e66-a51e-2bd366230da7`, a kit with `hero_suit true`, one charset, one HeroA variation), on both menu inspections. Hero resolution is not evidence of a mission.
+- **The registry session id persists after mission exit**: at the menu after the exit `generation_fresh` still read `…1d02b337…` while the cached and at-receipt generations were absent. The fresh value is a comparator only; the precondition's conjunction with the predicate and the cached generation refused that frame.
+- The restart race recurred exactly (contract end 0.97 s before the fall; the next attempt's id on the fall-edge frame).
+
+### 24.3 Not performed (recorded as such, not as validated)
+
+- An inspection inside the first second after a rise (the `stable_interval_too_short` / `stable_frames_too_few` reasons live).
+- An inspection inside the contract-end-to-fall window (the `contract_end_observed` / `epoch_changed` / `generation_mismatch_*` reasons live).
+
+Both reasons families rest on the offline gate and the probe's scripted restart only. They are **not validated** by this acceptance and remain open items for a later inert run (section 25's prerequisite run can carry them).
+
+### 24.4 Scope of the acceptance
+
+Accepted: that the frozen C-1 build can be hosted by the real game for one session without fault; that a frame-local observer can read the hero's outfit tuple, resolve a kit by id in the engine's map, read the setter's availability and compare the three generations on the applying frame; that the Relay transition epoch moves on the documented observations; and that the inert ladder, journal, telemetry invariance and restoration hold. Not accepted and not claimed: that any engine mutation is safe, that the setter emits any telemetry, that a kit other than the Paris starting suit is resolvable under Paris, or anything about another build, route or location. The C-1 DLL remains a build of record; the accepted native artifact remains the M2 DLL `6047a9a3…`.
+
+---
+
+## 25. M5 C-2 design record (pointer)
+
+The effectful `player.outfit.set` design — target selection, the mandatory apply gate and transition-race analysis, the native apply and tuple-restoration contract, the trust basis, the observation and ambiguous-outcome semantics, the failure containment, the stages C-2A / C-2B / C-2C / C-3, the gates and the first runtime proposal — is `docs/design/M5C2_EFFECTFUL_OUTFIT_DESIGN.md` (design and read-only source investigation; nothing implemented). Its outcome: a second suit kit cannot be established from source; target discovery is an inert prerequisite (C-1b, no code change); the reserved v1 wire schema cannot carry the prior tuple and must be revised before implementation; the smallest safe next implementation authorization is C-2A (BEAM-only, offline).
+
+**Stop here. C-1 accepted for its scope; C-2 designed, not implemented; no native or BEAM runtime change, no token, no detour, no rebuild, no game; C-2A/B/C and C-3 not started; M5 not complete.**
