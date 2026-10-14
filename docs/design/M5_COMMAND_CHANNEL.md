@@ -539,3 +539,48 @@ Evidence `m5b-run1\` (222 files, `sha256.txt`): `preflight.txt`, `imports.txt` a
 The real game hosts the inert command boundary safely: the link, the handshake, the disarmed default, the frame-scheduled inert command, the independent transports and the telemetry invariance all held, and the game was restored. **M5-C research may begin** — the id-to-kit resolution research and the precondition contract — with one requirement from 19.6 carried into its design: the effectful entry's precondition must be judged against the registry session id read on the applying frame together with the mission predicate (the edge-cached generation alone lags the engine during a restart), and BEAM's status must expose the current generation. This experiment does not authorize any gameplay modification; `player.outfit.set` stays reserved and non-issuable; the time-scale fallback is not implemented; M5-D (an effectful runtime run) remains gated on M5-C and its own authorization.
 
 **Stop here. One controlled inert experiment done, restored and recorded; no effectful command, no outfit or time-scale entry, no new detour, no rebuild, no browser control, no change to `MissionSession` or the recorder; M5-C and M6–M9 not started; M5 not complete.**
+
+
+## 20. M5-B runtime acceptance record (2026-10-14; the section 19 experiment accepted for its documented scope; M5 not complete)
+
+The authorization "M5-B Runtime Acceptance and M5-C Research" accepted the controlled inert HITMAN experiment of section 19 for its documented scope. What the run validated and what still rests on source reading are kept apart below; the mission-generation race stays an unresolved safety finding.
+
+### 20.1 Validated at runtime (one run, HITMAN 3 at the M0 baseline, M5-B DLL `15dd58e3…`, ZHMModSDK `82511c04`, glacier-relay `ecd064a`)
+
+| Statement | Evidence (section 19) |
+|---|---|
+| The native and BEAM command handshake succeeded. | `command link: connected` 1 ms after creation, `welcomed by relay@VENGEANCE; link generation 1` 37 ms later; BEAM `link.connected` → `peer.identified` 15 ms, trust `identified (claimed; not authenticated)`. |
+| The authority remained disarmed until operator arming. | status `armed false, ready false` at every boundary before `arm`; the disarmed `relay.probe` refused locally (`{:error, :disarmed}`, journal `command.refused`), no native `received` line; `arm` only through the RPC operator API; disarmed again after each probe. |
+| Three inert probes completed their status ladders. | `74934808`, `d03dc3c4`, `22723736`: accepted → transmitted → received → applied in 59 / 53 / 52 ms, each with a native read-back; no busy, duplicate, expired, unknown or anomaly. |
+| The scheduler executed on the engine frame callback thread. | every `command: … applied on frame N` line and the `first frame` statement on thread 28096, the thread of every `scene:`, `mission playing`, `published` and `tcp sink: queued` line. |
+| The command network thread was separate from the engine callback. | thread 44156 wrote only the `command link:` lines (connected, welcomed, received ×3); it never appears on an engine-path line. |
+| All ten telemetry envelopes reconciled across native publication, BEAM receipt and recorder persistence. | `compare3.py`: 10 = 10 = 10, 0 field mismatches, sequences 1..10 on all three, native `dropped 0`. |
+| M4 replay invariance held. | `compare_replay.exs` on the closed recording vs the `final` capture: six comparisons PASS; finalization clean; recorder authoritative. |
+| The journal finalized with 25 contiguous entries and no anomalies. | seq 1..25, `mono_ms` monotonic, `journal.opened` → `journal.closed (:shutdown)`; counters anomalies 0, unknown 0, audit_failures 0. |
+| Game restoration verified M0 26/26. | `cleanup.out`: DLL and `GlacierRelay.ini` removed, `mods.ini` byte-identical, listing and hashes identical (107 files), M0 26/26, ports free, no leftover process. |
+
+Also validated at runtime: the mission generation reported in results changed across the restart (`…a105ec5f…` → `…30ccebb9…`) and was absent at the menu before and after; the telemetry and command transports closed independently at game exit (`peer_closed` 2 ms apart) with nothing queued and no mission stop derived from the close.
+
+### 20.2 Established by source, not by the run
+
+- The scheduler's invocation path `OnFrameUpdate → ObserveFrame → RelayFrame::Process → ScheduleCommand → CommandScheduler::Tick` (the run shows the thread, not the call chain).
+- The network thread touches only the socket, the queue, the codec and the log (by reading `CommandLink.cpp`; the run shows it logged nothing from an engine path, which is consistent but weaker).
+- No engine write exists on the command path (by reading; the run exercised only `relay.probe`).
+- Queued commands do not execute after link loss (offline link tests and the queue-clear code; at the real exit nothing was queued).
+- At a real game exit the native side writes nothing (the process exits without unloading the plugin), so native-side loss accounting exists only in the offline probe runs.
+
+### 20.3 Unresolved safety finding (preserved)
+
+On the restart the registry already named the next attempt's session id on the fall-edge frame, while the native edge-cached generation still held the old id for ≈0.92 s after `contract.ended`. The edge-cached generation alone is therefore **not** a defensible precondition for an effectful command. `status.link.mission_generation` on BEAM is hello-time only; results carry the current value. Both are carried into the M5-C research record (`docs/design/M5C_EFFECTFUL_COMMAND_RESEARCH.md`, sections 3 and 7).
+
+### 20.4 Remaining limitations
+
+The thread relationship is an observation of one build (HITMAN 3.280.0.0, SDK 4.1.1) and one run, not a guarantee across versions; `CommandScheduler::Stats` are not logged by the plugin; queue occupancy and journal write latencies were not instrumented; the idle per-frame cost of the command path was not measured; the M5-B DLL remains a build of record, removed from the game, not an accepted artifact beyond this experiment; the accepted native artifact is still the M2 DLL `6047a9a3…`.
+
+---
+
+## 21. M5-C research record (pointer)
+
+The bounded, read-only M5-C investigation (outfit kit resolution, the frame-validated mission-generation contract, the native thread and lifetime contract, peer trust, effect and reversal analysis, the status and observation contract, the late-result policy, the candidate decision table, the minimal implementation proposal and its gates) is recorded in **`docs/design/M5C_EFFECTFUL_COMMAND_RESEARCH.md`**. It changes no code, enables no command and authorizes nothing; its recommendation is an inert read-back stage before any effectful entry.
+
+**Stop here. M5-B accepted for its scope; M5-C researched, not implemented; no effectful command, no native change, no DLL, no game; M5 not complete.**
