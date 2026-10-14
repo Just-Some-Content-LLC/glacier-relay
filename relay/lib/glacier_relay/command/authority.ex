@@ -476,7 +476,7 @@ defmodule GlacierRelay.Command.Authority do
       Schema.terminal?(result.status) ->
         cancel(cmd.ack_timer)
         cancel(cmd.terminal_timer)
-        status = String.to_existing_atom(result.status)
+        status = Schema.status_atom(result.status)
         observed = if result.observed != nil, do: :native, else: :none
 
         cmd =

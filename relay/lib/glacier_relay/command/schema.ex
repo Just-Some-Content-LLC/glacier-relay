@@ -70,6 +70,23 @@ defmodule GlacierRelay.Command.Schema do
     }
   }
 
+  # The status vocabulary as atoms, fixed at compile time: a status is never converted to an atom
+  # dynamically (a fresh VM has not necessarily created it; an unknown one must never be created).
+  @status_atoms %{
+    "received" => :received,
+    "rejected" => :rejected,
+    "busy" => :busy,
+    "duplicate" => :duplicate,
+    "expired" => :expired,
+    "precondition_failed" => :precondition_failed,
+    "unavailable" => :unavailable,
+    "applied" => :applied,
+    "failed" => :failed
+  }
+
+  @doc "The atom for a decoded status (every status of the vocabulary; nothing else)."
+  def status_atom(status), do: Map.fetch!(@status_atoms, status)
+
   def protocol_version, do: @protocol_version
   def max_line_bytes, do: @max_line_bytes
   def statuses, do: @statuses
