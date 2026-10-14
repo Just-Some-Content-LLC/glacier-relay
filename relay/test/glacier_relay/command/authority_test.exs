@@ -446,8 +446,13 @@ defmodule GlacierRelay.Command.AuthorityTest do
     StubWriter.mode(agent, {:fail_sync, :eio})
     assert {:error, {:journal_unavailable, :eio}} = Command.probe()
     assert %{journal: :degraded, trust: %{ready: false}} = Command.status()
-    :ok = Command.disarm()
-    assert {:error, {:journal_unavailable, {:degraded, :eio}}} = Command.arm()
+    # The failed acceptance entry degraded the audit trail: the authority disarmed itself and
+    # refuses to arm again for its life (M5-B hardening); the journal stays degraded too.
+    assert %{degraded: true, failed_event: "command.accepted", reason: :eio} =
+             Command.status().audit
+
+    refute Command.status().trust.armed
+    assert {:error, {:audit_degraded, "command.accepted"}} = Command.arm()
     FakeNative.close(socket)
   end
 

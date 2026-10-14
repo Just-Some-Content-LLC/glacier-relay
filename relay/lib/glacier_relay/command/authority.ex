@@ -2,21 +2,34 @@ defmodule GlacierRelay.Command.Authority do
   @moduledoc """
   The single owner of command issuance (M5-A, ADR 0009). It holds the one command link and its
   handshake state, the arming state, the one in-flight command and the record of every command of
-  this boot; it writes every decision to `Command.Journal` before acting on it, and refuses to act
-  when the journal cannot persist the entry.
+  this boot; it writes every decision to `Command.Journal` before acting on it, and fails closed
+  when the journal cannot persist an entry.
 
   Trust states, never equated (ADR 0009 reconciliation): `transport` connected; `protocol`
   negotiated (a hello with the supported version); `peer` identified (the hello's claimed
   `adapter_instance_id`, labelled *identified*, never authenticated — local arming is not peer
   authentication and a claimed id establishes nothing by itself); `authenticated` is reserved and
   unreachable in M5-A (no credential is provisioned); `armed` is the operator's statement about
-  this authority; `ready` is identified and armed with nothing in flight and the journal open.
+  this authority; `ready` is identified and armed with nothing in flight, the journal open and the
+  audit trail intact.
 
   Issuance rules: disarmed by default; arming requires an identified link and is undone by
   disarm or by any link loss (a reconnect needs a new arming); one in-flight command; no command
   id reused; unknown names and versions refused; an entry whose trust requirement the peer does
   not meet is refused (every effectful entry requires an authenticated peer, so none is issuable in
   M5-A); no automatic retry after an unknown outcome and no automatic reversal.
+
+  Audit trail (M5-B hardening): the `command.accepted` entry is persisted before transmission, so a
+  failure there refuses the command and nothing is sent. A failure on any later entry
+  (`transmitted`, `received`, `terminal`, `unknown`, `disarmed`, `link.closed`) cannot undo what
+  already happened — a line may have been written to the peer, the peer may have applied it — so
+  the transition is applied in memory as the evidence says, the command's record carries the
+  unaudited stages (`audit: {:gap, stages}`), the authority's audit state becomes
+  `{:degraded, ...}`, it disarms, and it refuses to arm or issue again for the rest of its life:
+  a reconnect does not make it ready, only a restart of the subtree (a new journal) does. The
+  journal cannot atomically commit a TCP send and its audit record: an `accepted` entry without a
+  `transmitted` one means transmission may have occurred; an in-flight command whose transition
+  was not audited is never reported as definitely unapplied.
 
   Status ladder of a command: `accepted` (journaled) → `transmitted` → `received` → a terminal
   native status (`applied`, `rejected`, `busy`, `duplicate`, `expired`, `precondition_failed`,
@@ -45,7 +58,7 @@ defmodule GlacierRelay.Command.Authority do
 
   # -- operator API ------------------------------------------------------------------------------
 
-  @doc "Arms the authority for the current link. Refused without an identified link or a working journal."
+  @doc "Arms the authority for the current link. Refused without an identified link, a working journal or an intact audit trail."
   def arm, do: GenServer.call(__MODULE__, :arm)
 
   @doc "Disarms the authority: no new command may be issued until armed again."
@@ -60,10 +73,10 @@ defmodule GlacierRelay.Command.Authority do
       when is_binary(name) and is_integer(version) and is_map(params),
       do: GenServer.call(__MODULE__, {:issue, name, version, params, opts})
 
-  @doc "The authority's status: trust states, arming, link, in-flight command, counters."
+  @doc "The authority's status: trust states, arming, audit state, link, in-flight command, counters."
   def status, do: GenServer.call(__MODULE__, :status)
 
-  @doc "One command's record (ladder, result, observation), or nil."
+  @doc "One command's record (ladder, result, observation, audit), or nil."
   def command(command_id), do: GenServer.call(__MODULE__, {:command, command_id})
 
   # -- link-facing API (called by Command.Link only) -------------------------------------------------
@@ -93,10 +106,11 @@ defmodule GlacierRelay.Command.Authority do
        link: nil,
        next_generation: 1,
        armed: false,
+       audit: :intact,
        in_flight: nil,
        commands: %{},
        order: [],
-       counters: %{issued: 0, refused: 0, anomalies: 0, links: 0, unknown: 0}
+       counters: %{issued: 0, refused: 0, anomalies: 0, links: 0, unknown: 0, audit_failures: 0}
      }}
   end
 
@@ -128,18 +142,20 @@ defmodule GlacierRelay.Command.Authority do
         counters: bump(state.counters, :links)
     }
 
-    journal(state, %{"event" => "link.connected", "link_generation" => generation, "peer" => peer})
+    {state, _} =
+      audit(state, %{"event" => "link.connected", "link_generation" => generation, "peer" => peer})
 
     {:reply, {:ok, generation}, state}
   end
 
   def handle_call({:link_opened, _pid, peer}, _from, state) do
-    journal(state, %{
-      "event" => "link.refused",
-      "peer" => peer,
-      "reason" => "busy",
-      "current_link_generation" => state.link.generation
-    })
+    {state, _} =
+      audit(state, %{
+        "event" => "link.refused",
+        "peer" => peer,
+        "reason" => "busy",
+        "current_link_generation" => state.link.generation
+      })
 
     {:reply, {:error, :busy}, state}
   end
@@ -161,26 +177,35 @@ defmodule GlacierRelay.Command.Authority do
 
     state = %{state | link: link}
 
-    journal(state, %{
-      "event" => "peer.identified",
-      "link_generation" => generation,
-      "adapter_instance_id" => hello.adapter_instance_id,
-      "mission_generation" => hello.mission_generation,
-      "native_at" => hello.native_at,
-      "capabilities" => hello.capabilities,
-      "trust" => "identified (claimed; not authenticated)"
-    })
+    {state, _} =
+      audit(state, %{
+        "event" => "peer.identified",
+        "link_generation" => generation,
+        "adapter_instance_id" => hello.adapter_instance_id,
+        "mission_generation" => hello.mission_generation,
+        "native_at" => hello.native_at,
+        "capabilities" => hello.capabilities,
+        "trust" => "identified (claimed; not authenticated)"
+      })
 
     {:reply, {:ok, Schema.encode_welcome(generation, node())}, state}
   end
 
   def handle_call({:peer_hello, generation, _hello}, _from, state) do
-    anomaly(state, %{"event" => "anomaly.hello_on_unknown_link", "link_generation" => generation})
+    state =
+      anomaly(state, %{
+        "event" => "anomaly.hello_on_unknown_link",
+        "link_generation" => generation
+      })
+
     {:reply, {:error, :unknown_link}, state}
   end
 
   def handle_call(:arm, _from, state) do
     cond do
+      state.audit != :intact ->
+        {:reply, {:error, {:audit_degraded, elem(state.audit, 1)}}, state}
+
       state.armed ->
         {:reply, {:error, :already_armed}, state}
 
@@ -188,20 +213,24 @@ defmodule GlacierRelay.Command.Authority do
         {:reply, {:error, :no_identified_link}, state}
 
       true ->
-        case journal(state, %{
+        # The arming entry must be durable before the authority is armed: a failure here leaves
+        # it disarmed (and, as for every failed entry, degraded).
+        case audit(state, %{
                "event" => "authority.armed",
                "link_generation" => state.link.generation,
                "adapter_instance_id" => state.link.adapter_instance_id
              }) do
-          :ok -> {:reply, :ok, %{state | armed: true}}
-          {:error, reason} -> {:reply, {:error, {:journal_unavailable, reason}}, state}
+          {state, :ok} -> {:reply, :ok, %{state | armed: true}}
+          {state, {:error, reason}} -> {:reply, {:error, {:journal_unavailable, reason}}, state}
         end
     end
   end
 
   def handle_call(:disarm, _from, state) do
-    _ =
-      journal(state, %{
+    # Disarming never depends on the journal: it is the fail-closed direction. The entry is
+    # attempted; its failure degrades the audit state like any other.
+    {state, _} =
+      audit(state, %{
         "event" => "authority.disarmed",
         "by" => "operator",
         "in_flight" => state.in_flight && state.in_flight.id
@@ -213,7 +242,8 @@ defmodule GlacierRelay.Command.Authority do
   def handle_call({:issue, name, version, params, opts}, _from, state) do
     case prepare(state, name, version, params, opts) do
       {:ok, cmd} ->
-        case journal(
+        # Persisted before anything is sent: a failure here means nothing was transmitted.
+        case audit(
                state,
                entry(cmd, "command.accepted", %{
                  "name" => name,
@@ -222,8 +252,11 @@ defmodule GlacierRelay.Command.Authority do
                  "ttl_ms" => cmd.ttl_ms
                })
              ) do
-          :ok -> transmit(state, cmd)
-          {:error, reason} -> refuse(state, name, version, {:journal_unavailable, reason})
+          {state, :ok} ->
+            transmit(state, cmd)
+
+          {state, {:error, reason}} ->
+            refuse(state, name, version, {:journal_unavailable, reason})
         end
 
       {:error, reason} ->
@@ -245,11 +278,12 @@ defmodule GlacierRelay.Command.Authority do
 
   def handle_cast({:link_closed, generation, reason}, state) do
     # A close reported for a link that is no longer the current one: evidence, not an error.
-    journal(state, %{
-      "event" => "link.closed_late",
-      "link_generation" => generation,
-      "reason" => inspect(reason)
-    })
+    {state, _} =
+      audit(state, %{
+        "event" => "link.closed_late",
+        "link_generation" => generation,
+        "reason" => inspect(reason)
+      })
 
     {:noreply, state}
   end
@@ -278,6 +312,9 @@ defmodule GlacierRelay.Command.Authority do
     id = Keyword.get(opts, :command_id) || Schema.uuid4()
 
     cond do
+      state.audit != :intact ->
+        {:error, {:audit_degraded, elem(state.audit, 1)}}
+
       entry == nil ->
         {:error, {:unknown_command, name, version}}
 
@@ -334,6 +371,7 @@ defmodule GlacierRelay.Command.Authority do
       observed: :none,
       independent_observation: :not_available,
       unknown_reason: nil,
+      audit: :intact,
       ack_timer: nil,
       terminal_timer: nil
     }
@@ -364,7 +402,16 @@ defmodule GlacierRelay.Command.Authority do
           )
 
         cmd = cmd |> stage(:transmitted) |> Map.merge(%{ack_timer: ack, terminal_timer: terminal})
-        journal(state, entry(cmd, "command.transmitted", %{"bytes" => byte_size(line)}))
+
+        # The bytes are out; this entry's failure cannot be undone and must not be hidden: the
+        # command stays in flight (uncertain, never "unapplied"), its record notes the gap, the
+        # authority degrades and disarms.
+        {state, cmd} =
+          audit_stage(
+            state,
+            cmd,
+            entry(cmd, "command.transmitted", %{"bytes" => byte_size(line)})
+          )
 
         state =
           %{state | in_flight: cmd, counters: bump(state.counters, :issued)} |> remember(cmd)
@@ -374,10 +421,12 @@ defmodule GlacierRelay.Command.Authority do
       {:error, reason} ->
         cmd = cmd |> stage(:unknown) |> Map.put(:unknown_reason, {:send_failed, reason})
 
-        journal(
-          state,
-          entry(cmd, "command.unknown", %{"reason" => "send failed: #{inspect(reason)}"})
-        )
+        {state, cmd} =
+          audit_stage(
+            state,
+            cmd,
+            entry(cmd, "command.unknown", %{"reason" => "send failed: #{inspect(reason)}"})
+          )
 
         state =
           %{state | counters: state.counters |> bump(:issued) |> bump(:unknown)} |> remember(cmd)
@@ -387,12 +436,13 @@ defmodule GlacierRelay.Command.Authority do
   end
 
   defp refuse(state, name, version, reason) do
-    journal(state, %{
-      "event" => "command.refused",
-      "name" => name,
-      "version" => version,
-      "reason" => inspect(reason)
-    })
+    {state, _} =
+      audit(state, %{
+        "event" => "command.refused",
+        "name" => name,
+        "version" => version,
+        "reason" => inspect(reason)
+      })
 
     {:reply, {:error, reason}, %{state | counters: bump(state.counters, :refused)}}
   end
@@ -456,13 +506,15 @@ defmodule GlacierRelay.Command.Authority do
         cancel(cmd.ack_timer)
         cmd = cmd |> stage(:received) |> Map.put(:ack_timer, nil)
 
-        journal(
-          state,
-          entry(cmd, "command.received", %{
-            "native_at" => result.native_at,
-            "frame" => result.frame
-          })
-        )
+        {state, cmd} =
+          audit_stage(
+            state,
+            cmd,
+            entry(cmd, "command.received", %{
+              "native_at" => result.native_at,
+              "frame" => result.frame
+            })
+          )
 
         %{state | in_flight: cmd} |> remember(cmd)
 
@@ -484,19 +536,21 @@ defmodule GlacierRelay.Command.Authority do
           |> stage(status)
           |> Map.merge(%{result: result, observed: observed, ack_timer: nil, terminal_timer: nil})
 
-        journal(
-          state,
-          entry(cmd, "command.terminal", %{
-            "status" => result.status,
-            "reason" => result.reason,
-            "native_at" => result.native_at,
-            "frame" => result.frame,
-            "observed" => result.observed,
-            "observed_label" => to_string(observed),
-            "mission_generation" => result.mission_generation,
-            "independent_observation" => "not_available"
-          })
-        )
+        {state, cmd} =
+          audit_stage(
+            state,
+            cmd,
+            entry(cmd, "command.terminal", %{
+              "status" => result.status,
+              "reason" => result.reason,
+              "native_at" => result.native_at,
+              "frame" => result.frame,
+              "observed" => result.observed,
+              "observed_label" => to_string(observed),
+              "mission_generation" => result.mission_generation,
+              "independent_observation" => "not_available"
+            })
+          )
 
         %{state | in_flight: nil} |> remember(cmd)
     end
@@ -511,13 +565,15 @@ defmodule GlacierRelay.Command.Authority do
       |> stage(:unknown)
       |> Map.merge(%{unknown_reason: why, ack_timer: nil, terminal_timer: nil})
 
-    journal(
-      state,
-      entry(cmd, "command.unknown", %{
-        "reason" => to_string(why),
-        "last_stage" => cmd.stages |> Enum.at(-2) |> elem(0) |> to_string()
-      })
-    )
+    {state, cmd} =
+      audit_stage(
+        state,
+        cmd,
+        entry(cmd, "command.unknown", %{
+          "reason" => to_string(why),
+          "last_stage" => cmd.stages |> Enum.at(-2) |> elem(0) |> to_string()
+        })
+      )
 
     %{state | in_flight: nil, counters: bump(state.counters, :unknown)} |> remember(cmd)
   end
@@ -527,22 +583,79 @@ defmodule GlacierRelay.Command.Authority do
     Process.demonitor(link.ref, [:flush])
     state = if state.in_flight, do: unknown(state, :link_lost), else: state
 
-    journal(state, %{
-      "event" => "link.closed",
-      "link_generation" => link.generation,
-      "reason" => inspect(reason),
-      "armed_before" => state.armed
-    })
+    {state, _} =
+      audit(state, %{
+        "event" => "link.closed",
+        "link_generation" => link.generation,
+        "reason" => inspect(reason),
+        "armed_before" => state.armed
+      })
 
-    if state.armed,
-      do:
-        journal(state, %{
-          "event" => "authority.disarmed",
-          "by" => "link_loss",
-          "link_generation" => link.generation
-        })
+    {state, _} =
+      if state.armed,
+        do:
+          audit(state, %{
+            "event" => "authority.disarmed",
+            "by" => "link_loss",
+            "link_generation" => link.generation
+          }),
+        else: {state, :ok}
 
     %{state | link: nil, armed: false}
+  end
+
+  # -- audit ---------------------------------------------------------------------------------------
+
+  # Appends an entry. On failure the authority's audit state degrades once (with the event that
+  # failed), it disarms, and it stays degraded for the rest of its life; the caller decides what
+  # the failure means for the transition it was recording.
+  defp audit(state, entry) do
+    case append(state.journal, entry) do
+      :ok ->
+        {state, :ok}
+
+      {:error, reason} = error ->
+        Logger.error(
+          "command authority: journal entry #{entry["event"]} not persisted (#{inspect(reason)}); audit degraded, disarmed"
+        )
+
+        state =
+          case state.audit do
+            :intact ->
+              %{state | audit: {:degraded, entry["event"], reason, mono()}}
+
+            degraded ->
+              %{state | audit: degraded}
+          end
+
+        {%{state | armed: false, counters: bump(state.counters, :audit_failures)}, error}
+    end
+  end
+
+  # A transition of an in-flight or ending command: applied in memory as the evidence says, and
+  # marked on the command's record when its entry could not be persisted.
+  defp audit_stage(state, cmd, entry) do
+    case audit(state, entry) do
+      {state, :ok} ->
+        {state, cmd}
+
+      {state, {:error, _}} ->
+        gap =
+          case cmd.audit do
+            :intact -> {:gap, [cmd.status]}
+            {:gap, stages} -> {:gap, stages ++ [cmd.status]}
+          end
+
+        {state, %{cmd | audit: gap}}
+    end
+  end
+
+  # A journal process that is down (or a call that fails) is a failed append, never a crash of
+  # the authority and never a silent success.
+  defp append(journal, entry) do
+    Journal.append(journal, entry)
+  catch
+    :exit, reason -> {:error, {:journal_unavailable, reason}}
   end
 
   # -- helpers ---------------------------------------------------------------------------------------
@@ -570,22 +683,8 @@ defmodule GlacierRelay.Command.Authority do
       })
 
   defp anomaly(state, fields) do
-    journal(state, fields)
+    {state, _} = audit(state, fields)
     %{state | counters: bump(state.counters, :anomalies)}
-  end
-
-  defp journal(state, entry) do
-    case Journal.append(state.journal, entry) do
-      :ok ->
-        :ok
-
-      {:error, reason} = error ->
-        Logger.error(
-          "command authority: journal entry #{entry["event"]} not persisted: #{inspect(reason)}"
-        )
-
-        error
-    end
   end
 
   defp cancel(nil), do: :ok
@@ -599,6 +698,12 @@ defmodule GlacierRelay.Command.Authority do
     journal_status = safe_journal_status(state.journal)
     identified = link != nil and link.identity == :identified
 
+    audit =
+      case state.audit do
+        :intact -> :intact
+        {:degraded, event, reason, _} -> %{degraded: true, failed_event: event, reason: reason}
+      end
+
     %{
       enabled: true,
       trust: %{
@@ -607,8 +712,11 @@ defmodule GlacierRelay.Command.Authority do
         peer: if(link, do: link.identity, else: :none),
         authenticated: false,
         armed: state.armed,
-        ready: identified and state.armed and state.in_flight == nil and journal_status == :open
+        ready:
+          identified and state.armed and state.in_flight == nil and journal_status == :open and
+            state.audit == :intact
       },
+      audit: audit,
       link:
         link &&
           Map.take(link, [
@@ -622,7 +730,7 @@ defmodule GlacierRelay.Command.Authority do
       next_generation: state.next_generation,
       in_flight:
         state.in_flight &&
-          Map.take(state.in_flight, [:id, :name, :version, :status, :link_generation]),
+          Map.take(state.in_flight, [:id, :name, :version, :status, :link_generation, :audit]),
       commands:
         Enum.map(
           state.order,
@@ -633,7 +741,8 @@ defmodule GlacierRelay.Command.Authority do
             :status,
             :link_generation,
             :observed,
-            :unknown_reason
+            :unknown_reason,
+            :audit
           ])
         ),
       counters: state.counters,
