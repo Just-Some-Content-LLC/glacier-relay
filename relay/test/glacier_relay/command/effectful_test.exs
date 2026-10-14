@@ -388,8 +388,11 @@ defmodule GlacierRelay.Command.EffectfulTest do
              Command.attest_telemetry(attestation(Schema.uuid4()))
 
     assert Command.status().effectful.corroboration == nil
-    assert :ok = Command.attest_telemetry(attestation(adapter, %{"max_age_ms" => 1}))
-    Process.sleep(5)
+    # M5 C-2C N1: the attestation's own allowance also bounds observed_at against the wall clock
+    # at submission, so a 1 ms allowance could refuse the submission itself; 50 ms keeps the
+    # submission fresh and lets the monotonic receipt window expire before arming
+    assert :ok = Command.attest_telemetry(attestation(adapter, %{"max_age_ms" => 50}))
+    Process.sleep(60)
 
     assert {:error, :telemetry_corroboration_stale} =
              Command.arm_effectful(ownership: ownership())

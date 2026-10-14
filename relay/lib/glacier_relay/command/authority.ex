@@ -31,6 +31,15 @@ defmodule GlacierRelay.Command.Authority do
   revoked by disarm, link loss or audit degradation; it is never persisted across a restart. No
   automatic retry after an unknown outcome and no automatic reversal.
 
+  Attestation freshness (M5 C-2C, finding N1; section 32): a dual-clock rule. When the attestation
+  is submitted, its `observed_at` is parsed as a UTC instant and its age against this node's UTC
+  clock must not exceed the smaller of the attestation's own `max_age_ms` and the configured
+  `evidence_max_age_ms`, nor lead the clock by more than `evidence_clock_skew_ms`; the conclusion
+  and the ages are journaled. When arming, the same wall-clock rule is applied again and the
+  monotonic time since the attestation was received must also be within that bound; both must
+  hold. `observed_at` is operator-supplied evidence, never an authenticated clock reading: the
+  rule bounds the operator's claim, it does not verify it.
+
   Audit trail (M5-B hardening): the `command.accepted` entry is persisted before transmission, so a
   failure there refuses the command and nothing is sent. A failure on any later entry
   (`transmitted`, `received`, `terminal`, `unknown`, `disarmed`, `link.closed`) cannot undo what
@@ -73,7 +82,8 @@ defmodule GlacierRelay.Command.Authority do
     token_file: nil,
     effectful_ttl_default_ms: 30_000,
     effectful_ttl_max_ms: 120_000,
-    evidence_max_age_ms: 120_000
+    evidence_max_age_ms: 120_000,
+    evidence_clock_skew_ms: 5_000
   ]
 
   @observation_types ~w(visual_confirmation visual_no_change later_frame_read_back engine_consistent note)
@@ -101,7 +111,8 @@ defmodule GlacierRelay.Command.Authority do
   @doc """
   M5 C-2A: records an operator-supplied telemetry attestation (section 26.1): the adapter
   identity the operator read from the observer out of band, with its freshness. Never derived
-  from the command peer's own messages.
+  from the command peer's own messages. Refused, with the refusal journaled, when `observed_at`
+  is stale or future-dated against this node's UTC clock (M5 C-2C N1; `observation_freshness/4`).
   """
   def attest_telemetry(attestation) when is_map(attestation),
     do: GenServer.call(__MODULE__, {:attest_telemetry, attestation})
@@ -475,6 +486,11 @@ defmodule GlacierRelay.Command.Authority do
           link != nil and link.identity == :identified and
             valid.adapter_instance_id == link.adapter_instance_id
 
+        bound = min(valid.max_age_ms, state.config[:evidence_max_age_ms])
+        skew = state.config[:evidence_clock_skew_ms]
+        observed_age = observed_age_ms(valid.observed_utc)
+        freshness = observation_freshness(observed_age, bound, skew)
+
         {state, outcome} =
           audit(state, %{
             "event" => "operator.telemetry_attested",
@@ -485,11 +501,17 @@ defmodule GlacierRelay.Command.Authority do
             "max_age_ms" => valid.max_age_ms,
             "link_generation" => link && link.generation,
             "matches_link_identity" => matches,
-            "label" => "operator-provided corroboration; not an authority observation"
+            "observed_age_ms" => observed_age,
+            "age_bound_ms" => bound,
+            "clock_skew_allowance_ms" => skew,
+            "freshness" => Atom.to_string(freshness),
+            "accepted" => matches and freshness == :fresh,
+            "label" =>
+              "operator-provided corroboration; not an authority observation; observed_at is the operator's claim bounded against this node's UTC clock, not verified"
           })
 
-        case {outcome, matches} do
-          {:ok, true} ->
+        case {outcome, matches, freshness} do
+          {:ok, true, :fresh} ->
             corroboration = %{
               attestation: valid,
               received_mono: mono(),
@@ -498,10 +520,16 @@ defmodule GlacierRelay.Command.Authority do
 
             {:reply, :ok, %{state | corroboration: corroboration}}
 
-          {:ok, false} ->
+          {:ok, false, _} ->
             {:reply, {:error, :adapter_identity_mismatch}, %{state | corroboration: nil}}
 
-          {{:error, reason}, _} ->
+          {:ok, true, :stale} ->
+            {:reply, {:error, :telemetry_observation_stale}, %{state | corroboration: nil}}
+
+          {:ok, true, :future} ->
+            {:reply, {:error, :telemetry_observation_future}, %{state | corroboration: nil}}
+
+          {{:error, reason}, _, _} ->
             {:reply, {:error, {:journal_unavailable, reason}}, %{state | corroboration: nil}}
         end
 
@@ -526,7 +554,11 @@ defmodule GlacierRelay.Command.Authority do
           "corroboration" => %{
             "observed_at" => state.corroboration.attestation.observed_at,
             "evidence_ref" => state.corroboration.attestation.evidence_ref,
-            "age_ms" => mono() - state.corroboration.received_mono
+            "age_ms" => mono() - state.corroboration.received_mono,
+            "observed_age_ms_at_arming" =>
+              observed_age_ms(state.corroboration.attestation.observed_utc),
+            "label" =>
+              "operator-claimed observed_at, bounded against this node's clock, not verified"
           }
         }
 
@@ -719,11 +751,30 @@ defmodule GlacierRelay.Command.Authority do
           min(state.corroboration.attestation.max_age_ms, max_age) ->
         {:error, :telemetry_corroboration_stale}
 
+      observation_freshness(
+        observed_age_ms(state.corroboration.attestation.observed_utc),
+        min(state.corroboration.attestation.max_age_ms, max_age),
+        state.config[:evidence_clock_skew_ms]
+      ) == :stale ->
+        {:error, :telemetry_observation_stale}
+
+      observation_freshness(
+        observed_age_ms(state.corroboration.attestation.observed_utc),
+        min(state.corroboration.attestation.max_age_ms, max_age),
+        state.config[:evidence_clock_skew_ms]
+      ) == :future ->
+        {:error, :telemetry_observation_future}
+
       state.corroboration.attestation.adapter_instance_id != link.adapter_instance_id ->
         {:error, :telemetry_corroboration_mismatch}
 
       true ->
-        check_ownership(Keyword.get(opts, :ownership), max_age, ttl)
+        check_ownership(
+          Keyword.get(opts, :ownership),
+          max_age,
+          ttl,
+          state.config[:evidence_clock_skew_ms]
+        )
     end
   end
 
@@ -732,7 +783,7 @@ defmodule GlacierRelay.Command.Authority do
   # The operator-supplied socket-ownership evidence: its schema, its freshness (the operator's
   # `collected_at` against the wall clock, bounded by its own `max_age_ms` and the configured
   # maximum) and its validation result. Labelled operator-provided evidence, never identity.
-  defp check_ownership(%{} = o, max_age, ttl) do
+  defp check_ownership(%{} = o, max_age, ttl, skew) do
     with :ok <- unknown_keys(o, @ownership_keys),
          {:ok, collected} <- iso(o["collected_at"], :collected_at_invalid),
          true <-
@@ -758,7 +809,7 @@ defmodule GlacierRelay.Command.Authority do
       age = DateTime.diff(DateTime.utc_now(), collected, :millisecond)
 
       cond do
-        age < -5_000 ->
+        age < -skew ->
           {:error, :ownership_evidence_from_the_future}
 
         age > min(o["max_age_ms"], max_age) ->
@@ -778,7 +829,7 @@ defmodule GlacierRelay.Command.Authority do
     end
   end
 
-  defp check_ownership(_, _max_age, _ttl), do: {:error, :ownership_evidence_missing}
+  defp check_ownership(_, _max_age, _ttl, _skew), do: {:error, :ownership_evidence_missing}
 
   defp unknown_keys(map, allowed) do
     case Map.keys(map) -- allowed do
@@ -786,6 +837,26 @@ defmodule GlacierRelay.Command.Authority do
       unknown -> {:error, {:unknown_keys, Enum.sort(unknown)}}
     end
   end
+
+  @doc """
+  M5 C-2C N1: the pure freshness rule for an operator-supplied observation timestamp.
+  `observed_age_ms` is this node's UTC clock minus the claimed instant (negative when the claim
+  leads the clock); `bound_ms` is the smaller of the evidence's own `max_age_ms` and the configured
+  maximum; `skew_ms` is the permitted lead. Returns `:fresh` when `-skew_ms <= age <= bound_ms`,
+  `:stale` when the age exceeds the bound, `:future` when the lead exceeds the skew. An age equal
+  to the bound, or a lead equal to the skew, is fresh.
+  """
+  def observation_freshness(observed_age_ms, bound_ms, skew_ms)
+      when is_integer(observed_age_ms) and is_integer(bound_ms) and is_integer(skew_ms) do
+    cond do
+      observed_age_ms > bound_ms -> :stale
+      observed_age_ms < -skew_ms -> :future
+      true -> :fresh
+    end
+  end
+
+  defp observed_age_ms(%DateTime{} = observed_utc),
+    do: DateTime.diff(DateTime.utc_now(), observed_utc, :millisecond)
 
   defp iso(text, reason) do
     case is_binary(text) and DateTime.from_iso8601(text) do
@@ -799,7 +870,7 @@ defmodule GlacierRelay.Command.Authority do
   defp validate_telemetry_attestation(a) do
     with :ok <- unknown_keys(a, @attestation_keys),
          true <- Schema.uuid?(a["adapter_instance_id"]) or {:error, :adapter_instance_id_invalid},
-         {:ok, _} <- iso(a["observed_at"], :observed_at_invalid),
+         {:ok, observed_utc} <- iso(a["observed_at"], :observed_at_invalid),
          true <-
            (is_binary(a["basis"]) and byte_size(a["basis"]) in 1..200) or {:error, :basis_invalid},
          true <-
@@ -812,6 +883,7 @@ defmodule GlacierRelay.Command.Authority do
        %{
          adapter_instance_id: a["adapter_instance_id"],
          observed_at: a["observed_at"],
+         observed_utc: observed_utc,
          basis: a["basis"],
          evidence_ref: a["evidence_ref"],
          max_age_ms: a["max_age_ms"]
@@ -1648,8 +1720,9 @@ defmodule GlacierRelay.Command.Authority do
               observed_at: state.corroboration.attestation.observed_at,
               evidence_ref: state.corroboration.attestation.evidence_ref,
               age_ms: mono() - state.corroboration.received_mono,
+              observed_age_ms: observed_age_ms(state.corroboration.attestation.observed_utc),
               link_generation: state.corroboration.link_generation,
-              label: "operator-provided corroboration"
+              label: "operator-provided corroboration; observed_at is the operator's claim"
             }
       },
       audit: audit,

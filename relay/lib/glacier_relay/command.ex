@@ -40,7 +40,11 @@ defmodule GlacierRelay.Command do
   @doc """
   M5 C-2A: records the operator's telemetry attestation (the adapter identity read from the
   observer out of band, with `observed_at`, `basis`, `evidence_ref` and `max_age_ms`). Required,
-  fresh, before effectful arming. Never derived from the command peer's own messages.
+  fresh, before effectful arming. Never derived from the command peer's own messages. Freshness
+  (M5 C-2C N1) is a dual-clock rule: `observed_at` is bounded against this node's UTC clock
+  (`telemetry_observation_stale` / `telemetry_observation_future`) when submitted and again when
+  arming, and the monotonic time since receipt is bounded (`telemetry_corroboration_stale`);
+  `observed_at` stays an operator claim, never an authenticated clock reading.
   """
   def attest_telemetry(attestation) when is_map(attestation),
     do: guarded(fn -> Authority.attest_telemetry(attestation) end)

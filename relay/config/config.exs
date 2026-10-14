@@ -72,7 +72,10 @@ config :glacier_relay, :command,
   # Effectful arming is one-shot and bounded (ms); operator evidence older than these is stale.
   effectful_ttl_default_ms: 30_000,
   effectful_ttl_max_ms: 120_000,
-  evidence_max_age_ms: 120_000
+  evidence_max_age_ms: 120_000,
+  # M5 C-2C N1: an operator-supplied `observed_at` / `collected_at` may lead this node's UTC clock
+  # by at most this much (ms); anything further in the future is refused as a clock disagreement.
+  evidence_clock_skew_ms: 5_000
 
 # The HTTP endpoint. Loopback only, a different port from the wire listener (4747), never
 # conflated with it. Bandit serves it. No sockets, LiveViews or static assets are mounted in M3-A.
