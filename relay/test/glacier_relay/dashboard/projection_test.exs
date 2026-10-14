@@ -320,17 +320,38 @@ defmodule GlacierRelay.Dashboard.ProjectionTest do
     before = Projection.refresh()
     session = Process.whereis(MissionSession)
     listener = Process.whereis(GlacierRelay.Wire.Listener)
+    endpoint = Process.whereis(GlacierRelayWeb.Endpoint)
     pid = Process.whereis(Projection)
 
     Process.exit(pid, :kill)
+    # rest_for_one: the projection restarts first, then the endpoint after it, as a new process.
     Player.wait_until(fn -> (p = Process.whereis(Projection)) && p != pid end)
-    Player.wait_until(fn -> match?({:ok, _}, GlacierRelayWeb.Endpoint.server_info(:http)) end)
+    Player.wait_until(fn -> endpoint_restarted?(endpoint) end)
 
     after_ = Projection.snapshot()
     assert after_.revision > before.revision
     assert entry(after_, id).report == entry(before, id).report
     assert Process.whereis(MissionSession) == session
     assert Process.whereis(GlacierRelay.Wire.Listener) == listener
+    assert Process.whereis(GlacierRelayWeb.Endpoint) != endpoint
+  end
+
+  # The endpoint has restarted when a new endpoint supervisor is registered and has started all of
+  # its children. Its name is registered before its init/1 runs, and the configuration table that
+  # `server_info/1` reads is created by the first child, so asking for the listener earlier raises
+  # (the table does not exist yet) rather than answering "not yet": `which_children/1` is answered
+  # only once init/1 has returned, after which the question is well-posed. A persistent failure is
+  # not hidden: an endpoint that never restarts leaves this false until the bounded wait raises,
+  # and one that dies in between makes `which_children/1` exit.
+  defp endpoint_restarted?(old) do
+    case Process.whereis(GlacierRelayWeb.Endpoint) do
+      pid when is_pid(pid) and pid != old ->
+        _ = Supervisor.which_children(pid)
+        match?({:ok, _}, GlacierRelayWeb.Endpoint.server_info(:http))
+
+      _ ->
+        false
+    end
   end
 
   test "reading and refreshing never changes session evidence" do
