@@ -583,4 +583,256 @@ The thread relationship is an observation of one build (HITMAN 3.280.0.0, SDK 4.
 
 The bounded, read-only M5-C investigation (outfit kit resolution, the frame-validated mission-generation contract, the native thread and lifetime contract, peer trust, effect and reversal analysis, the status and observation contract, the late-result policy, the candidate decision table, the minimal implementation proposal and its gates) is recorded in **`docs/design/M5C_EFFECTFUL_COMMAND_RESEARCH.md`**. It changes no code, enables no command and authorizes nothing; its recommendation is an inert read-back stage before any effectful entry.
 
-**Stop here. M5-B accepted for its scope; M5-C researched, not implemented; no effectful command, no native change, no DLL, no game; M5 not complete.**
+**M5-B accepted for its scope; M5-C researched (section 21), then C-1 implemented and validated offline (section 22).**
+
+
+## 22. M5 C-1 — inert outfit inspection and precondition instrumentation: implementation and offline validation record (2026-10-14; nothing installed; no game; no effectful command; M5 not complete)
+
+Authorized by "M5-C Research Acceptance and C-1 Offline Implementation Authorization": a bounded, inert `relay.inspect.outfit` v1 command and the precondition instrumentation, implemented natively and on BEAM, validated offline only. `relay.probe` is unchanged; `player.outfit.set` stays reserved and rejected on both sides; `game.time_scale.set` is not implemented; no DLL was installed and HITMAN was not launched. Checkpoint verified before the work: glacier-relay `main` `90d722d`, ZHMModSDK `relay/m2` `82511c04`, both clean and equal to their remotes, tags unchanged; the M5-B DLL `15dd58e3…` and the accepted M2 DLL `6047a9a3…` verify; `m5b-run1`, `m5b-offline` and `m4-run1` evidence verify; the committed M4 recording verifies; game at M0 26/26.
+
+### 22.1 Commits and artifacts
+
+| What | Where | Ref / hash |
+|---|---|---|
+| Native C-1 (inspection, reader, evaluator, tee, snapshot, tests, probe) | ZHMModSDK `relay/m2` | **`c1bfe0c502675b6f47bc32ff59c01957ce5991b6`** on `82511c04` |
+| BEAM C-1 (schema entry, facade, preconditions in the issue path, tests) | glacier-relay `main` | **`d7cace515b0100d6f28408a369de933872bf3018`** |
+| This record, roadmap, handoff, README | glacier-relay `main` | the commit that adds this section |
+| C-1 DLL, build of record (not accepted, not installed) | `%TEMP%\glacier-m0\hitmen\c1-offline\GlacierRelay.dll` (+ `.pdb`) | SHA-256 `7fecf31ad477891ddaac62c935cbde7df99100a8935fcc6bf7add02b7783e639` (10,522,112 B); clean build 2026-10-14 03:00Z, `relay-x64-Debug` |
+| C-1 command probe, build of record | `c1-offline\GlacierRelayCommandProbe.exe` | `33444370ceb4c78ccb8dc8d18e848301775fe7d18aa8c3ab7fecde1ca8511295` |
+| Native tests executable | build tree | `7445ea87747a38f561cdfff48c15235697f7c3c3920860610f766e638d7b8231` |
+| Accepted native artifact | unchanged | the M2 DLL `6047a9a3…`; the M5-B DLL `15dd58e3…` stays the M5-B build of record |
+
+### 22.2 The command and its result contract
+
+`relay.inspect.outfit` v1 is compiled into both allowlists (native `CommandProtocol::Entry::RelayInspectOutfit1`, hello capability `relay.inspect.outfit/1`; BEAM `Command.Schema` entry, issuable, trust `identified`, effect none, no reversal). Its one parameter, `disguise_repository_id`, is optional and validated as a UUID on both sides; any other parameter or any other shape is rejected before the queue. The command may carry the protocol's existing `mission_generation` precondition (the operator's expected generation, `Command.inspect_outfit/2`'s `:expected_generation`, validated as text of 1–64 bytes); the authority now journals the preconditions it sends in `command.accepted`. Protocol version stays 1; the result envelope is unchanged; the read-back bound was raised from 16 to 48 entries on both sides (native `k_MaxObservedEntries`, BEAM `Schema.max_observed_entries/0`) and a per-field reason is bounded at 40 bytes.
+
+Every inspection field is an object `{"status": s, "value": v, "reason": r}` with `s` ∈ observed / unavailable / unsupported / inconsistent / precondition_failed, `v` present only when observed, `r` only when given. Nothing is defaulted: a missing kit, hero or registry value is a status with a reason, never a zero id or an assumed generation; no pointer, entity reference or resource id is ever a field. The fields, in the result's fixed order: `scene_available`, `scene_loaded`, `loading_stage`, `scene_type`, `mission_playing`, `prev_frame_playing`, `frame`, `receipt_to_frame_ms`, `rise_age_ms`, `rise_age_frames`, `scene_same_as_rise`; `generation_expected`, `generation_at_receipt`, `generation_cached`, `generation_fresh`, `relay_transition_epoch`, `epoch_at_receipt`, `contract_started_seen`, `contract_ended_seen`; `hero_outfit_id`, `hero_charset`, `hero_variation`, `hero_charset_count`, `hero_heroa_vars`, `hero_heroa_valid`, `hero_suit`; when a candidate was named `candidate_id`, `candidate_found`, `candidate_charsets`, `candidate_heroa_vars`, `candidate_heroa_usable`, `candidate_suit`, `kits_scanned`; `set_outfit_available`, `kit_map`, `reads_on_frame`; `precondition_ok`, `precondition_reasons`. Measured through the scheduler with every text at its bound: 2,972 bytes with everything observed and 3,503 bytes with every engine-derived field unavailable, against the 4,096-byte line bound; an inspection that would still not fit is reduced deterministically to its first nineteen entries (frame, scene, generations, transition) with `observed_reduced: true` and a reason, counted in the scheduler's `reduced` statistic — the protocol's bound is never raised.
+
+Example (the probe's FAKE data, from the offline gate; the generation and ids are the probe's fabrications, not HITMAN state):
+
+```
+{
+ "command_id": "e221dcb5-1ba7-45a2-9dcd-e722924c5ecd",
+ "status": "applied",
+ "frame": 3,
+ "mission_generation": "fake-session-28c9c548-1",
+ "observed": {
+  "rise_age_ms": {
+   "status": "observed",
+   "value": 4014
+  },
+  "contract_ended_seen": {
+   "reason": "none observed",
+   "status": "unavailable"
+  },
+  "scene_available": {
+   "status": "observed",
+   "value": true
+  },
+  "generation_fresh": {
+   "status": "observed",
+   "value": "fake-session-28c9c548-1"
+  },
+  "generation_expected": {
+   "status": "observed",
+   "value": "fake-session-28c9c548-1"
+  },
+  "hero_charset_count": {
+   "status": "observed",
+   "value": 1
+  },
+  "scene_same_as_rise": {
+   "status": "observed",
+   "value": true
+  },
+  "prev_frame_playing": {
+   "status": "observed",
+   "value": true
+  },
+  "kits_scanned": {
+   "status": "observed",
+   "value": 3
+  },
+  "precondition_ok": {
+   "status": "observed",
+   "value": false
+  },
+  "hero_heroa_vars": {
+   "status": "observed",
+   "value": 1
+  },
+  "precondition_reasons": {
+   "status": "observed",
+   "value": "stable_interval_too_short,stable_frames_too_few"
+  },
+  "hero_outfit_id": {
+   "status": "observed",
+   "value": "874c4c48-0a8b-49e9-883e-49fc5f1fb051"
+  },
+  "kit_map": {
+   "status": "observed",
+   "value": true
+  },
+  "candidate_charsets": {
+   "status": "observed",
+   "value": 1
+  },
+  "epoch_at_receipt": {
+   "status": "observed",
+   "value": 1
+  },
+  "candidate_found": {
+   "status": "observed",
+   "value": true
+  },
+  "candidate_id": {
+   "status": "observed",
+   "value": "874c4c48-0a8b-49e9-883e-49fc5f1fb051"
+  },
+  "contract_started_seen": {
+   "status": "observed",
+   "value": "fake-session-28c9c548-1"
+  },
+  "generation_at_receipt": {
+   "status": "observed",
+   "value": "fake-session-28c9c548-1"
+  },
+  "hero_variation": {
+   "status": "observed",
+   "value": 0
+  },
+  "candidate_heroa_usable": {
+   "status": "observed",
+   "value": true
+  },
+  "set_outfit_available": {
+   "status": "observed",
+   "value": true
+  },
+  "reads_on_frame": {
+   "status": "observed",
+   "value": true
+  },
+  "scene_type": {
+   "status": "observed",
+   "value": "mission"
+  },
+  "rise_age_frames": {
+   "status": "observed",
+   "value": 2
+  },
+  "candidate_heroa_vars": {
+   "status": "observed",
+   "value": 1
+  },
+  "hero_suit": {
+   "status": "observed",
+   "value": true
+  },
+  "mission_playing": {
+   "status": "observed",
+   "value": true
+  },
+  "hero_charset": {
+   "status": "observed",
+   "value": 0
+  },
+  "loading_stage": {
+   "status": "observed",
+   "value": 8
+  },
+  "scene_loaded": {
+   "status": "observed",
+   "value": true
+  },
+  "generation_cached": {
+   "status": "observed",
+   "value": "fake-session-28c9c548-1"
+  },
+  "relay_transition_epoch": {
+   "status": "observed",
+   "value": 1
+  },
+  "frame": {
+   "status": "observed",
+   "value": 3
+  },
+  "candidate_suit": {
+   "status": "observed",
+   "value": true
+  },
+  "hero_heroa_valid": {
+   "status": "observed",
+   "value": true
+  },
+  "receipt_to_frame_ms": {
+   "status": "observed",
+   "value": 1968
+  }
+ }
+}
+```
+
+### 22.3 Native outfit observation (`SceneObservation::ObserveOutfit`, the only new engine reads)
+
+Called by the scheduler through the plugin's inspector only when a `relay.inspect.outfit` is the command taken on a frame — never on an idle frame (`CommandQueue::Waiting`-free by construction: the inspector is invoked from inside the dispatch) — and wrapped in its own `RelayLog::Guard` scope so a fault inside a read is logged with the command's context and reported as unavailable. Every dereference, in order: `Globals::PlayerRegistry` null-checked; the slot-0 `s_sSessionId` read twice with the adapter's existing guards (non-empty, ≤ 256 bytes, non-null buffer) — two empty reads are unavailable, two different reads are **inconsistent** (a possible torn read is an explicit failure mode, never averaged); slot-0 `m_HitmanEntity` (`ZEntityRef`, null-checked) resolved to `TEntityRef<ZHitman5>` through the SDK's `QueryInterface` and its interface pointer null-checked (the SDK's `GetLocalPlayer()` is not used: it walks the registry's `TArray` model the adapter's archaeology found unreliable); the hero's `m_rOutfitKit` reference and interface null-checked; the kit's `m_sId` copied out byte-wise and rendered exactly as the telemetry intake renders disguise ids; `m_aCharSets.size()` bounds-checked before every indexed read, the charset collection reference and interface null-checked, `m_aCharacters.size() > ECSCT_HeroA (2)` checked, the HeroA type reference and interface null-checked, `m_aVariations.size()` read; at most sixteen charsets read per kit; `Globals::ContentKitManager` null-checked and the candidate id, parsed by the Relay's own `RepositoryId::FromDashedLowercase`, matched against each map entry's 16-byte key by `memcmp` over a bounded scan (4,096 entries; the engine's comparator is not relied on), the matched entry's reference and interface null-checked; `Functions::ZHitman5_SetOutfit` null- and `Exists()`-checked, never called. The HeroA validity rules (charset within bounds, HeroA count readable, variation within bounds; a candidate usable when charset 0 has at least one HeroA variation) live in the engine-free `OutfitObservation::DescribeHeroOutfit` / `DescribeCandidate` over a plain `KitShape` extracted by the reader, so the tests exercise exactly the rules the DLL applies. The Player mod's shared-kit resource rewrite is not used; nothing is written; nothing is retained across frames; the kit definition (the global kit entity) is what is inspected, never an outfit instance.
+
+### 22.4 Mission generation, the Relay transition epoch and the receipt snapshot
+
+Three generations are now kept apart and reported: `generation_cached` (the edge-cached attempt session id, set on the rise and cleared on the fall, as since M2), `generation_at_receipt` (the value the frame thread had published when the network thread received the command — a copy stamped under the queue lock, never an engine read on the network thread, never presented as fresh), and `generation_fresh` (the registry read on the inspection frame, twice). `relay_transition_epoch` is a Relay-owned `uint64` advanced on exactly these observations: a mission predicate rise; a fall; a `contract.ended` observed for the active generation (through `LifecycleTee`, a sink decorator that forwards every envelope unchanged and reads the two contract envelopes' session ids after the fact on the frame thread — the intake, normalizer, frame sequencer and adapter are untouched); the scene becoming unavailable during an attempt (once per attempt); a registry generation read on an inspection frame that differs from the cached one (once per attempt; the inspecting result reports the two values directly, the epoch advances for the frames after it). Every advance is logged with its reason and frame. It is not an engine value and does not claim to see every engine transition. The frame thread publishes `{generation_cached, epoch}` to the queue in the same lock as its pop, so a command received afterwards is stamped with that frame's values and nothing older; the result carries `epoch_at_receipt` beside the current epoch.
+
+### 22.5 The hypothetical precondition evaluator (`PreconditionEvaluator`, pure)
+
+Over a copied `Input`, collecting every failed rule rather than the first: expected, at-receipt and cached generations present and the fresh one observed (inconsistent is its own reason), all equal to the expected; the predicate true now and on the previous frame; at least 1,000 ms and 60 frames since the rise (the research proposal's numbers, `Rules` constants, documented as such — the probe scales them to its fake frame rate and says so); a `contract.started` observed for the expected generation and no `contract.ended` for it; scene available, loaded, stage 8, type mission, resource equal to the rise's; epoch unchanged since receipt; the player resolved and the outfit readable; HeroA valid; a candidate named, resolved and HeroA-usable; the optional expected-current outfit id equal to the hero's; the setter available. Thirty reason codes (`expected_generation_missing` … `setter_unavailable`). It performs no action, and the inspection command does not depend on it: a failing frame is inspected and reported with `precondition_ok: false` and its reasons, which is what makes the evaluator checkable. A missing contract start, a changed generation or an active transition fails regardless of elapsed time (tested).
+
+### 22.6 Thread and resource boundaries
+
+The network thread copies only the published snapshot (under the queue mutex) and never dereferences the registry or any engine object; the scheduler takes one command per frame; the inspector runs on the frame thread inside the frame's dispatch and reports its own thread id (`reads_on_frame`); no engine write exists on the command path (no assignment to any engine member in the command sources; `SetOutfit` is referenced only for `Exists()`); exactly one detour (`AddDetour` once in `GlacierRelay.cpp`); the telemetry socket, the normalizer and the event vocabulary are unchanged; the sink chain gains the tee only with `[command] enabled = true`; no listening socket; no idle-frame scan (the kit map is scanned only for a named candidate, bounded). With the setting off, nothing of C-1 is constructed and the telemetry path is the M2 one.
+
+### 22.7 Native tests and the gate
+
+`OutfitInspectionTests.cpp` (new) covers: the repository-id parser round trip and its rejections; the kit shape rules (current hero tuple, invalid charset, invalid variation, missing HeroA collection, candidate found and usable, zero HeroA variations, no charset); the evaluator (every rule satisfied; fresh and receipt generation mismatch; each missing value; inconsistent fresh read; epoch changed; missing and mismatching contract start regardless of elapsed time; contract end observed; the stable interval and frame boundaries just below and exactly at the rule, and scaled rules; the rise frame; not playing; scene unavailable, loading / teardown, wrong type; a restart with the scene resource unchanged caught by the generation and contract rules; missing hero, unreadable outfit, HeroA invalid; candidate missing / unresolved / not usable; expected-current match and mismatch; setter unavailable; every reason code distinct); the lifecycle tee (ids observed, everything forwarded unchanged, unreadable payload counted); the receipt snapshot stamping; scheduling with a fake inspector (an idle frame never inspects; the full read-back; the restart race; unknown and absent candidates; null global, missing hero, torn read, no inspector); decoding of the entry and its parameter (uppercase id, unknown parameter, the reserved entry still rejected); the two measured encodings; deterministic truncation beyond 48 entries and the 40-byte reason cut; the reduction path; and that the reserved effectful entry reaching the queue is rejected without an inspector call — the test executable links the whole command path without the SDK, so no engine function can be referenced from it. Clean build: 0 warnings in relay sources (the three warning lines of `build-clean.log` are binrw's two Rust notices and the MSVC `utility(274)` C4244, as in M5-B); native tests: first loop **24/25** (`tests25\`: run 24 failed `TcpRelaySinkTests.cpp:274 s_Stats.sent == 4`, an M2 sink test's statistics read racing the sink thread's increment after the reader saw the line — unchanged code, a test-side timing window, reported as found), second loop **25/25** (`tests25b\`); the two loops and both logs are kept.
+
+### 22.8 Offline native probe
+
+`GlacierRelayCommandProbe` now hosts the real link, queue and scheduler with a FAKE frame source and a FAKE inspection source (a three-kit table: the suit id as a HeroA-usable kit, a kit with zero HeroA variations, a kit without a HeroA type; a fake hero; a fake registry), with the stable rule scaled to its frame rate and stated in its output. Modes: `menu`, `mission`, `unavailable`, and `restart` (from fake frame 8 the fake registry names the next generation while the predicate still holds, a contract end is observed for the active generation, the predicate falls at 12 and rises at 16 with the new generation). It maintains the same transition instrumentation the plugin does over its script. Its data is labelled fake in every log line and is never HITMAN state; the DLL's reader is not linked into it.
+
+### 22.9 Offline end-to-end gate (the real BEAM subsystem against the probe; `c1-offline\`)
+
+Three scenarios; every value below is the probe's FAKE data (ids and generations fabricated by the probe), reported here as what the two implementations exchanged, never as HITMAN state.
+
+- **`inspect` / mission mode (2 s fake frames, 32 s).** Handshake welcomed with both entries. `relay.probe` applied (unchanged). `inspect-1` (suit candidate, expected = the hello's fake generation): applied on fake frame 3; 38 fields, 37 observed and 1 unavailable (`contract_ended_seen`, "none observed"); hero `874c4c48…` charset 0 variation 0, HeroA valid, suit; candidate found, HeroA-usable, 3 kits scanned; setter and kit map available; reads on the frame thread; `precondition_ok false` with `stable_interval_too_short,stable_frames_too_few` (the scaled rule, 2 frames after the rise). `inspect-2` (a kit with zero HeroA variations): `candidate_not_heroa_usable`. `inspect-3` (an id not in the table): `candidate_found false`, `candidate_unresolved`, the five dependent candidate fields unavailable. `inspect-4` (no candidate, no expected generation): 31 fields; `expected_generation_missing,candidate_missing`. `inspect-5` (TTL 100 ms on 2 s frames): BEAM `unknown (terminal_timeout)` at +1,102 ms, native `expired` on the next fake frame, the late result journaled as `anomaly.late_result` — the unchanged policy. `inspect-6`: applied with `precondition_ok true` on fake frame 8 (the scaled stable rule satisfied). The same command line re-sent to native through the link process: native answered `duplicate` (probe: `duplicate 1`), BEAM journaled the extra result as a second `anomaly.late_result`, the command's status stayed `applied`. Probe exit → link loss, authority disarmed, `arm` refused `no_identified_link`. Counters: links 1, issued 7, unknown 1, anomalies 2, refused 0, audit intact. Probe: lines 8, queued 7, busy 0, duplicate 1, violations 0, results sent 15; scheduler frames 16, executed 1, inspected 5, reduced 0, expired 1, stale 0; one frame thread throughout (`changed 0`), network thread distinct.
+- **`restart` / restart mode (1 s fake frames, 30 s; one inspection per tick with the suit candidate, the expected generation following the last observed fresh value).** The fake epoch advanced exactly as designed: 1 rise (frame 1), 2 contract end for the active generation (frame 8), 3 registry differs from the cached generation on an inspection frame (frame 8), 4 fall (frame 12), 5 rise (frame 16). Tick 1 (frame 2): all four generations G-1, `stable_*_too_short`. Ticks 2–3 (frames 4, 6): **`precondition_ok true`**. Tick 4 (frame 8, the race): expected/at-receipt/cached G-1, **fresh G-2**, epoch 2 vs 1 at receipt, `contract_ended_seen` G-1 → `generation_mismatch_fresh,contract_end_observed,epoch_changed`. Tick 5 (frame 10, expected now G-2): `generation_mismatch_receipt,generation_mismatch_cached,contract_start_mismatch`. Ticks 6–7 (frames 12, 14, after the fall): `cached_generation_missing` / `receipt_generation_missing`, `mission_not_playing`, `scene_not_loaded`, `loading_stage_not_playing`, 11–12 fields unavailable. Tick 8 (frame 16, the rise frame): at-receipt absent, `previous_frame_not_playing`, `stable_*`, `epoch_changed` (5 vs 4). Tick 9 (frame 18): only the stable rule. Ticks 10–15 (frames 20–30): **`precondition_ok true`** with G-2 everywhere and `contract_started_seen` G-2. Ticks 16–22: refused locally (`:disarmed`) after the probe's 30 s exit dropped the link — the driver outlived the probe by design. Counters: issued 15, unknown 0, anomalies 0, refused 7.
+- **`unavailable` / unavailable mode.** One inspection: 19 fields observed, 19 unavailable — scene fields and the registry/hero reads unavailable with their reasons, the candidate still resolved against the fake kit map (independent of the scene), `precondition_ok false` with every scene and generation reason. Link loss disarmed.
+
+Journals: `journal-inspect-mission.ndjson`, `journal-restart-restart.ndjson`, `journal-unavailable-unavailable.ndjson` (inspect/mission 37 entries: anomaly.late_result 2, authority.armed 1, authority.disarmed 1, command.accepted 7, command.received 7, command.terminal 6, command.transmitted 7, command.unknown 1, journal.closed 1, journal.opened 1, link.closed 1, link.connected 1, peer.identified 1; restart 74 entries: authority.armed 1, authority.disarmed 1, command.accepted 15, command.received 15, command.refused 7, command.terminal 15, command.transmitted 15, journal.closed 1, journal.opened 1, link.closed 1, link.connected 1, peer.identified 1; unavailable 11 entries: authority.armed 1, authority.disarmed 1, command.accepted 1, command.received 1, command.terminal 1, command.transmitted 1, journal.closed 1, journal.opened 1, link.closed 1, link.connected 1, peer.identified 1). Command and observer isolation: the command path produced no telemetry, `MissionSession` and the recorder were not started in the driver and are untouched in code.
+
+### 22.10 BEAM regression gate
+
+Compile with warnings as errors (dev and test): ok. Format check on the changed files: ok. Five consecutive full runs: 483 tests, 0 failures in each (seeds 942139, 760985, 494221, 763040, 922792); the suite grew from 477 to 483 (the six inspection tests). The accepted M4 recording verifies; no browser route was added; the headless tree is unchanged; the journal format version is unchanged (the `command.accepted` entry gains the `preconditions` field it sends).
+
+### 22.11 Imports and hooks
+
+Raw import-symbol diff of the C-1 DLL against the M5-B artifact's dump and against the accepted M2 dump (`imports-symbol-diff-vs-m5b.txt`, `imports-symbol-diff-vs-b6.txt`; 194 → 197 names): exactly three names added, no name removed, all data imports from `ZHMModSDK.dll` —
+
+1. `?ContentKitManager@Globals@@2PEAVZContentKitManager@@EA` — `Globals::ContentKitManager`, the engine's kit map, read (null-checked) to resolve a named candidate.
+2. `?TypeRegistry@Globals@@2PEAPEAVZTypeRegistry@@EA` — `Globals::TypeRegistry`, used by the SDK's inline `ZEntityRef::QueryInterface` when the reader resolves `TEntityRef<ZHitman5>` from the slot-0 hitman reference (an SDK-internal dereference the record counts as an unresolved runtime assumption).
+3. `?ZHitman5_SetOutfit@Functions@@2PEAV?$EngineFunction@…@@EA` — `Functions::ZHitman5_SetOutfit`, read for `Exists()` only; no call site exists.
+
+The same seven DLLs (`IMM32`, `KERNEL32`, `SHELL32`, `USER32`, `WS2_32`, `ZHMModSDK`, `kernel32`); exports unchanged (`CompiledSdkAbiVersion`, `CompiledSdkVersion`, `GetPluginInterface`); no `listen`/`accept`/`bind`. Hooks: exactly one detour (`ZAchievementManagerSimple_OnEventSent`), unchanged; the lifecycle tee is a sink decorator, not a hook. A correction to the gate tooling's own claim: the name normalization inherited from the M5-B gate does not match mangled C++ names, so its "0 differing names" lines count only unmangled names; the raw symbol diff is the authoritative comparison and, re-run on the M5-B dump, confirms the M5-B artifact added no symbol over the M2 dump (consistent with the M5-B record).
+
+### 22.12 Unresolved runtime assumptions
+
+1. The registry's slot-0 session id can be read twice without a torn read on the real engine — the inconsistent status exists precisely because this is unverified.
+2. `TEntityRef<ZHitman5>` resolves from slot-0 `m_HitmanEntity` through the SDK's `QueryInterface` on this build; the DLL has never done it. The SDK's own `GetLocalPlayer` does the same resolution from the other registry model.
+3. The kit map is populated and iterable on the frame thread while a mission plays; its size (hundreds in the Player mod's experience) is within the scan bound.
+4. `m_rOutfitKit->m_sId` equals the id the engine's `Disguise`/`StartingSuit` telemetry reports (the research chain says so; the inspection is what will show it).
+5. `Functions::ZHitman5_SetOutfit->Exists()` on HITMAN 3.280.0.0 — read, never called.
+6. The tee's contract ids reach the epoch logic before the fall edge in the real restart (the M5-B timeline says the end precedes the fall by ≈0.9 s).
+7. The per-frame cost of publishing the snapshot (one extra assignment inside the existing pop lock) is negligible — not measured in the game.
+
+### 22.13 Proposed controlled C-1 HITMAN experiment (its own authorization; not performed)
+
+Pre-flight as §19 with the C-1 DLL `7fecf31a…` and `[command] enabled = true`; BEAM with the recorder and the command subtree. R1 menu: handshake with both capabilities; one `relay.inspect.outfit` without a candidate — expect `mission_playing false`, the hero unavailable or resolved at the menu (both are findings), `set_outfit_available` and `kit_map` read for the first time on this build, `generation_fresh` unavailable or the menu's value. R2 Paris, stable: `inspect_outfit(%{"disguise_repository_id" => "874c4c48-…"}, expected_generation: <the contract session id from telemetry>)` — expect the hero tuple equal to the telemetry's disguise id, `candidate_found true`, `candidate_heroa_usable`, `precondition_ok true` (or the reasons that fail, each a finding); a second inspection with a non-suit kit id from the same attempt's `disguise.equipped` history if any. R3 restart: one inspection within the first second after the rise (expect `stable_interval_too_short` / `stable_frames_too_few`), one after the contract end is observed but before the fall if the operator's timing allows (expect `generation_mismatch_fresh`, `contract_end_observed`, the epoch advanced), one in the stable second attempt. R4 exit and quit as §19. Verdicts: resolution, tuple agreement with telemetry, fresh-versus-cached generation at each point, epoch advances at the expected observations, thread identity of the reads, no WARN/ERROR/FAULT, telemetry invariance (10 = 10 = 10 again), journal completeness, M0 restoration. Abort conditions as §19 plus any fault inside the inspection guard.
+
+**Stop here. C-1 implemented and validated offline; the C-1 DLL is a build of record, not installed; no game; no effectful command; `player.outfit.set` reserved and rejected; no token, no second detour, no telemetry / `MissionSession` / recorder change; C-2 and C-3 not started; M5 not complete.**
