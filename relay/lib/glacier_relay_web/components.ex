@@ -45,9 +45,14 @@ defmodule GlacierRelayWeb.Components do
           focused={i.id == @focus_id}
         />
       </div>
-      <div :if={@instance} class="grid">
+      <%!-- The grid and the recent-event section are rendered whether or not an instance is
+           focused: the event stream's container must exist on the first (empty-session) render,
+           because the viewer receives event rows as soon as it mounts and LiveView prunes a
+           changed stream after every render, rendered or not. Rows received before the first
+           focused snapshot were lost while the container lived inside the instance condition. --%>
+      <div class="grid">
         <div>
-          <section class="panel">
+          <section :if={@instance} class="panel">
             <h2>mission attempt</h2>
             <div class="attempts">
               <button
@@ -78,7 +83,7 @@ defmodule GlacierRelayWeb.Components do
             <p class="note">{@attempt.timeline.policy}</p>
             <.timeline :if={not MapSet.member?(@collapsed, "timeline")} lines={@attempt.timeline.lines} />
           </section>
-          <.strays report={@instance.report} />
+          <.strays :if={@instance} report={@instance.report} />
         </div>
         <div>
           <section :if={@attempt} class="panel">
