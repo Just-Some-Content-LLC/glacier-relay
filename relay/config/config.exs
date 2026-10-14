@@ -75,7 +75,10 @@ config :glacier_relay, :command,
   evidence_max_age_ms: 120_000,
   # M5 C-2C N1: an operator-supplied `observed_at` / `collected_at` may lead this node's UTC clock
   # by at most this much (ms); anything further in the future is refused as a clock disagreement.
-  evidence_clock_skew_ms: 5_000
+  evidence_clock_skew_ms: 5_000,
+  # M5 pre-C-3 hardening (correction C): an ordinary reversal is issued only against a completed
+  # relay.inspect.outfit received within this many ms (an attended local research experiment).
+  reversal_inspection_max_age_ms: 60_000
 
 # The HTTP endpoint. Loopback only, a different port from the wire listener (4747), never
 # conflated with it. Bandit serves it. No sockets, LiveViews or static assets are mounted in M3-A.

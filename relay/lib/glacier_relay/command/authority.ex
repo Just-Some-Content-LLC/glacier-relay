@@ -83,7 +83,8 @@ defmodule GlacierRelay.Command.Authority do
     effectful_ttl_default_ms: 30_000,
     effectful_ttl_max_ms: 120_000,
     evidence_max_age_ms: 120_000,
-    evidence_clock_skew_ms: 5_000
+    evidence_clock_skew_ms: 5_000,
+    reversal_inspection_max_age_ms: 60_000
   ]
 
   @observation_types ~w(visual_confirmation visual_no_change later_frame_read_back engine_consistent note)
@@ -603,7 +604,8 @@ defmodule GlacierRelay.Command.Authority do
                    "preconditions" => cmd.preconditions,
                    "ttl_ms" => cmd.ttl_ms,
                    "effectful" => cmd.effectful,
-                   "reversal_of" => cmd.reversal_of
+                   "reversal_of" => cmd.reversal_of,
+                   "reversal_inspection" => cmd.reversal_inspection
                  })
                ) do
           transmit(state, cmd)
@@ -999,7 +1001,8 @@ defmodule GlacierRelay.Command.Authority do
              ttl,
              preconditions,
              effectful,
-             Keyword.get(opts, :reversal_of)
+             Keyword.get(opts, :reversal_of),
+             Keyword.get(opts, :reversal_inspection)
            )}
         end
     end
@@ -1031,7 +1034,7 @@ defmodule GlacierRelay.Command.Authority do
 
   defp valid_preconditions?(_), do: false
 
-  defp build(state, entry, params, id, ttl, preconditions, effectful, reversal_of) do
+  defp build(state, entry, params, id, ttl, preconditions, effectful, reversal_of, inspection) do
     %{
       id: id,
       name: entry.name,
@@ -1040,6 +1043,7 @@ defmodule GlacierRelay.Command.Authority do
       preconditions: preconditions,
       effectful: effectful,
       reversal_of: reversal_of,
+      reversal_inspection: inspection,
       link_generation: state.link.generation,
       protocol_version: state.link.protocol_version,
       adapter_instance_id: state.link.adapter_instance_id,
@@ -1704,6 +1708,7 @@ defmodule GlacierRelay.Command.Authority do
       },
       effectful: %{
         enabled: state.config[:effectful] == true,
+        reversal_inspection_max_age_ms: state.config[:reversal_inspection_max_age_ms],
         token_configured: state.config[:token] != nil,
         token_source: state.token_source,
         armed:

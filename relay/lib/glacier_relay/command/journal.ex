@@ -194,7 +194,9 @@ defmodule GlacierRelay.Command.Journal do
        path: state.path,
        seq: state.seq,
        status: state.status,
-       last_error: state.last_error
+       last_error: state.last_error,
+       # the clock every entry's "mono_ms" is on (ms since this journal opened), for freshness checks
+       elapsed_ms: mono() - state.opened_mono
      }, state}
   end
 

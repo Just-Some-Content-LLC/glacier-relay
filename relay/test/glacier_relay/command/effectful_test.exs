@@ -119,6 +119,27 @@ defmodule GlacierRelay.Command.EffectfulTest do
     )
   end
 
+  # A fake inspection reporting `hero` at `frame` in the test generation; returns its id.
+  defp inspect_hero(socket, adapter, hero, frame) do
+    {:ok, insp} =
+      Command.inspect_outfit(%{"disguise_repository_id" => @target}, expected_generation: @gen)
+
+    {:ok, icmd} = FakeNative.recv(socket)
+
+    FakeNative.respond(socket, icmd, adapter, "applied", %{
+      "observed" => %{
+        "hero_outfit_id" => FakeNative.field("observed", hero["disguise_repository_id"]),
+        "hero_charset" => FakeNative.field("observed", hero["charset"]),
+        "hero_variation" => FakeNative.field("observed", hero["variation"])
+      },
+      "frame" => frame,
+      "mission_generation" => @gen
+    })
+
+    assert wait(fn -> Command.command(insp).status == :applied end)
+    insp
+  end
+
   defp applied(socket, cmd, adapter, previous, current, effect, opts \\ []) do
     FakeNative.respond(socket, cmd, adapter, "applied", %{
       "observed" =>
@@ -910,28 +931,52 @@ defmodule GlacierRelay.Command.EffectfulTest do
     assert plan.params == Map.put(@previous, "expect_current", @current) and
              plan.mission_generation == @gen
 
-    assert plan.adapter_instance_id == adapter and plan.reversal_of == id
+    assert plan.adapter_instance_id == adapter and plan.reversal_of == id and
+             plan.frame == 20_000
 
-    assert {:error, :fresh_confirmation_required} = Command.reverse(id, expected_generation: @gen)
+    # correction C: an operator-supplied map alone never issues a reversal; a qualifying
+    # inspection must be named
+    assert {:error, :inspection_command_id_required} =
+             Command.reverse(id, confirmed_current: @current, expected_generation: @gen)
+
+    assert {:error, :inspection_not_in_journal} =
+             Command.reverse(id,
+               inspection_command_id: Schema.uuid4(),
+               expected_generation: @gen
+             )
+
+    # an inspection from BEFORE the apply (an earlier frame, the prior tuple) does not qualify
+    assert :ok = Command.arm()
+    earlier = inspect_hero(socket, adapter, @previous, 19_500)
+
+    assert {:error, {:inspection_tuple_mismatch, @previous}} =
+             Command.reverse(id, inspection_command_id: earlier, expected_generation: @gen)
+
+    # a later inspection showing the right tuple qualifies; the other checks still apply
+    insp = inspect_hero(socket, adapter, @current, 20_300)
 
     assert {:error, {:confirmed_current_mismatch, @current}} =
-             Command.reverse(id, confirmed_current: @previous, expected_generation: @gen)
+             Command.reverse(id,
+               inspection_command_id: insp,
+               confirmed_current: @previous,
+               expected_generation: @gen
+             )
 
     assert {:error, :expected_generation_required} =
-             Command.reverse(id, confirmed_current: @current)
+             Command.reverse(id, inspection_command_id: insp)
 
     assert {:error, {:generation_mismatch, @gen}} =
-             Command.reverse(id, confirmed_current: @current, expected_generation: "other")
+             Command.reverse(id, inspection_command_id: insp, expected_generation: "other")
 
     assert {:error, :not_armed_effectful} =
-             Command.reverse(id, confirmed_current: @current, expected_generation: @gen)
+             Command.reverse(id, inspection_command_id: insp, expected_generation: @gen)
 
     assert {:error, :timeout} = FakeNative.recv(socket, 100)
 
     arm_eff(adapter)
 
     assert {:ok, rid} =
-             Command.reverse(id, confirmed_current: @current, expected_generation: @gen)
+             Command.reverse(id, inspection_command_id: insp, expected_generation: @gen)
 
     assert {:ok, rcmd} = FakeNative.recv(socket)
 
@@ -940,10 +985,15 @@ defmodule GlacierRelay.Command.EffectfulTest do
 
     assert Command.command(rid).reversal_of == id
 
-    assert Enum.find(
-             journal_entries(),
-             &(&1["event"] == "command.accepted" and &1["command_id"] == rid)
-           )["reversal_of"] == id
+    accepted_entry =
+      Enum.find(
+        journal_entries(),
+        &(&1["event"] == "command.accepted" and &1["command_id"] == rid)
+      )
+
+    assert accepted_entry["reversal_of"] == id and
+             accepted_entry["reversal_inspection"]["inspection_command_id"] == insp and
+             accepted_entry["reversal_inspection"]["frame"] == 20_300
 
     applied(socket, rcmd, adapter, @current, @previous, "changed", frame: 21_000)
     assert wait(fn -> Command.command(rid).status == :applied end)
@@ -961,11 +1011,12 @@ defmodule GlacierRelay.Command.EffectfulTest do
     assert terminal["restored"] == "native_same_frame" and terminal["reversal_of"] == id and
              terminal["consequences"] == "unknown"
 
-    # a reversal of the reversal that lands elsewhere is not restored
+    # a reversal of the reversal that lands elsewhere is not restored (its own inspection first)
+    insp2 = inspect_hero(socket, adapter, @previous, 21_300)
     arm_eff(adapter)
 
     assert {:ok, r2} =
-             Command.reverse(rid, confirmed_current: @previous, expected_generation: @gen)
+             Command.reverse(rid, inspection_command_id: insp2, expected_generation: @gen)
 
     assert {:ok, r2cmd} = FakeNative.recv(socket)
 

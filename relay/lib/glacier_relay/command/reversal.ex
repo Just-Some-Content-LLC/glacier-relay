@@ -29,6 +29,74 @@ defmodule GlacierRelay.Command.Reversal do
   alias GlacierRelay.Command.{Journal, Schema}
 
   @doc """
+  M5 pre-C-3 hardening, correction C: verifies that `inspection_id` names a completed
+  `relay.inspect.outfit/1` whose journaled evidence qualifies it to confirm the reversal plan's
+  expected-current tuple. From the journal entries alone: the inspection has exactly one
+  `command.accepted` and one `command.terminal`, no `command.unknown`; it is an inspection; its
+  terminal is `applied`; the `peer.identified` entry of its link generation names the plan's
+  adapter instance; its link generation is the current link's (`:link_generation`); its result's
+  mission generation is the plan's; its observed hero tuple (id, charset, variation) equals the
+  plan's `expect_current`; its native frame is later than the original command's applying frame;
+  its terminal was received within `:max_age_ms` of `:now_mono_ms` (the node's monotonic clock).
+  An inspection is evidence of the state at its frame, not proof the outfit is unchanged since:
+  the native applying-frame expected-current gate stays the final protection. Returns
+  `{:ok, binding}` or `{:error, reason}`.
+  """
+  def verify_inspection(entries, plan, inspection_id, opts)
+      when is_list(entries) and is_map(plan) and is_list(opts) do
+    now = Keyword.fetch!(opts, :now_mono_ms)
+    link_generation = Keyword.get(opts, :link_generation)
+    max_age = Keyword.fetch!(opts, :max_age_ms)
+    mine = Enum.filter(entries, &(&1["command_id"] == inspection_id))
+    accepted = Enum.filter(mine, &(&1["event"] == "command.accepted"))
+    terminal = Enum.filter(mine, &(&1["event"] == "command.terminal"))
+    unknown = Enum.filter(mine, &(&1["event"] in ["command.unknown", "command.unknown_refined"]))
+
+    with true <- is_binary(inspection_id) or {:error, :inspection_command_id_required},
+         true <- mine != [] or {:error, :inspection_not_in_journal},
+         true <-
+           length(accepted) == 1 or {:error, {:inspection_accepted_entries, length(accepted)}},
+         true <- unknown == [] or {:error, :inspection_outcome_unknown},
+         true <- length(terminal) == 1 or {:error, :inspection_not_terminal},
+         a = hd(accepted),
+         t = hd(terminal),
+         true <-
+           (a["name"] == "relay.inspect.outfit" and a["version"] == 1) or
+             {:error, :not_an_inspection},
+         true <- t["status"] == "applied" or {:error, {:inspection_not_applied, t["status"]}},
+         {:ok, adapter} <- adapter_identity(entries, a["link_generation"]),
+         true <- adapter == plan.adapter_instance_id or {:error, :inspection_adapter_mismatch},
+         true <-
+           (is_integer(link_generation) and a["link_generation"] == link_generation) or
+             {:error, :inspection_link_not_current},
+         true <-
+           t["mission_generation"] == plan.mission_generation or
+             {:error, :inspection_generation_mismatch},
+         {:ok, hero} <- tuple_or(t["observed"], "hero", :inspection_hero_unobserved),
+         true <-
+           hero == plan.params["expect_current"] or {:error, {:inspection_tuple_mismatch, hero}},
+         true <-
+           (is_integer(t["frame"]) and is_integer(plan.frame) and t["frame"] > plan.frame) or
+             {:error, :inspection_not_later},
+         true <-
+           (is_integer(t["mono_ms"]) and now >= t["mono_ms"] and now - t["mono_ms"] <= max_age) or
+             {:error, :inspection_stale} do
+      {:ok,
+       %{
+         inspection_command_id: inspection_id,
+         frame: t["frame"],
+         command_frame: plan.frame,
+         age_ms: now - t["mono_ms"],
+         max_age_ms: max_age,
+         hero: hero,
+         link_generation: a["link_generation"],
+         mission_generation: t["mission_generation"],
+         label: "evidence of the hero's tuple at that frame; not proof it is unchanged since"
+       }}
+    end
+  end
+
+  @doc """
   Plans the reversal of `command_id` from the journal at `path`. `opts`: `:record` (the
   authority's in-memory record to cross-check), `:journal_status` (`:open` expected),
   `:audit` (`:intact` expected). Returns `{:ok, plan}` or `{:error, reason}`.
@@ -62,7 +130,7 @@ defmodule GlacierRelay.Command.Reversal do
          ambiguous_stages: [],
          params: Map.put(terminal.previous, "expect_current", terminal.current),
          requires: [
-           :fresh_expect_current_confirmation,
+           :qualifying_inspection,
            :same_mission_generation,
            :effectful_arming
          ],

@@ -137,11 +137,7 @@ defmodule GlacierRelay.Command.ReversalTest do
     assert plan.params == Map.put(@previous, "expect_current", @current)
     assert plan.journal_id == @journal_id and plan.journal_seq == 7 and plan.audit == :continuous
 
-    assert plan.requires == [
-             :fresh_expect_current_confirmation,
-             :same_mission_generation,
-             :effectful_arming
-           ]
+    assert plan.requires == [:qualifying_inspection, :same_mission_generation, :effectful_arming]
 
     assert plan.consequences == :unknown
     # without the in-memory record the journal alone suffices (it is the evidence)
@@ -264,6 +260,194 @@ defmodule GlacierRelay.Command.ReversalTest do
     assert Enum.find(read.entries, &(&1["event"] == "command.terminal"))["observed"]["effect"][
              "value"
            ] == "uncertain"
+  end
+
+  # -- correction C: the inspection binding ---------------------------------------------------------
+
+  @insp "1d2e3f40-5161-4728-9394-a5b6c7d8e9f0"
+
+  defp inspection_entries(overrides \\ %{}, hero \\ @current, opts \\ []) do
+    link = Keyword.get(opts, :link_generation, 1)
+    frame = Keyword.get(opts, :frame, 20_300)
+    mono = Keyword.get(opts, :mono_ms, 9_000)
+    gen = Keyword.get(opts, :generation, @gen)
+
+    observed =
+      if hero == :unobserved do
+        %{"hero_outfit_id" => field("unavailable")}
+      else
+        %{
+          "hero_outfit_id" => field("observed", hero["disguise_repository_id"]),
+          "hero_charset" => field("observed", hero["charset"]),
+          "hero_variation" => field("observed", hero["variation"])
+        }
+      end
+
+    accepted =
+      Map.merge(
+        %{
+          "event" => "command.accepted",
+          "command_id" => @insp,
+          "link_generation" => link,
+          "name" => "relay.inspect.outfit",
+          "version" => 1
+        },
+        Map.get(overrides, :accepted, %{})
+      )
+
+    terminal =
+      Map.merge(
+        %{
+          "event" => "command.terminal",
+          "command_id" => @insp,
+          "link_generation" => link,
+          "name" => "relay.inspect.outfit",
+          "version" => 1,
+          "status" => "applied",
+          "frame" => frame,
+          "mono_ms" => mono,
+          "mission_generation" => gen,
+          "observed" => observed
+        },
+        Map.get(overrides, :terminal, %{})
+      )
+
+    [
+      accepted,
+      %{"event" => "command.transmitted", "command_id" => @insp},
+      %{"event" => "command.received", "command_id" => @insp},
+      terminal
+    ]
+  end
+
+  defp plan_from(entries) do
+    {:ok, plan} = Reversal.plan(write(entries), @id)
+    plan
+  end
+
+  test "the inspection binding accepts only a completed inspection of this adapter, link, generation and tuple, later than the command and recent" do
+    base = base_entries()
+    plan = plan_from(base)
+    assert plan.frame == nil or is_integer(plan.frame)
+    # the fixture's terminal carries no frame; give the effectful terminal one
+    [h, c, p, a, t, r, term] = base
+    term = Map.put(term, "frame", 20_000)
+    plan = plan_from([h, c, p, a, t, r, term])
+
+    assert plan.frame == 20_000 and
+             plan.requires == [
+               :qualifying_inspection,
+               :same_mission_generation,
+               :effectful_arming
+             ]
+
+    ok = [h, c, p, a, t, r, term] ++ inspection_entries()
+
+    verify = fn entries, id, opts ->
+      Reversal.verify_inspection(
+        entries,
+        plan,
+        id,
+        Keyword.merge([now_mono_ms: 10_000, link_generation: 1, max_age_ms: 60_000], opts)
+      )
+    end
+
+    assert {:ok, binding} = verify.(ok, @insp, [])
+
+    assert binding.frame == 20_300 and binding.command_frame == 20_000 and binding.age_ms == 1_000 and
+             binding.hero == @current
+
+    assert binding.label =~ "not proof"
+
+    # missing or unknown inspection id; an operator-supplied map is never enough
+    assert {:error, :inspection_command_id_required} = verify.(ok, nil, [])
+
+    assert {:error, :inspection_not_in_journal} =
+             verify.(ok, "ffffffff-0000-4000-8000-000000000000", [])
+
+    # not an inspection; not applied; outcome unknown; not terminal
+    assert {:error, :not_an_inspection} =
+             verify.(
+               [h, c, p, a, t, r, term] ++
+                 inspection_entries(%{accepted: %{"name" => "relay.probe"}}),
+               @insp,
+               []
+             )
+
+    assert {:error, {:inspection_not_applied, "unavailable"}} =
+             verify.(
+               [h, c, p, a, t, r, term] ++
+                 inspection_entries(%{terminal: %{"status" => "unavailable"}}),
+               @insp,
+               []
+             )
+
+    assert {:error, :inspection_outcome_unknown} =
+             verify.(ok ++ [%{"event" => "command.unknown", "command_id" => @insp}], @insp, [])
+
+    assert {:error, :inspection_not_terminal} =
+             verify.([h, c, p, a, t, r, term] ++ Enum.take(inspection_entries(), 3), @insp, [])
+
+    # another adapter instance on the inspection's link; a link that is not the current one
+    other_link =
+      [
+        h,
+        c,
+        p,
+        %{"event" => "peer.identified", "link_generation" => 2, "adapter_instance_id" => @target},
+        a,
+        t,
+        r,
+        term
+      ] ++ inspection_entries(%{}, @current, link_generation: 2)
+
+    assert {:error, :inspection_adapter_mismatch} = verify.(other_link, @insp, link_generation: 2)
+    assert {:error, :inspection_link_not_current} = verify.(ok, @insp, link_generation: 2)
+    assert {:error, :inspection_link_not_current} = verify.(ok, @insp, link_generation: nil)
+
+    # a previous attempt's inspection (another mission generation) never authorizes the next
+    assert {:error, :inspection_generation_mismatch} =
+             verify.(
+               [h, c, p, a, t, r, term] ++
+                 inspection_entries(%{}, @current, generation: "other-attempt"),
+               @insp,
+               []
+             )
+
+    # the hero tuple unobserved or different from the plan's expected-current tuple
+    assert {:error, :inspection_hero_unobserved} =
+             verify.([h, c, p, a, t, r, term] ++ inspection_entries(%{}, :unobserved), @insp, [])
+
+    assert {:error, {:inspection_tuple_mismatch, @previous}} =
+             verify.([h, c, p, a, t, r, term] ++ inspection_entries(%{}, @previous), @insp, [])
+
+    assert {:error, {:inspection_tuple_mismatch, _}} =
+             verify.(
+               [h, c, p, a, t, r, term] ++
+                 inspection_entries(%{}, Map.put(@current, "variation", 1)),
+               @insp,
+               []
+             )
+
+    # not later than the command's applying frame; stale; a clock that ran backwards
+    assert {:error, :inspection_not_later} =
+             verify.(
+               [h, c, p, a, t, r, term] ++ inspection_entries(%{}, @current, frame: 20_000),
+               @insp,
+               []
+             )
+
+    assert {:error, :inspection_not_later} =
+             verify.(
+               [h, c, p, a, t, r, term] ++ inspection_entries(%{}, @current, frame: 19_000),
+               @insp,
+               []
+             )
+
+    assert {:error, :inspection_stale} = verify.(ok, @insp, now_mono_ms: 70_001)
+    assert {:ok, _} = verify.(ok, @insp, now_mono_ms: 69_000)
+    assert {:error, :inspection_stale} = verify.(ok, @insp, now_mono_ms: 8_000)
+    assert {:error, :inspection_stale} = verify.(ok, @insp, max_age_ms: 500)
   end
 
   test "an unreadable, non-contiguous or mixed journal, a degraded journal or audit, fails closed" do

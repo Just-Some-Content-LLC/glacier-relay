@@ -84,15 +84,35 @@ defmodule GlacierRelay.Command do
   end
 
   @doc """
-  M5 C-2A: issues the planned reversal of `command_id`. `opts` must carry `:confirmed_current`
-  (the hero's tuple as a fresh inspection just reported it; it must equal the plan's
-  `expect_current`) and `:expected_generation` (the live attempt's generation; it must equal the
-  plan's). The journal proves what was reported then, never the game state now. Needs its own
-  effectful arming; nothing reverses automatically.
+  M5 C-2A, bound to an inspection by the pre-C-3 hardening (correction C): issues the planned
+  reversal of `command_id`. `opts` must carry `:inspection_command_id` — a completed
+  `relay.inspect.outfit/1` whose journaled evidence `Reversal.verify_inspection/4` accepts:
+  the current adapter instance and link, the plan's mission generation, an observed hero tuple
+  equal to the plan's `expect_current`, a native frame later than the original command's, and a
+  terminal received within the configured `reversal_inspection_max_age_ms` (60 s by default: an
+  attended local research experiment) — and `:expected_generation` (the live attempt's
+  generation; it must equal the plan's). An operator-supplied `:confirmed_current` is optional
+  and, when given, must equal the plan's `expect_current`; it never substitutes for the
+  inspection. The inspection is evidence of the state at its frame, not proof the outfit is
+  unchanged since; the native applying-frame gate stays the final protection. Needs its own
+  effectful arming; nothing reverses automatically. The accepted entry journals the binding.
   """
   def reverse(command_id, opts) when is_binary(command_id) and is_list(opts) do
     guarded(fn ->
+      status = Authority.status()
+      journal = Journal.status()
+
       with {:ok, plan} <- plan_reversal(command_id),
+           {:ok, read} <- Journal.read(journal.path),
+           {:ok, binding} <-
+             Reversal.verify_inspection(
+               read.entries,
+               plan,
+               Keyword.get(opts, :inspection_command_id),
+               now_mono_ms: journal.elapsed_ms,
+               link_generation: status.link && status.link.generation,
+               max_age_ms: status.effectful.reversal_inspection_max_age_ms
+             ),
            :ok <-
              confirm(
                plan,
@@ -104,8 +124,12 @@ defmodule GlacierRelay.Command do
           2,
           plan.params,
           opts
-          |> Keyword.drop([:confirmed_current])
+          |> Keyword.drop([:confirmed_current, :inspection_command_id])
           |> Keyword.put(:reversal_of, command_id)
+          |> Keyword.put(
+            :reversal_inspection,
+            Map.take(binding, [:inspection_command_id, :frame, :age_ms])
+          )
           |> with_generation()
         )
       end
@@ -114,10 +138,7 @@ defmodule GlacierRelay.Command do
 
   defp confirm(plan, confirmed, generation) do
     cond do
-      not is_map(confirmed) ->
-        {:error, :fresh_confirmation_required}
-
-      confirmed != plan.params["expect_current"] ->
+      is_map(confirmed) and confirmed != plan.params["expect_current"] ->
         {:error, {:confirmed_current_mismatch, plan.params["expect_current"]}}
 
       not is_binary(generation) ->

@@ -35,7 +35,8 @@ defmodule GlacierRelay.Command.Supervisor do
          :effectful_ttl_default_ms,
          :effectful_ttl_max_ms,
          :evidence_max_age_ms,
-         :evidence_clock_skew_ms
+         :evidence_clock_skew_ms,
+         :reversal_inspection_max_age_ms
        ])},
       {DynamicSupervisor, name: GlacierRelay.Command.LinkSupervisor, strategy: :one_for_one},
       {Listener, Keyword.take(config, [:ip, :port, :max_line_bytes, :hello_timeout_ms])}
