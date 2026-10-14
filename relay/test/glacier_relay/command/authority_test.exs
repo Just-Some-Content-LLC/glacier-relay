@@ -495,7 +495,7 @@ defmodule GlacierRelay.Command.AuthorityTest do
     port: port
   } do
     :ok = MissionSession.subscribe()
-    before = MissionSession.summary_text()
+    before_state = MissionSession.state()
     {socket, adapter, _} = armed_peer(port)
     {id, cmd} = probe_and_receive(socket)
 
@@ -505,6 +505,8 @@ defmodule GlacierRelay.Command.AuthorityTest do
     FakeNative.respond(socket, cmd, adapter, "applied")
     assert wait(fn -> Command.command(id).status == :applied end)
 
+    # The session gained exactly this instance and nothing else changed; no command appears in
+    # its state or its text.
     state = MissionSession.state()
     assert state[instance].received == 3 and state[instance].gaps == []
 
@@ -514,14 +516,9 @@ defmodule GlacierRelay.Command.AuthorityTest do
              :playing
            ]
 
-    # The session's text gained this instance's lines and lost nothing; no command appears in it.
-    after_text = MissionSession.summary_text()
-    refute after_text =~ ~r/command|probe|armed/
-    assert after_text =~ "adapter #{instance}: 3 event(s)"
-
-    if before != "no adapter instance has delivered an event",
-      do: assert(Enum.all?(String.split(before, "\n"), &String.contains?(after_text, &1)))
-
+    assert Map.delete(state, instance) == before_state
+    refute MissionSession.summary_text() =~ ~r/command|probe|armed/
+    refute MissionSession.report_text() =~ ~r/command|probe|armed/
     FakeNative.close(socket)
   end
 end
