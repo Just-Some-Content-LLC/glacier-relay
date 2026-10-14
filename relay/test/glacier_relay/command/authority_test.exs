@@ -122,7 +122,10 @@ defmodule GlacierRelay.Command.AuthorityTest do
     assert welcome["kind"] == "welcome" and welcome["link_generation"] == 1 and
              welcome["command_protocol_version"] == 1
 
-    assert welcome["allowlist"] == [%{"name" => "relay.probe", "version" => 1}]
+    assert welcome["allowlist"] == [
+             %{"name" => "relay.inspect.outfit", "version" => 1},
+             %{"name" => "relay.probe", "version" => 1}
+           ]
 
     assert wait(fn -> Command.status().trust.peer == :identified end)
     s = Command.status()

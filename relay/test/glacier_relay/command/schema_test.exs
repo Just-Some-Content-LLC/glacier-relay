@@ -126,7 +126,7 @@ defmodule GlacierRelay.Command.SchemaTest do
       assert {:error, {:invalid_field, "reason", _}} =
                decode(result(%{"reason" => String.duplicate("r", 201)}))
 
-      too_many = for i <- 1..17, into: %{}, do: {"k#{i}", i}
+      too_many = for i <- 1..49, into: %{}, do: {"k#{i}", i}
       assert {:error, {:invalid_field, "observed", _}} = decode(result(%{"observed" => too_many}))
 
       assert {:error, {:invalid_field, "observed", _}} =
@@ -155,8 +155,12 @@ defmodule GlacierRelay.Command.SchemaTest do
   end
 
   describe "allowlist and parameters" do
-    test "relay.probe is the only issuable entry; player.outfit.set is reserved and requires an authenticated peer" do
-      assert Schema.issuable() == [%{"name" => "relay.probe", "version" => 1}]
+    test "relay.probe and relay.inspect.outfit are the issuable entries; player.outfit.set is reserved and requires an authenticated peer" do
+      assert Schema.issuable() == [
+               %{"name" => "relay.inspect.outfit", "version" => 1},
+               %{"name" => "relay.probe", "version" => 1}
+             ]
+
       probe = Schema.entry("relay.probe", 1)
 
       assert probe.issuable and probe.effect == :none and probe.trust == :identified and
@@ -219,7 +223,10 @@ defmodule GlacierRelay.Command.SchemaTest do
                "kind" => "welcome",
                "link_generation" => 7,
                "node" => "relay@test",
-               "allowlist" => [%{"name" => "relay.probe", "version" => 1}]
+               "allowlist" => [
+                 %{"name" => "relay.inspect.outfit", "version" => 1},
+                 %{"name" => "relay.probe", "version" => 1}
+               ]
              }
 
       cmd = %{

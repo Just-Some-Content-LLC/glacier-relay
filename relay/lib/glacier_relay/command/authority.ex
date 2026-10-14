@@ -249,6 +249,7 @@ defmodule GlacierRelay.Command.Authority do
                  "name" => name,
                  "version" => version,
                  "params" => params,
+                 "preconditions" => cmd.preconditions,
                  "ttl_ms" => cmd.ttl_ms
                })
              ) do
@@ -345,21 +346,34 @@ defmodule GlacierRelay.Command.Authority do
       Map.has_key?(state.commands, id) ->
         {:error, {:duplicate_command_id, id}}
 
+      not valid_preconditions?(Keyword.get(opts, :preconditions, %{})) ->
+        {:error, {:invalid_preconditions, Keyword.get(opts, :preconditions)}}
+
       true ->
         with(
           {:ok, valid} <- Schema.validate_params(entry, params),
-          do: {:ok, build(state, entry, valid, id, ttl)}
+          do: {:ok, build(state, entry, valid, id, ttl, Keyword.get(opts, :preconditions, %{}))}
         )
     end
   end
 
-  defp build(state, entry, params, id, ttl) do
+  # M5 C-1: the only precondition the protocol defines is `mission_generation` (text, at most 64
+  # bytes); it is supplied by the operator with the command (`Command.inspect_outfit/2`'s
+  # `:expected_generation`) and judged on the native inspection frame.
+  defp valid_preconditions?(%{} = map) when map_size(map) == 0, do: true
+
+  defp valid_preconditions?(%{"mission_generation" => gen} = map),
+    do: map_size(map) == 1 and is_binary(gen) and byte_size(gen) in 1..64
+
+  defp valid_preconditions?(_), do: false
+
+  defp build(state, entry, params, id, ttl, preconditions) do
     %{
       id: id,
       name: entry.name,
       version: entry.version,
       params: params,
-      preconditions: %{},
+      preconditions: preconditions,
       link_generation: state.link.generation,
       adapter_instance_id: state.link.adapter_instance_id,
       ttl_ms: ttl,

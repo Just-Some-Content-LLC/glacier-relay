@@ -27,13 +27,17 @@ defmodule GlacierRelay.Command.Schema do
       {"command_protocol_version":1,"kind":"refused","reason":"busy"}
 
   The allowlist is compiled in. `relay.probe` v1 has no effect, no parameters and no reversal.
-  `player.outfit.set` v1 is documented and validated as a reserved, non-issuable candidate: it
+  `relay.inspect.outfit` v1 (M5 C-1) has no effect, one optional validated repository id and no
+  reversal; its read-back is a map of field objects `{"status","value","reason"}` whose status is
+  one of observed / unavailable / unsupported / inconsistent / precondition_failed, so a missing
+  value is never a default. `player.outfit.set` v1 is documented and validated as a reserved, non-issuable candidate: it
   requires an authenticated peer (a trust state no peer can reach in M5-A) and a
   `mission_generation` precondition whose native source M5-B must establish.
   """
 
   @protocol_version 1
   @max_line_bytes 4_096
+  @max_observed_entries 48
   @uuid ~r/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 
   @statuses ~w(received rejected busy duplicate expired precondition_failed unavailable applied failed)
@@ -54,6 +58,18 @@ defmodule GlacierRelay.Command.Schema do
       reversal: :none,
       doc:
         "no gameplay effect; applied on the native frame thread; its read-back reports scene state and the mission predicate"
+    },
+    {"relay.inspect.outfit", 1} => %{
+      name: "relay.inspect.outfit",
+      version: 1,
+      effect: :none,
+      issuable: true,
+      trust: :identified,
+      params: %{"disguise_repository_id" => {:optional, :uuid}},
+      preconditions: [],
+      reversal: :none,
+      doc:
+        "M5 C-1: read-only, frame-local inspection of the hero's current outfit tuple, the candidate kit's resolution, the setter's availability, the edge-cached / at-receipt / fresh-registry generations, the Relay transition epoch and the hypothetical effectful precondition's verdict; every read-back field carries its own status; no engine write"
     },
     {"player.outfit.set", 1} => %{
       name: "player.outfit.set",
@@ -89,6 +105,7 @@ defmodule GlacierRelay.Command.Schema do
 
   def protocol_version, do: @protocol_version
   def max_line_bytes, do: @max_line_bytes
+  def max_observed_entries, do: @max_observed_entries
   def statuses, do: @statuses
   def terminal_statuses, do: @terminal_statuses
   def terminal?(status), do: status in @terminal_statuses
@@ -330,9 +347,11 @@ defmodule GlacierRelay.Command.Schema do
        else: {:error, {:invalid_field, key, {:not_a_bounded_list_of_text, max_items, max_len}}}
   end
 
-  # observed: at most 16 entries; each value a scalar, or a map of at most 16 scalars (previous / current).
+  # observed: at most 48 entries (16 before M5 C-1; raised with the native encoder so an inspection
+  # can report every field with its own status); each value a scalar, or a map of at most 16
+  # scalars (an inspection field object {"status", "value", "reason"}, or previous / current).
   defp check(:observed, v, key) do
-    if is_map(v) and map_size(v) <= 16 and
+    if is_map(v) and map_size(v) <= @max_observed_entries and
          Enum.all?(v, fn {k, val} -> text?(k, 64) and (scalar?(val) or scalar_map?(val)) end),
        do: {:ok, v},
        else: {:error, {:invalid_field, key, :not_a_bounded_observation}}
