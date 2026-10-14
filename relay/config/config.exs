@@ -61,7 +61,18 @@ config :glacier_relay, :command,
   max_ttl_ms: 10_000,
   # Absolute command-journal directory; nil means $XDG_STATE_HOME/glacier-relay/commands or
   # ~/.local/state/glacier-relay/commands (the WSL2 filesystem, never the game installation).
-  journal_dir: nil
+  journal_dir: nil,
+  # M5 C-2A: effectful authority. Off by default: no effectful entry is ever listed in a welcome
+  # or issuable. `GLACIER_RELAY_COMMAND_EFFECTFUL=1` turns it on; it also needs a run token
+  # (`GLACIER_RELAY_COMMAND_TOKEN_FILE`, 64 lowercase hex characters on the Linux filesystem,
+  # read once at start and never logged) for a version-2 peer to attest. Nothing here writes a
+  # token or any game configuration.
+  effectful: false,
+  token_file: nil,
+  # Effectful arming is one-shot and bounded (ms); operator evidence older than these is stale.
+  effectful_ttl_default_ms: 30_000,
+  effectful_ttl_max_ms: 120_000,
+  evidence_max_age_ms: 120_000
 
 # The HTTP endpoint. Loopback only, a different port from the wire listener (4747), never
 # conflated with it. Bandit serves it. No sockets, LiveViews or static assets are mounted in M3-A.

@@ -34,6 +34,17 @@ if dir = System.get_env("GLACIER_RELAY_COMMAND_JOURNAL_DIR") do
   config :glacier_relay, :command, journal_dir: dir
 end
 
+# M5 C-2A: the effectful authority and its run token are opt-in and separate from enabling the
+# command subtree; the token file is read by the authority at start (never logged, never written
+# here) and must live on the Linux filesystem.
+if System.get_env("GLACIER_RELAY_COMMAND_EFFECTFUL") in ["1", "true"] do
+  config :glacier_relay, :command, effectful: true
+end
+
+if file = System.get_env("GLACIER_RELAY_COMMAND_TOKEN_FILE") do
+  config :glacier_relay, :command, token_file: file
+end
+
 config :glacier_relay, GlacierRelayWeb.Endpoint,
   secret_key_base: Base.encode64(:crypto.strong_rand_bytes(48)),
   # The LiveView session-token salt, random per boot like the key base (a token never needs to

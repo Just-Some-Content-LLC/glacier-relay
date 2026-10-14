@@ -28,7 +28,13 @@ defmodule GlacierRelay.Command.Supervisor do
          :grace_ms,
          :default_ttl_ms,
          :max_ttl_ms,
-         :min_ttl_ms
+         :min_ttl_ms,
+         :effectful,
+         :token,
+         :token_file,
+         :effectful_ttl_default_ms,
+         :effectful_ttl_max_ms,
+         :evidence_max_age_ms
        ])},
       {DynamicSupervisor, name: GlacierRelay.Command.LinkSupervisor, strategy: :one_for_one},
       {Listener, Keyword.take(config, [:ip, :port, :max_line_bytes, :hello_timeout_ms])}

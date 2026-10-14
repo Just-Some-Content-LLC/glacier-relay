@@ -25,6 +25,8 @@ defmodule GlacierRelayWeb.BoundaryTest do
     GlacierRelay.Command.Journal,
     GlacierRelay.Command.Schema,
     GlacierRelay.Command.Supervisor,
+    GlacierRelay.Command.Reversal,
+    GlacierRelay.Command.Correlation,
     :gen_tcp,
     :socket,
     :inet,

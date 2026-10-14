@@ -67,6 +67,70 @@ defmodule GlacierRelay.Command.Journal do
     Path.join([base, "glacier-relay", "commands"])
   end
 
+  @doc """
+  Reads and verifies a journal file (M5 C-2A, for the reversal planner): every line must parse
+  as an object, the first entry must be `journal.opened`, every entry must carry this journal's
+  version and one `journal_id`, and `seq` must run contiguously from 1. Returns
+  `{:ok, %{journal_id, entries, closed?}}` or `{:error, reason}`; nothing is repaired or skipped —
+  a partial last line (a journal not closed cleanly) is `{:error, {:unreadable_line, n}}`.
+  """
+  @spec read(Path.t()) :: {:ok, map()} | {:error, term()}
+  def read(path) do
+    with {:ok, bytes} <- File.read(path),
+         {:ok, entries} <- parse_lines(bytes),
+         :ok <- verify(entries) do
+      {:ok,
+       %{
+         journal_id: hd(entries)["journal_id"],
+         entries: entries,
+         closed?: List.last(entries)["event"] == "journal.closed"
+       }}
+    end
+  end
+
+  defp parse_lines(bytes) do
+    bytes
+    |> String.split("\n")
+    |> Enum.with_index(1)
+    |> Enum.reject(fn {line, _} -> line == "" end)
+    |> Enum.reduce_while({:ok, []}, fn {line, n}, {:ok, acc} ->
+      case JSON.decode(line) do
+        {:ok, %{} = entry} -> {:cont, {:ok, [entry | acc]}}
+        _ -> {:halt, {:error, {:unreadable_line, n}}}
+      end
+    end)
+    |> case do
+      {:ok, reversed} -> {:ok, Enum.reverse(reversed)}
+      error -> error
+    end
+  end
+
+  defp verify([]), do: {:error, :empty_journal}
+
+  defp verify([first | _] = entries) do
+    id = first["journal_id"]
+
+    cond do
+      first["event"] != "journal.opened" ->
+        {:error, :no_header}
+
+      not is_binary(id) ->
+        {:error, :no_journal_id}
+
+      Enum.any?(entries, &(&1["journal"] != @version)) ->
+        {:error, :version_mismatch}
+
+      Enum.any?(entries, &(&1["journal_id"] != id)) ->
+        {:error, :mixed_journal_ids}
+
+      Enum.map(entries, & &1["seq"]) != Enum.to_list(1..length(entries)) ->
+        {:error, :sequence_not_contiguous}
+
+      true ->
+        :ok
+    end
+  end
+
   @impl true
   def init(opts) do
     Process.flag(:trap_exit, true)

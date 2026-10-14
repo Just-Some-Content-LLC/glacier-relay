@@ -133,9 +133,12 @@ defmodule GlacierRelay.Command.AuthorityTest do
     assert s.trust == %{
              transport: :connected,
              protocol: :negotiated,
+             protocol_version: 1,
              peer: :identified,
+             token_verified: false,
              authenticated: false,
              armed: false,
+             effectful_armed: false,
              ready: false
            }
 
@@ -395,7 +398,7 @@ defmodule GlacierRelay.Command.AuthorityTest do
       {"malformed json", "{nope\n"},
       {"invalid utf-8", <<0xFF, 0xFE, ?{, ?}>> <> "\n"},
       {"wrong version",
-       JSON.encode!(Map.put(FakeNative.hello(), "command_protocol_version", 2)) <> "\n"},
+       JSON.encode!(Map.put(FakeNative.hello(), "command_protocol_version", 3)) <> "\n"},
       {"unknown kind", JSON.encode!(Map.put(FakeNative.hello(), "kind", "exec")) <> "\n"},
       {"unknown field",
        JSON.encode!(Map.put(FakeNative.hello(), "function_pointer", "0x1")) <> "\n"},

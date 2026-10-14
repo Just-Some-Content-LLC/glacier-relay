@@ -1,19 +1,29 @@
 defmodule GlacierRelay.Command.Schema do
   @moduledoc """
-  The command protocol, version 1 (M5-A, ADR 0009): what BEAM writes to the command link and what
-  it accepts from it. Versioned independently of the Relay envelope's `protocol_version`.
+  The command protocol, versions 1 and 2 (M5-A, ADR 0009; M5 C-2A, M5 design sections 25–26):
+  what BEAM writes to the command link and what it accepts from it. Versioned independently of
+  the Relay envelope's `protocol_version`.
 
   Lines are newline-delimited UTF-8 JSON objects of at most #{4_096} bytes. Decoding is strict:
-  the protocol version must be 1, the kind must be known, every field must be known and of its
-  declared type and within its bounds, and nothing unknown is tolerated — an unknown kind, name,
-  version, field or parameter is an error and never execution. Nothing in any schema is a
-  function, an address, a pointer, an engine type or a script.
+  the protocol version must be 1 or 2, the kind must be known for that version, every field must
+  be known and of its declared type and within its bounds, and nothing unknown is tolerated — an
+  unknown kind, name, version, field or parameter is an error and never execution. Nothing in any
+  schema is a function, an address, a pointer, an engine type or a script.
 
-  Messages the native peer sends:
+  The peer's hello chooses the version. Version 1 is the frozen C-1 native's protocol and is
+  unchanged byte for byte (the welcome carries no new field). Version 2 adds the attestation
+  exchange: the welcome carries a fresh random `nonce` and `attest_required`, and the peer answers
+  with one `attest` whose `mac` is HMAC-SHA256 over `nonce|link_generation|adapter_instance_id`
+  with the run token; a verified attest labels the link `token_verified` (possession of this
+  run's token shown over this link — never process identity, never `authenticated`).
 
-      {"command_protocol_version":1,"kind":"hello","adapter_instance_id":"<uuid4>",
+  Messages the native peer sends (`V` is 1 or 2):
+
+      {"command_protocol_version":V,"kind":"hello","adapter_instance_id":"<uuid4>",
        "native_at":"<text>","mission_generation":"<text>|null","capabilities":["..."]}
-      {"command_protocol_version":1,"kind":"command.result","command_id":"<uuid4>","link_generation":N,
+      {"command_protocol_version":2,"kind":"attest","link_generation":N,
+       "adapter_instance_id":"<uuid4>","mac":"<64 lowercase hex>"}
+      {"command_protocol_version":V,"kind":"command.result","command_id":"<uuid4>","link_generation":N,
        "adapter_instance_id":"<uuid4>|null","status":"received|rejected|busy|duplicate|expired|
        precondition_failed|unavailable|applied|failed","reason":"<text>|null","native_at":"<text>|null",
        "frame":N|null,"observed":{...}|null,"mission_generation":"<text>|null"}
@@ -22,7 +32,9 @@ defmodule GlacierRelay.Command.Schema do
 
       {"command_protocol_version":1,"kind":"welcome","link_generation":N,"node":"<text>",
        "allowlist":[{"name":"relay.probe","version":1}]}
-      {"command_protocol_version":1,"kind":"command","command_id":"<uuid4>","link_generation":N,
+      {"command_protocol_version":2,"kind":"welcome","link_generation":N,"node":"<text>",
+       "allowlist":[...],"nonce":"<32 lowercase hex>","attest_required":true}
+      {"command_protocol_version":V,"kind":"command","command_id":"<uuid4>","link_generation":N,
        "issued_at":"<ISO-8601>","ttl_ms":N,"name":"...","version":N,"params":{...},"preconditions":{...}}
       {"command_protocol_version":1,"kind":"refused","reason":"busy"}
 
@@ -30,21 +42,38 @@ defmodule GlacierRelay.Command.Schema do
   `relay.inspect.outfit` v1 (M5 C-1) has no effect, one optional validated repository id and no
   reversal; its read-back is a map of field objects `{"status","value","reason"}` whose status is
   one of observed / unavailable / unsupported / inconsistent / precondition_failed, so a missing
-  value is never a default. `player.outfit.set` v1 is documented and validated as a reserved, non-issuable candidate: it
-  requires an authenticated peer (a trust state no peer can reach in M5-A) and a
-  `mission_generation` precondition whose native source M5-B must establish.
+  value is never a default. `player.outfit.set` v1 stays exactly as published: a reserved,
+  non-issuable candidate against every peer. `player.outfit.set` v2 (M5 C-2A) carries the complete
+  tuple — the target kit id, charset and variation, and a mandatory `expect_current` tuple — and
+  requires the `mission_generation` precondition; it is `:effectful`: listed in a welcome only to a
+  version-2 peer that advertised the capability while the authority's effectful configuration is
+  on, and issuable only under the authority's effectful arming (`Command.Authority`). No real
+  native build advertises it.
   """
 
-  @protocol_version 1
+  @protocol_versions [1, 2]
   @max_line_bytes 4_096
   @max_observed_entries 48
+  @nonce_bytes 16
   @uuid ~r/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+  @hex32 ~r/^[0-9a-f]{32}$/
+  @hex64 ~r/^[0-9a-f]{64}$/
 
   @statuses ~w(received rejected busy duplicate expired precondition_failed unavailable applied failed)
   @terminal_statuses @statuses -- ["received"]
+  # Terminal statuses that assert the command was never applied (used by the late-result
+  # refinement: a late one of these may refine an unknown outcome; nothing else may).
+  @nonapplication_statuses ~w(rejected expired precondition_failed unavailable)
 
   @hello_keys ~w(command_protocol_version kind adapter_instance_id native_at mission_generation capabilities)
+  @attest_keys ~w(command_protocol_version kind link_generation adapter_instance_id mac)
   @result_keys ~w(command_protocol_version kind command_id link_generation adapter_instance_id status reason native_at frame observed mission_generation)
+
+  @tuple_spec %{
+    "disguise_repository_id" => :uuid,
+    "charset" => {:integer, 0, 15},
+    "variation" => {:integer, 0, 63}
+  }
 
   @allowlist %{
     {"relay.probe", 1} => %{
@@ -82,7 +111,20 @@ defmodule GlacierRelay.Command.Schema do
       reversal:
         "player.outfit.set with the previous disguise_repository_id (from the result's observed.previous)",
       doc:
-        "reserved candidate (M5 design section 2); not issuable in M5-A; requires an authenticated peer and a mission-generation precondition"
+        "reserved candidate (M5 design section 2); not issuable in M5-A; requires an authenticated peer and a mission-generation precondition; superseded by version 2 (M5 C-2A), kept exactly as published and never issuable"
+    },
+    {"player.outfit.set", 2} => %{
+      name: "player.outfit.set",
+      version: 2,
+      effect: :outfit,
+      issuable: :effectful,
+      trust: :token_verified,
+      params: Map.put(@tuple_spec, "expect_current", {:object, @tuple_spec}),
+      preconditions: [:mission_generation],
+      reversal:
+        "a separate player.outfit.set v2 whose target is the result's previous tuple (previous_outfit_id / previous_charset / previous_variation) and whose expect_current is the result's current tuple, planned from the verified journal (Command.Reversal) and issued only with a fresh current-tuple confirmation",
+      doc:
+        "M5 C-2A: the complete outfit tuple (target kit id, charset, variation) with a mandatory expect_current tuple and a mandatory mission_generation precondition; HeroA only; the same tuple as the current one is refused as a no-op; issuable only on a version-2 link whose peer attested the run token (token_verified — possession of the run token, not process identity), under one-shot effectful arming; never advertised to a version-1 peer; no real native build implements it in C-2A"
     }
   }
 
@@ -103,12 +145,16 @@ defmodule GlacierRelay.Command.Schema do
   @doc "The atom for a decoded status (every status of the vocabulary; nothing else)."
   def status_atom(status), do: Map.fetch!(@status_atoms, status)
 
-  def protocol_version, do: @protocol_version
+  @doc "The protocol version a version-1 peer speaks (the frozen C-1 native's)."
+  def protocol_version, do: 1
+  def protocol_versions, do: @protocol_versions
   def max_line_bytes, do: @max_line_bytes
   def max_observed_entries, do: @max_observed_entries
   def statuses, do: @statuses
   def terminal_statuses, do: @terminal_statuses
+  def nonapplication_statuses, do: @nonapplication_statuses
   def terminal?(status), do: status in @terminal_statuses
+  def nonapplication?(status), do: status in @nonapplication_statuses
 
   @doc "The compiled allowlist, keyed by `{name, version}`."
   def allowlist, do: @allowlist
@@ -116,8 +162,26 @@ defmodule GlacierRelay.Command.Schema do
   @doc "The allowlist entry for a name and version, or nil."
   def entry(name, version), do: Map.get(@allowlist, {name, version})
 
-  @doc "The issuable entries, for the welcome message."
-  def issuable, do: for({{n, v}, e} <- @allowlist, e.issuable, do: %{"name" => n, "version" => v})
+  @doc "The inert issuable entries: the version-1 welcome's allowlist, unchanged since M5 C-1."
+  def issuable,
+    do: for({{n, v}, e} <- @allowlist, e.issuable == true, do: %{"name" => n, "version" => v})
+
+  @doc """
+  The entries a welcome may list for a peer: the inert ones always; an `:effectful` entry only
+  when the peer negotiated version 2, advertised `name/version` among its capabilities, and the
+  authority's effectful configuration is on. A version-1 peer never sees an effectful entry.
+  """
+  def issuable_for(2, capabilities, true) when is_list(capabilities) do
+    effectful =
+      for {{n, v}, e} <- @allowlist,
+          e.issuable == :effectful,
+          "#{n}/#{v}" in capabilities,
+          do: %{"name" => n, "version" => v}
+
+    Enum.sort_by(issuable() ++ effectful, &{&1["name"], &1["version"]})
+  end
+
+  def issuable_for(_version, _capabilities, _effectful_enabled), do: issuable()
 
   @doc "A random UUID version 4 as text."
   def uuid4 do
@@ -130,6 +194,37 @@ defmodule GlacierRelay.Command.Schema do
   end
 
   def uuid?(value), do: is_binary(value) and Regex.match?(@uuid, value)
+
+  # -- attestation (version 2) --------------------------------------------------------------------
+
+  @doc "A fresh cryptographically random nonce (#{@nonce_bytes} bytes) as lowercase hex."
+  def nonce, do: @nonce_bytes |> :crypto.strong_rand_bytes() |> Base.encode16(case: :lower)
+
+  def nonce?(value), do: is_binary(value) and Regex.match?(@hex32, value)
+  def mac?(value), do: is_binary(value) and Regex.match?(@hex64, value)
+
+  @doc """
+  The attestation MAC: HMAC-SHA256 with the run token over `nonce|link_generation|adapter_id`
+  (lowercase hex). Shared by the verifier and the fake peer so there is exactly one definition.
+  """
+  def attest_mac(token, nonce, generation, adapter_id)
+      when is_binary(token) and is_binary(nonce) and is_integer(generation) and
+             is_binary(adapter_id) do
+    :hmac
+    |> :crypto.mac(:sha256, token, "#{nonce}|#{generation}|#{adapter_id}")
+    |> Base.encode16(case: :lower)
+  end
+
+  @doc "Constant-time comparison of two lowercase-hex MACs; false for anything malformed."
+  def mac_equal?(expected, presented) do
+    with true <- mac?(expected) and mac?(presented),
+         {:ok, a} <- Base.decode16(expected, case: :lower),
+         {:ok, b} <- Base.decode16(presented, case: :lower) do
+      :crypto.hash_equals(a, b)
+    else
+      _ -> false
+    end
+  end
 
   # -- parameters -------------------------------------------------------------------------------
 
@@ -163,35 +258,69 @@ defmodule GlacierRelay.Command.Schema do
   defp check_param(:uuid, {:ok, value}),
     do: if(uuid?(value), do: {:ok, value}, else: {:error, :not_a_uuid})
 
+  defp check_param({:integer, min, max}, {:ok, value}) do
+    if is_integer(value) and value >= min and value <= max,
+      do: {:ok, value},
+      else: {:error, {:not_an_integer_within, min, max}}
+  end
+
+  defp check_param({:object, spec}, {:ok, value}) when is_map(value) do
+    case validate_params(%{params: spec}, value) do
+      {:ok, valid} -> {:ok, valid}
+      {:error, why} -> {:error, {:invalid_object, why}}
+    end
+  end
+
+  defp check_param({:object, _spec}, {:ok, _value}), do: {:error, :not_an_object}
+
   # -- encoding (BEAM → native) -------------------------------------------------------------------
 
-  @doc "The welcome line (with its newline) for a link generation."
-  def encode_welcome(generation, node) when is_integer(generation) and generation > 0 do
-    line(%{
-      "command_protocol_version" => @protocol_version,
+  @doc """
+  The welcome line (with its newline) for a link generation. `opts`: `:version` (1, the
+  default, or 2), `:allowlist` (default the inert issuable entries), and for version 2 `:nonce`.
+  The version-1 line is unchanged since M5 C-1.
+  """
+  def encode_welcome(generation, node, opts \\ [])
+      when is_integer(generation) and generation > 0 do
+    version = Keyword.get(opts, :version, 1)
+    allowlist = Keyword.get(opts, :allowlist, issuable())
+
+    base = %{
+      "command_protocol_version" => version,
       "kind" => "welcome",
       "link_generation" => generation,
       "node" => to_string(node),
-      "allowlist" => issuable()
-    })
+      "allowlist" => allowlist
+    }
+
+    case version do
+      1 ->
+        line(base)
+
+      2 ->
+        nonce = Keyword.fetch!(opts, :nonce)
+        true = nonce?(nonce)
+        line(Map.merge(base, %{"nonce" => nonce, "attest_required" => true}))
+    end
   end
 
   @doc "The refusal line (with its newline), written to a second connection while one link is up."
   def encode_refusal(reason),
     do:
       line(%{
-        "command_protocol_version" => @protocol_version,
+        "command_protocol_version" => 1,
         "kind" => "refused",
         "reason" => to_string(reason)
       })
 
   @doc """
   The command line (with its newline). `cmd`: `%{command_id, link_generation, issued_at, ttl_ms,
-  name, version, params, preconditions}`; the caller has validated everything.
+  name, version, params, preconditions}` plus an optional `protocol_version` (the link's
+  negotiated version; 1 by default); the caller has validated everything.
   """
   def encode_command(cmd) do
     line(%{
-      "command_protocol_version" => @protocol_version,
+      "command_protocol_version" => Map.get(cmd, :protocol_version, 1),
       "kind" => "command",
       "command_id" => cmd.command_id,
       "link_generation" => cmd.link_generation,
@@ -208,18 +337,26 @@ defmodule GlacierRelay.Command.Schema do
 
   # -- decoding (native → BEAM) -------------------------------------------------------------------
 
-  @doc "Decodes one line from the peer: a hello or a result, strictly, or an error."
+  @doc """
+  Decodes one line from the peer: a hello, an attest (version 2 only) or a result, strictly, or
+  an error. Every decoded map carries `protocol_version` (the line's own version); the link
+  enforces that it equals the negotiated one.
+  """
   @spec decode_line(binary()) ::
-          {:ok, {:hello, map()}} | {:ok, {:result, map()}} | {:error, term()}
+          {:ok, {:hello, map()}}
+          | {:ok, {:attest, map()}}
+          | {:ok, {:result, map()}}
+          | {:error, term()}
   def decode_line(line) when is_binary(line) do
     with :ok <- check_size(line),
          :ok <- check_utf8(line),
          {:ok, map} <- decode_json(line),
-         :ok <- check_version(map),
-         {:ok, kind} <- kind(map) do
+         {:ok, version} <- check_version(map),
+         {:ok, kind} <- kind(map, version) do
       case kind do
-        "hello" -> decode_hello(map)
-        "command.result" -> decode_result(map)
+        "hello" -> decode_hello(map, version)
+        "attest" -> decode_attest(map)
+        "command.result" -> decode_result(map, version)
       end
     end
   end
@@ -237,18 +374,22 @@ defmodule GlacierRelay.Command.Schema do
     end
   end
 
-  defp check_version(%{"command_protocol_version" => @protocol_version}), do: :ok
+  defp check_version(%{"command_protocol_version" => v}) when v in @protocol_versions,
+    do: {:ok, v}
 
   defp check_version(%{"command_protocol_version" => other}),
     do: {:error, {:unsupported_protocol_version, other}}
 
   defp check_version(_), do: {:error, :missing_protocol_version}
 
-  defp kind(%{"kind" => kind}) when kind in ["hello", "command.result"], do: {:ok, kind}
-  defp kind(%{"kind" => other}), do: {:error, {:unknown_kind, other}}
-  defp kind(_), do: {:error, :missing_kind}
+  defp kind(%{"kind" => kind}, _version) when kind in ["hello", "command.result"],
+    do: {:ok, kind}
 
-  defp decode_hello(map) do
+  defp kind(%{"kind" => "attest"}, 2), do: {:ok, "attest"}
+  defp kind(%{"kind" => other}, _version), do: {:error, {:unknown_kind, other}}
+  defp kind(_, _), do: {:error, :missing_kind}
+
+  defp decode_hello(map, version) do
     with :ok <- known_keys(map, @hello_keys),
          {:ok, id} <- field(map, "adapter_instance_id", :uuid, :required),
          {:ok, at} <- field(map, "native_at", {:text, 64}, :optional),
@@ -257,6 +398,7 @@ defmodule GlacierRelay.Command.Schema do
       {:ok,
        {:hello,
         %{
+          protocol_version: version,
           adapter_instance_id: id,
           native_at: at,
           mission_generation: gen,
@@ -265,7 +407,17 @@ defmodule GlacierRelay.Command.Schema do
     end
   end
 
-  defp decode_result(map) do
+  defp decode_attest(map) do
+    with :ok <- known_keys(map, @attest_keys),
+         {:ok, gen} <- field(map, "link_generation", :pos_integer, :required),
+         {:ok, id} <- field(map, "adapter_instance_id", :uuid, :required),
+         {:ok, mac} <- field(map, "mac", :mac, :required) do
+      {:ok,
+       {:attest, %{protocol_version: 2, link_generation: gen, adapter_instance_id: id, mac: mac}}}
+    end
+  end
+
+  defp decode_result(map, version) do
     with :ok <- known_keys(map, @result_keys),
          {:ok, id} <- field(map, "command_id", :uuid, :required),
          {:ok, gen} <- field(map, "link_generation", :pos_integer, :required),
@@ -279,6 +431,7 @@ defmodule GlacierRelay.Command.Schema do
       {:ok,
        {:result,
         %{
+          protocol_version: version,
           command_id: id,
           link_generation: gen,
           adapter_instance_id: adapter,
@@ -311,6 +464,9 @@ defmodule GlacierRelay.Command.Schema do
 
   defp check(:uuid, v, key),
     do: if(uuid?(v), do: {:ok, v}, else: {:error, {:invalid_field, key, :not_a_uuid}})
+
+  defp check(:mac, v, key),
+    do: if(mac?(v), do: {:ok, v}, else: {:error, {:invalid_field, key, :not_a_mac}})
 
   defp check(:pos_integer, v, key),
     do:
@@ -364,4 +520,26 @@ defmodule GlacierRelay.Command.Schema do
     do:
       is_map(v) and map_size(v) <= 16 and
         Enum.all?(v, fn {k, val} -> text?(k, 64) and scalar?(val) end)
+
+  # -- read-back field objects (M5 C-1 / C-2A) ----------------------------------------------------
+
+  @doc "The observed value of a read-back field object (`{\"status\":\"observed\",\"value\":…}`), or `:unobserved`."
+  def observed_value(%{"status" => "observed"} = field) when is_map_key(field, "value"),
+    do: {:ok, field["value"]}
+
+  def observed_value(_), do: :unobserved
+
+  @doc "The outfit tuple `prefix_outfit_id / prefix_charset / prefix_variation` of a read-back, when all three are observed."
+  def observed_tuple(observed, prefix) when is_map(observed) and is_binary(prefix) do
+    with {:ok, id} <- observed_value(observed["#{prefix}_outfit_id"]),
+         {:ok, charset} <- observed_value(observed["#{prefix}_charset"]),
+         {:ok, variation} <- observed_value(observed["#{prefix}_variation"]),
+         true <- uuid?(id) and is_integer(charset) and is_integer(variation) do
+      {:ok, %{"disguise_repository_id" => id, "charset" => charset, "variation" => variation}}
+    else
+      _ -> :unobserved
+    end
+  end
+
+  def observed_tuple(_, _), do: :unobserved
 end

@@ -1,14 +1,20 @@
 defmodule GlacierRelay.Command.Link do
   @moduledoc """
-  One accepted command-link connection (M5-A). Owns the socket, frames lines (4 KiB), decodes them
-  strictly with `Command.Schema`, and hands every peer message to `Command.Authority` with the
-  link generation the authority assigned. The link itself decides nothing: the authority owns the
-  handshake states, the trust labels and every command.
+  One accepted command-link connection (M5-A; M5 C-2A versions). Owns the socket, frames lines
+  (4 KiB), decodes them strictly with `Command.Schema`, and hands every peer message to
+  `Command.Authority` with the link generation the authority assigned. The link itself decides
+  nothing: the authority owns the handshake states, the trust labels and every command.
 
-  Failure policy: a line that does not decode, a hello after the handshake, a result before it, an
-  oversized line or a hello that does not arrive in time is a protocol violation — reported to
-  the authority and the link closes (the conservative failure; nothing is tolerated and retried).
-  A second connection while one link is up is refused with a `refused` line and closed.
+  Versions: the peer's hello chooses 1 or 2 for the life of the link; every later line must
+  carry the same version (a different one is a violation — no walking a link up or down). An
+  `attest` is accepted only on a version-2 link after its hello and is handed to the authority,
+  whose refusal is a violation that closes the link (no fallback to version 1, no retry).
+
+  Failure policy: a line that does not decode, a hello after the handshake, a result or attest
+  before it, an oversized line or a hello that does not arrive in time is a protocol violation —
+  reported to the authority and the link closes (the conservative failure; nothing is tolerated
+  and retried). A second connection while one link is up is refused with a `refused` line and
+  closed.
   """
 
   use GenServer, restart: :temporary
@@ -38,6 +44,7 @@ defmodule GlacierRelay.Command.Link do
            peer: peer,
            framing: Framing.new(Keyword.get(opts, :max_line_bytes, Schema.max_line_bytes())),
            phase: :connected,
+           version: nil,
            hello_timer: timer,
            closed: false
          }}
@@ -97,8 +104,18 @@ defmodule GlacierRelay.Command.Link do
             if state.hello_timer, do: Process.cancel_timer(state.hello_timer)
 
             case :gen_tcp.send(state.socket, welcome) do
-              :ok -> {:cont, {:ok, %{state | phase: :identified, hello_timer: nil}}}
-              {:error, reason} -> {:halt, {:violation, {:welcome_not_sent, reason}, state}}
+              :ok ->
+                {:cont,
+                 {:ok,
+                  %{
+                    state
+                    | phase: :identified,
+                      version: hello.protocol_version,
+                      hello_timer: nil
+                  }}}
+
+              {:error, reason} ->
+                {:halt, {:violation, {:welcome_not_sent, reason}, state}}
             end
 
           {:error, reason} ->
@@ -108,9 +125,29 @@ defmodule GlacierRelay.Command.Link do
       {{:ok, {:hello, _}}, _} ->
         {:halt, {:violation, :hello_after_handshake, state}}
 
+      {{:ok, {:attest, attest}}, :identified} ->
+        cond do
+          state.version != 2 ->
+            {:halt, {:violation, :attest_on_version_1_link, state}}
+
+          true ->
+            case Authority.peer_attest(state.generation, attest) do
+              :ok -> {:cont, {:ok, state}}
+              {:error, reason} -> {:halt, {:violation, {:attest_failed, reason}, state}}
+            end
+        end
+
+      {{:ok, {:attest, _}}, _} ->
+        {:halt, {:violation, :attest_before_handshake, state}}
+
       {{:ok, {:result, result}}, :identified} ->
-        Authority.result(state.generation, result)
-        {:cont, {:ok, state}}
+        if result.protocol_version == state.version do
+          Authority.result(state.generation, result)
+          {:cont, {:ok, state}}
+        else
+          {:halt,
+           {:violation, {:version_mismatch, state.version, result.protocol_version}, state}}
+        end
 
       {{:ok, {:result, _}}, _} ->
         {:halt, {:violation, :result_before_handshake, state}}

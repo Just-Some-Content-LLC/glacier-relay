@@ -51,6 +51,7 @@ defmodule GlacierRelay.Command.SchemaTest do
                )
 
       assert h == %{
+               protocol_version: 1,
                adapter_instance_id: @uuid,
                native_at: "t",
                mission_generation: "g1",
@@ -58,6 +59,10 @@ defmodule GlacierRelay.Command.SchemaTest do
              }
 
       assert {:ok, {:hello, %{capabilities: [], mission_generation: nil}}} = decode(hello())
+
+      # M5 C-2A: a version-2 hello decodes with the same keys; the version travels with it.
+      assert {:ok, {:hello, %{protocol_version: 2}}} =
+               decode(hello(%{"command_protocol_version" => 2}))
     end
 
     test "rejects unknown fields, a missing or malformed id, and oversized values" do
@@ -139,8 +144,11 @@ defmodule GlacierRelay.Command.SchemaTest do
 
   describe "lines" do
     test "wrong or missing protocol version, unknown kind, non-objects, invalid JSON and UTF-8, oversize" do
-      assert {:error, {:unsupported_protocol_version, 2}} =
-               decode(hello(%{"command_protocol_version" => 2}))
+      assert {:error, {:unsupported_protocol_version, 3}} =
+               decode(hello(%{"command_protocol_version" => 3}))
+
+      # an attest is a version-2 kind only
+      assert {:error, {:unknown_kind, "attest"}} = decode(hello(%{"kind" => "attest"}))
 
       assert {:error, :missing_protocol_version} =
                decode(Map.delete(hello(), "command_protocol_version"))
