@@ -24,6 +24,16 @@ if dir = System.get_env("GLACIER_RELAY_RECORD_DIR") do
   config :glacier_relay, :recording, dir: dir
 end
 
+# M5-A: the command subtree starts only when explicitly asked for; the journal directory must be
+# absolute and on the Linux filesystem.
+if System.get_env("GLACIER_RELAY_COMMAND") in ["1", "true"] do
+  config :glacier_relay, :command, enabled: true
+end
+
+if dir = System.get_env("GLACIER_RELAY_COMMAND_JOURNAL_DIR") do
+  config :glacier_relay, :command, journal_dir: dir
+end
+
 config :glacier_relay, GlacierRelayWeb.Endpoint,
   secret_key_base: Base.encode64(:crypto.strong_rand_bytes(48)),
   # The LiveView session-token salt, random per boot like the key base (a token never needs to

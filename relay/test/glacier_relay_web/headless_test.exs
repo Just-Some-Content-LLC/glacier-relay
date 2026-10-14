@@ -24,6 +24,29 @@ defmodule GlacierRelayWeb.HeadlessTest do
     assert Process.whereis(GlacierRelay.Recording.Recorder) == nil
   end
 
+  test "the command subtree is disabled by default and nothing of it runs (M5-A invariance)" do
+    refute GlacierRelay.Application.command_enabled?()
+    assert Application.get_env(:glacier_relay, :command)[:enabled] == false
+    refute GlacierRelay.Command.enabled?()
+    assert {:error, :command_disabled} = GlacierRelay.Command.status()
+    assert {:error, :command_disabled} = GlacierRelay.Command.arm()
+    assert {:error, :command_disabled} = GlacierRelay.Command.probe()
+
+    for name <- [
+          GlacierRelay.Command.Supervisor,
+          GlacierRelay.Command.Authority,
+          GlacierRelay.Command.Journal,
+          GlacierRelay.Command.Listener,
+          GlacierRelay.Command.LinkSupervisor
+        ] do
+      assert Process.whereis(name) == nil,
+             "#{inspect(name)} is running with command mode disabled"
+    end
+
+    port = Application.get_env(:glacier_relay, :command)[:port]
+    assert {:error, :econnrefused} = :gen_tcp.connect({127, 0, 0, 1}, port, [:binary], 500)
+  end
+
   test "the supervision tree holds exactly the three M2 children, in the M2 order" do
     ids =
       GlacierRelay.Supervisor

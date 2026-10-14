@@ -41,6 +41,28 @@ config :glacier_relay, :recording,
   mailbox_high: 10_000,
   mailbox_low: 1_000
 
+# M5-A (ADR 0009): the optional command subtree. Disabled by default; `config/runtime.exs`
+# enables it when GLACIER_RELAY_COMMAND=1. The command link is a third loopback port, separate
+# from the wire listener (4747) and the dashboard (4748); the native adapter is its client.
+config :glacier_relay, :command,
+  enabled: false,
+  ip: {127, 0, 0, 1},
+  port: 4749,
+  # One NDJSON object per line; a longer line is a protocol violation and closes the link.
+  max_line_bytes: 4_096,
+  # The peer's hello must arrive within this (monotonic) time of the accept.
+  hello_timeout_ms: 2_000,
+  # A transmitted command must be acknowledged within this time, else unknown.
+  ack_timeout_ms: 2_000,
+  # A terminal result must arrive within ttl_ms + grace_ms, else unknown.
+  grace_ms: 1_000,
+  default_ttl_ms: 5_000,
+  min_ttl_ms: 100,
+  max_ttl_ms: 10_000,
+  # Absolute command-journal directory; nil means $XDG_STATE_HOME/glacier-relay/commands or
+  # ~/.local/state/glacier-relay/commands (the WSL2 filesystem, never the game installation).
+  journal_dir: nil
+
 # The HTTP endpoint. Loopback only, a different port from the wire listener (4747), never
 # conflated with it. Bandit serves it. No sockets, LiveViews or static assets are mounted in M3-A.
 config :glacier_relay, GlacierRelayWeb.Endpoint,

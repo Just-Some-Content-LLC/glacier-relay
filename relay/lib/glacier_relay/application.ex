@@ -24,9 +24,22 @@ defmodule GlacierRelay.Application do
         GlacierRelay.MissionSession,
         {DynamicSupervisor, name: GlacierRelay.Wire.ConnectionSupervisor, strategy: :one_for_one},
         GlacierRelay.Wire.Listener
-      ] ++ recording_children() ++ web_children()
+      ] ++ recording_children() ++ web_children() ++ command_children()
 
     Supervisor.start_link(children, strategy: :one_for_one, name: GlacierRelay.Supervisor)
+  end
+
+  @doc "Whether the optional command subtree (M5-A, ADR 0009) is configured to start with the application."
+  def command_enabled? do
+    :glacier_relay
+    |> Application.get_env(:command, [])
+    |> Keyword.get(:enabled, false) == true
+  end
+
+  # M5-A (ADR 0009): the optional command subtree, last, only when enabled; nothing of it starts
+  # otherwise and the tree stays exactly M4's.
+  defp command_children do
+    if command_enabled?(), do: [GlacierRelay.Command.Supervisor], else: []
   end
 
   @doc "Whether the optional web subtree is configured to start with the application."

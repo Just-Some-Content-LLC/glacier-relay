@@ -18,6 +18,13 @@ defmodule GlacierRelayWeb.BoundaryTest do
     GlacierRelay.Recording.Recorder,
     GlacierRelay.Recording.Segment,
     GlacierRelay.Recording.Codec,
+    GlacierRelay.Command,
+    GlacierRelay.Command.Authority,
+    GlacierRelay.Command.Link,
+    GlacierRelay.Command.Listener,
+    GlacierRelay.Command.Journal,
+    GlacierRelay.Command.Schema,
+    GlacierRelay.Command.Supervisor,
     :gen_tcp,
     :socket,
     :inet,
@@ -36,13 +43,13 @@ defmodule GlacierRelayWeb.BoundaryTest do
   }
 
   @web_tokens ~w(
-    Wire. gen_tcp :socket :inet Lifecycle apply_event MissionSession.handle_event connection_opened
+    Command. 4749 Wire. gen_tcp :socket :inet Lifecycle apply_event MissionSession.handle_event connection_opened
     connection_closed GenServer. send( Process.send ZString ZRepositoryID ZDynamicObject
     ZHMModSDK Mods/ Glacier/ TelemetryIntake RelayAdapter TcpRelaySink
   )
 
   @dashboard_tokens ~w(
-    gen_tcp :socket :inet apply_event connection_identified MissionSession.handle_event connection_opened
+    Command. 4749 gen_tcp :socket :inet apply_event connection_identified MissionSession.handle_event connection_opened
     connection_closed GenServer.cast send( Process.send( ZString ZRepositoryID ZDynamicObject
     ZHMModSDK Mods/ Glacier/ TelemetryIntake RelayAdapter TcpRelaySink
   )
@@ -133,6 +140,66 @@ defmodule GlacierRelayWeb.BoundaryTest do
         {f, a} in @delivery do
       flunk("#{inspect(module)} exports #{f}/#{a}")
     end
+  end
+
+  # M5-A (ADR 0009): the observer path never references the command path, and the command path
+  # never reaches the session's evidence delivery or the wire.
+  @observer_prefixes ~w(
+    Elixir.GlacierRelay.Wire Elixir.GlacierRelay.MissionSession Elixir.GlacierRelay.Session
+    Elixir.GlacierRelay.Lifecycle Elixir.GlacierRelay.Recording Elixir.GlacierRelay.Statistics
+    Elixir.GlacierRelay.Summary Elixir.GlacierRelay.Report Elixir.GlacierRelay.Dashboard
+    Elixir.GlacierRelayWeb Elixir.GlacierRelay.Test.FixturePlayer Elixir.GlacierRelay.Test.RecordingFixtures
+    Elixir.GlacierRelay.Test.StubWriter Elixir.GlacierRelay.Test.RenderingChecks Elixir.GlacierRelay.Application
+  )
+
+  test "no observer, web, recording, replay, fixture or test-support module calls the command path" do
+    {:ok, modules} = :application.get_key(:glacier_relay, :modules)
+
+    observers =
+      Enum.filter(modules, fn m ->
+        Enum.any?(@observer_prefixes, &String.starts_with?(Atom.to_string(m), &1))
+      end)
+
+    assert GlacierRelay.Recording.Replay in observers and
+             GlacierRelay.Test.FixturePlayer in observers
+
+    for module <- observers, {m, f, a} <- remote_calls(module) do
+      refute String.starts_with?(Atom.to_string(m), "Elixir.GlacierRelay.Command"),
+             "#{inspect(module)} calls #{inspect(m)}.#{f}/#{a}"
+    end
+
+    for path <-
+          Path.wildcard("lib/glacier_relay/{wire,session,recording,dashboard}/**/*.ex") ++
+            [
+              "lib/glacier_relay/mission_session.ex",
+              "lib/glacier_relay/lifecycle.ex",
+              "lib/glacier_relay/statistics.ex"
+            ] do
+      refute File.read!(path) =~ "Command.", "#{path} mentions the command path"
+    end
+  end
+
+  test "the command path never delivers evidence, folds, touches the recorder or the telemetry wire" do
+    commands = modules("Elixir.GlacierRelay.Command")
+    assert GlacierRelay.Command.Authority in commands
+
+    for module <- commands, {m, f, a} <- remote_calls(module) do
+      refute m in [
+               GlacierRelay.MissionSession,
+               GlacierRelay.Lifecycle,
+               GlacierRelay.Session.Fold,
+               GlacierRelay.Recording.Recorder,
+               GlacierRelay.Wire.Listener,
+               GlacierRelay.Wire.Connection,
+               GlacierRelay.Wire.Envelope,
+               GlacierRelay.Events
+             ],
+             "#{inspect(module)} calls #{inspect(m)}.#{f}/#{a}"
+    end
+
+    # No Phoenix route for commands or arming.
+    routes = GlacierRelayWeb.Router.__routes__() |> Enum.map(& &1.path)
+    refute Enum.any?(routes, &(&1 =~ ~r/command|arm|probe/)), inspect(routes)
   end
 
   test "the LiveViews handle only the viewer-choice events" do
