@@ -1098,6 +1098,12 @@ defmodule GlacierRelay.Command.Authority do
 
   # Two native read-backs compared by the authority: the command's reported current tuple and a
   # later applied inspection's hero tuple, same mission generation, later frame. Still native.
+  # M5 C-2B correction: a command whose setter was invoked but whose outcome is `failed` or whose
+  # same-frame read-back is unavailable (a possible effect) needs exactly this later observation,
+  # so it is accepted for any command with a reported invocation; without a current tuple to
+  # compare against, the hero tuple is compared with the requested and the prior tuples instead
+  # (`matches_requested`, `matches_previous`, `other`). The planner still never reverses a
+  # `failed` terminal from this: a fresh command with a fresh expect_current is the operator's path.
   defp later_frame(state, cmd, base, inspection_id) do
     with true <- is_binary(inspection_id) or {:error, :inspection_command_id_required},
          {:ok, inspection} <-
@@ -1105,10 +1111,7 @@ defmodule GlacierRelay.Command.Authority do
          true <-
            (inspection.name == "relay.inspect.outfit" and inspection.status == :applied) or
              {:error, :inspection_not_applied},
-         true <- (cmd.status == :applied and cmd.result != nil) or {:error, :command_not_applied},
-         {:ok, current} <-
-           Schema.observed_tuple(cmd.result.observed, "current")
-           |> ok_or(:current_tuple_unobserved),
+         true <- observable_later?(cmd) or {:error, :command_not_applied},
          {:ok, hero} <-
            Schema.observed_tuple(inspection.result.observed, "hero")
            |> ok_or(:hero_tuple_unobserved) do
@@ -1118,12 +1121,19 @@ defmodule GlacierRelay.Command.Authority do
         is_integer(inspection.result.frame) and is_integer(cmd.result.frame) and
           inspection.result.frame > cmd.result.frame
 
+      current = Schema.observed_tuple(cmd.result.observed, "current")
+      requested = Schema.observed_tuple(cmd.result.observed, "requested")
+      previous = Schema.observed_tuple(cmd.result.observed, "previous")
+
       conclusion =
         cond do
           not same_generation -> "other_generation"
           not later -> "not_a_later_frame"
-          hero == current -> "consistent"
-          true -> "inconsistent"
+          match?({:ok, ^hero}, current) -> "consistent"
+          match?({:ok, _}, current) -> "inconsistent"
+          match?({:ok, ^hero}, requested) -> "matches_requested"
+          match?({:ok, ^hero}, previous) -> "matches_previous"
+          true -> "other"
         end
 
       {:ok,
@@ -1137,6 +1147,15 @@ defmodule GlacierRelay.Command.Authority do
        })}
     end
   end
+
+  # An applied command, or a failed one whose setter was reported invoked (a possible effect).
+  defp observable_later?(%{result: nil}), do: false
+  defp observable_later?(%{status: :applied}), do: true
+
+  defp observable_later?(%{status: :failed, result: %{observed: observed}}) when is_map(observed),
+    do: match?({:ok, true}, Schema.observed_value(observed["setter_called"]))
+
+  defp observable_later?(_), do: false
 
   defp engine_consistent(cmd, base, envelope, opts) do
     with true <- is_map(envelope) or {:error, :envelope_required},

@@ -774,6 +774,70 @@ defmodule GlacierRelay.Command.EffectfulTest do
     assert later["conclusion"] == "consistent" and later["evidence_class"] =~ "not independent"
     assert Command.command(id).effect.read_back_later == "consistent"
 
+    # M5 C-2B correction: a failed command whose setter was invoked (a possible effect) accepts the
+    # later-frame observation; without a current tuple the hero is compared with the requested and
+    # the prior tuples; a refused command (never invoked) does not.
+    arm_eff(adapter)
+    assert {:ok, fid} = set_outfit(@current, @previous)
+    assert {:ok, fcmd} = FakeNative.recv(socket)
+
+    FakeNative.respond(socket, fcmd, adapter, "failed", %{
+      "observed" =>
+        FakeNative.apply_observed(@previous, nil, "uncertain",
+          generation: @gen,
+          frame: 20_400,
+          requested: @current
+        ),
+      "frame" => 20_400,
+      "mission_generation" => @gen,
+      "reason" => "fault inside the setter"
+    })
+
+    assert wait(fn -> Command.command(fid).status == :failed end)
+
+    assert {:ok, insp2} =
+             Command.inspect_outfit(%{"disguise_repository_id" => @target},
+               expected_generation: @gen
+             )
+
+    assert {:ok, icmd2} = FakeNative.recv(socket)
+
+    FakeNative.respond(socket, icmd2, adapter, "applied", %{
+      "observed" => hero,
+      "frame" => 20_500,
+      "mission_generation" => @gen
+    })
+
+    assert wait(fn -> Command.command(insp2).status == :applied end)
+
+    assert {:ok, after_fault} =
+             Command.observe(fid, "later_frame_read_back", "after the fault",
+               inspection_command_id: insp2
+             )
+
+    assert after_fault["conclusion"] == "matches_requested"
+    assert Command.command(fid).effect.read_back_later == "matches_requested"
+    assert {:error, {:not_applied, "failed"}} = Command.plan_reversal(fid)
+
+    arm_eff(adapter)
+    assert {:ok, rid} = set_outfit(@current, @previous)
+    assert {:ok, rcmd} = FakeNative.recv(socket)
+
+    FakeNative.respond(socket, rcmd, adapter, "precondition_failed", %{
+      "observed" =>
+        FakeNative.apply_observed(@previous, @previous, "none",
+          generation: @gen,
+          setter_called: false
+        ),
+      "frame" => 20_600,
+      "mission_generation" => @gen
+    })
+
+    assert wait(fn -> Command.command(rid).status == :precondition_failed end)
+
+    assert {:error, :command_not_applied} =
+             Command.observe(rid, "later_frame_read_back", "x", inspection_command_id: insp2)
+
     # the same inspection against a command applied on a later frame is not a later frame
     assert {:error, :inspection_unknown} =
              Command.observe(id, "later_frame_read_back", "x",
@@ -807,7 +871,7 @@ defmodule GlacierRelay.Command.EffectfulTest do
 
     assert :not_a_change in reasons
     assert length(Command.command(id).operator_observations) == 3
-    assert Command.status().counters.observations == 3
+    assert Command.status().counters.observations == 4
     FakeNative.close(socket)
   end
 

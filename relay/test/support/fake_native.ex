@@ -133,6 +133,7 @@ defmodule GlacierRelay.Test.FakeNative do
   """
   def apply_observed(previous, current, effect, opts \\ []) do
     generation = Keyword.get(opts, :generation, "gen")
+    requested = Keyword.get(opts, :requested, current)
 
     %{
       "mission_playing" => field("observed", true),
@@ -147,6 +148,9 @@ defmodule GlacierRelay.Test.FakeNative do
       "previous_outfit_id" => field("observed", previous["disguise_repository_id"]),
       "previous_charset" => field("observed", previous["charset"]),
       "previous_variation" => field("observed", previous["variation"]),
+      "requested_outfit_id" => tuple_field(requested, "disguise_repository_id"),
+      "requested_charset" => tuple_field(requested, "charset"),
+      "requested_variation" => tuple_field(requested, "variation"),
       "current_outfit_id" => tuple_field(current, "disguise_repository_id"),
       "current_charset" => tuple_field(current, "charset"),
       "current_variation" => tuple_field(current, "variation"),
