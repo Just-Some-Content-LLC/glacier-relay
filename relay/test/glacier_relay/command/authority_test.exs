@@ -517,8 +517,14 @@ defmodule GlacierRelay.Command.AuthorityTest do
            ]
 
     assert Map.delete(state, instance) == before_state
-    refute MissionSession.summary_text() =~ ~r/command|probe|armed/
-    refute MissionSession.report_text() =~ ~r/command|probe|armed/
+    # Only this instance's own section is inspected: other tests' instance ids may carry words
+    # such as "probe" (the fixture names), which has nothing to do with the command path.
+    for text <- [MissionSession.summary_text(), MissionSession.report_text()] do
+      [_, section | _] = String.split(text, "adapter #{instance}: ")
+      section = section |> String.split("\nadapter ") |> hd()
+      refute section =~ ~r/command|probe|armed/
+    end
+
     FakeNative.close(socket)
   end
 end
