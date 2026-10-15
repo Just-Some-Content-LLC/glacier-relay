@@ -38,6 +38,28 @@ defmodule GlacierRelay.Command do
   end
 
   @doc """
+  M6-B1: issues `relay.inspect.players` v1 (read-only, no effect, no parameters): the player
+  registry's four declared slots with per-field statuses, the words at its array offset
+  classified, and slot 0 beside M5's local-hero path. `opts` as `probe/1` (`:ttl_ms`). Inert
+  arming only. The read-back is in `command/1`'s result; a non-null reference is never a living
+  hero, and nothing in it is a stable player identity.
+  """
+  def inspect_players(opts \\ []) when is_list(opts),
+    do: guarded(fn -> Authority.issue("relay.inspect.players", 1, %{}, opts) end)
+
+  @doc """
+  M6-B1: issues `relay.inspect.entity` v1 (read-only, no effect). `params` may carry `"brick"`
+  and `"entity_id"`, each exactly 16 lowercase hex digits naming content (a brick's runtime
+  resource id, an authored entity id); absent, the native reader applies the historical
+  `hitmen.brick` / Agent48 defaults, whose expected answer without content is "candidate absent".
+  `opts` as `probe/1`. Inert arming only. The read-back carries the loaded-brick inventory, the
+  local hero's authored identity and stored transform (with its dirty flag), the round-trip
+  outcome and the candidate's resolution, every field with its own status.
+  """
+  def inspect_entity(params \\ %{}, opts \\ []) when is_map(params) and is_list(opts),
+    do: guarded(fn -> Authority.issue("relay.inspect.entity", 1, params, opts) end)
+
+  @doc """
   M5 C-2A: records the operator's telemetry attestation (the adapter identity read from the
   observer out of band, with `observed_at`, `basis`, `evidence_ref` and `max_age_ms`). Required,
   fresh, before effectful arming. Never derived from the command peer's own messages. Freshness

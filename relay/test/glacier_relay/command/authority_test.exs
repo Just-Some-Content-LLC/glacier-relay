@@ -123,7 +123,9 @@ defmodule GlacierRelay.Command.AuthorityTest do
              welcome["command_protocol_version"] == 1
 
     assert welcome["allowlist"] == [
+             %{"name" => "relay.inspect.entity", "version" => 1},
              %{"name" => "relay.inspect.outfit", "version" => 1},
+             %{"name" => "relay.inspect.players", "version" => 1},
              %{"name" => "relay.probe", "version" => 1}
            ]
 

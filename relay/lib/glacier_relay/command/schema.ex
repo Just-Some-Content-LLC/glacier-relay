@@ -49,6 +49,15 @@ defmodule GlacierRelay.Command.Schema do
   version-2 peer that advertised the capability while the authority's effectful configuration is
   on, and issuable only under the authority's effectful arming (`Command.Authority`). No real
   native build advertises it.
+
+  M6-B1 adds two inert, read-only entries (M6 design, `docs/design/M6_SECOND_HITMAN.md`):
+  `relay.inspect.players` v1 (no parameters: the player registry's four declared slots, the three
+  words at its array offset classified, slot 0 beside M5's local-hero path) and
+  `relay.inspect.entity` v1 (two optional 16-lowercase-hex-digit ids, `brick` and `entity_id`,
+  naming content — a brick's runtime resource id and an authored entity id — never an address:
+  the loaded-brick inventory, the local hero's authored identity and stored transform, the
+  blueprint-factory round trip and the candidate's resolution). Both are `:identified` trust,
+  `:none` effect, no reversal; their read-backs are field objects like the outfit inspection's.
   """
 
   @protocol_versions [1, 2]
@@ -56,6 +65,7 @@ defmodule GlacierRelay.Command.Schema do
   @max_observed_entries 48
   @nonce_bytes 16
   @uuid ~r/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+  @hex16 ~r/^[0-9a-f]{16}$/
   @hex32 ~r/^[0-9a-f]{32}$/
   @hex64 ~r/^[0-9a-f]{64}$/
 
@@ -99,6 +109,30 @@ defmodule GlacierRelay.Command.Schema do
       reversal: :none,
       doc:
         "M5 C-1: read-only, frame-local inspection of the hero's current outfit tuple, the candidate kit's resolution, the setter's availability, the edge-cached / at-receipt / fresh-registry generations, the Relay transition epoch and the hypothetical effectful precondition's verdict; every read-back field carries its own status; no engine write"
+    },
+    {"relay.inspect.players", 1} => %{
+      name: "relay.inspect.players",
+      version: 1,
+      effect: :none,
+      issuable: true,
+      trust: :identified,
+      params: %{},
+      preconditions: [],
+      reversal: :none,
+      doc:
+        "M6-B1: read-only, frame-local inspection of the player registry — availability, the three words at its array offset classified against the inline slots, the four declared slots' plain fields (player id, the local and connected flags as read, net-player / replica / entity-reference availability, the ZHitman5 interface resolution, the session id) and slot 0 beside M5's local-hero path; every read-back field carries its own status; no pointer, no address, no engine write"
+    },
+    {"relay.inspect.entity", 1} => %{
+      name: "relay.inspect.entity",
+      version: 1,
+      effect: :none,
+      issuable: true,
+      trust: :identified,
+      params: %{"brick" => {:optional, :hex16}, "entity_id" => {:optional, :hex16}},
+      preconditions: [],
+      reversal: :none,
+      doc:
+        "M6-B1: read-only, frame-local inspection of the loaded-brick inventory, the local hero's authored identity (entity id, flags, owning brick, character guid, initial outfit, invincibility) and stored transform with its dirty flag, the blueprint-factory round trip of the hero, and the candidate brick / authored entity (the historical hitmen.brick / Agent48 by default; absent without content); the two optional ids are 16 lowercase hex digits naming content, never an address; every read-back field carries its own status; no engine write"
     },
     {"player.outfit.set", 1} => %{
       name: "player.outfit.set",
@@ -162,9 +196,11 @@ defmodule GlacierRelay.Command.Schema do
   @doc "The allowlist entry for a name and version, or nil."
   def entry(name, version), do: Map.get(@allowlist, {name, version})
 
-  @doc "The inert issuable entries: the version-1 welcome's allowlist, unchanged since M5 C-1."
-  def issuable,
-    do: for({{n, v}, e} <- @allowlist, e.issuable == true, do: %{"name" => n, "version" => v})
+  @doc "The inert issuable entries (sorted by name and version): the version-1 welcome's allowlist."
+  def issuable do
+    for({{n, v}, e} <- @allowlist, e.issuable == true, do: %{"name" => n, "version" => v})
+    |> Enum.sort_by(&{&1["name"], &1["version"]})
+  end
 
   @doc """
   The entries a welcome may list for a peer: the inert ones always; an `:effectful` entry only
@@ -194,6 +230,9 @@ defmodule GlacierRelay.Command.Schema do
   end
 
   def uuid?(value), do: is_binary(value) and Regex.match?(@uuid, value)
+
+  @doc "Exactly 16 lowercase hex digits (a runtime resource id or an authored entity id as text)."
+  def hex16?(value), do: is_binary(value) and Regex.match?(@hex16, value)
 
   # -- attestation (version 2) --------------------------------------------------------------------
 
@@ -257,6 +296,9 @@ defmodule GlacierRelay.Command.Schema do
 
   defp check_param(:uuid, {:ok, value}),
     do: if(uuid?(value), do: {:ok, value}, else: {:error, :not_a_uuid})
+
+  defp check_param(:hex16, {:ok, value}),
+    do: if(hex16?(value), do: {:ok, value}, else: {:error, :not_16_lowercase_hex_digits})
 
   defp check_param({:integer, min, max}, {:ok, value}) do
     if is_integer(value) and value >= min and value <= max,
