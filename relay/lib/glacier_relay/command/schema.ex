@@ -58,6 +58,15 @@ defmodule GlacierRelay.Command.Schema do
   the loaded-brick inventory, the local hero's authored identity and stored transform, the
   blueprint-factory round trip and the candidate's resolution). Both are `:identified` trust,
   `:none` effect, no reversal; their read-backs are field objects like the outfit inspection's.
+
+  M6-D1a adds one more inert, read-only entry, `relay.inspect.candidate` v1 (the same two
+  optional ids as `relay.inspect.entity`; the spawn target is the native side's compiled
+  historical default, never a parameter): on one native frame, the candidate hero's and the local
+  hero's STORED spatial fields, member presence and `m_bActive` property, the spawn entity's
+  stored transform and authored properties, and registry membership by entity identity. Groups of
+  values that share one availability condition travel as one text field with a fixed grammar
+  (`Command.CandidateReadback` decodes it); every field object still carries its own status.
+  Presence is never initialization, simulation, placement, visibility or playability.
   """
 
   @protocol_versions [1, 2]
@@ -133,6 +142,18 @@ defmodule GlacierRelay.Command.Schema do
       reversal: :none,
       doc:
         "M6-B1: read-only, frame-local inspection of the loaded-brick inventory, the local hero's authored identity (entity id, flags, owning brick, character guid, initial outfit, invincibility) and stored transform with its dirty flag, the blueprint-factory round trip of the hero, and the candidate brick / authored entity (the historical hitmen.brick / Agent48 by default; absent without content); the two optional ids are 16 lowercase hex digits naming content, never an address; every read-back field carries its own status; no engine write"
+    },
+    {"relay.inspect.candidate", 1} => %{
+      name: "relay.inspect.candidate",
+      version: 1,
+      effect: :none,
+      issuable: true,
+      trust: :identified,
+      params: %{"brick" => {:optional, :hex16}, "entity_id" => {:optional, :hex16}},
+      preconditions: [],
+      reversal: :none,
+      doc:
+        "M6-D1a: read-only, frame-local inspection of the candidate hero (the historical hitmen.brick / Agent48 by default) beside the local hero as its control — the stored spatial fields (cached world translation with its dirty flag, parent-relative translation and rotation, parent entity id, transform-tree link presence, visibility bits), the presence of the hero's simulation members and controllers (null / present / interface-resolved; never initialization or simulation), the outfit tuple, the m_bActive property through the SDK's property mechanism, the spawn entity's class, stored transform and four authored properties, and the four registry slots classified by entity identity on the same frame; the two optional ids are 16 lowercase hex digits naming content, never an address; the spawn id is fixed natively; packed groups follow the documented grammar; every read-back field carries its own status; no engine write"
     },
     {"player.outfit.set", 1} => %{
       name: "player.outfit.set",

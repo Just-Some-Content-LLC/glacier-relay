@@ -193,6 +193,7 @@ defmodule GlacierRelay.Command.PlayersInspectionTest do
              not Schema.hex16?(nil)
 
     assert Enum.map(Schema.issuable(), & &1["name"]) == [
+             "relay.inspect.candidate",
              "relay.inspect.entity",
              "relay.inspect.outfit",
              "relay.inspect.players",
@@ -218,6 +219,7 @@ defmodule GlacierRelay.Command.PlayersInspectionTest do
       )
 
     assert Enum.map(welcome["allowlist"], & &1["name"]) == [
+             "relay.inspect.candidate",
              "relay.inspect.entity",
              "relay.inspect.outfit",
              "relay.inspect.players",

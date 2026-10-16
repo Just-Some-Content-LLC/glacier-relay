@@ -111,6 +111,7 @@ defmodule GlacierRelay.Command.InspectionTest do
     assert Schema.max_observed_entries() == 48
 
     assert Enum.sort(Enum.map(Schema.issuable(), & &1["name"])) == [
+             "relay.inspect.candidate",
              "relay.inspect.entity",
              "relay.inspect.outfit",
              "relay.inspect.players",
@@ -158,6 +159,7 @@ defmodule GlacierRelay.Command.InspectionTest do
       )
 
     assert Enum.sort(Enum.map(welcome["allowlist"], & &1["name"])) == [
+             "relay.inspect.candidate",
              "relay.inspect.entity",
              "relay.inspect.outfit",
              "relay.inspect.players",

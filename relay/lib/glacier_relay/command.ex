@@ -60,6 +60,19 @@ defmodule GlacierRelay.Command do
     do: guarded(fn -> Authority.issue("relay.inspect.entity", 1, params, opts) end)
 
   @doc """
+  M6-D1a: issues `relay.inspect.candidate` v1 (read-only, no effect). `params` as
+  `inspect_entity/2` (`"brick"`, `"entity_id"`, 16 lowercase hex digits each; the spawn target is
+  the native side's compiled historical default and is not a parameter). `opts` as `probe/1`.
+  Inert arming only. The read-back carries, on one native frame, the candidate hero's and the
+  local hero's stored spatial fields, member presence and `m_bActive` property, the spawn
+  entity's stored transform and properties, and registry membership by entity identity, every
+  field with its own status; the packed groups decode with `Command.CandidateReadback`. Nothing
+  in it is a claim of initialization, simulation, placement, visibility or playability.
+  """
+  def inspect_candidate(params \\ %{}, opts \\ []) when is_map(params) and is_list(opts),
+    do: guarded(fn -> Authority.issue("relay.inspect.candidate", 1, params, opts) end)
+
+  @doc """
   M5 C-2A: records the operator's telemetry attestation (the adapter identity read from the
   observer out of band, with `observed_at`, `basis`, `evidence_ref` and `max_age_ms`). Required,
   fresh, before effectful arming. Never derived from the command peer's own messages. Freshness
