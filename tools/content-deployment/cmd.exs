@@ -20,6 +20,11 @@
 #   FINDING, never a stop; "empty" keeps the M6-B2 stop semantics); entity [brick|-] [entity_id|-] [ttl|-] [absent|present] — the
 #   candidate expected present in Paris after the content deployment (its lookup facts become EVIDENCE lines; an unexpected
 #   presence under "absent" stays the M6-B2 stop). No set, attest, effectful-arm or reverse action exists.
+#   M6-D1a: candidate [brick|-] [entity_id|-] [ttl|-] [absent|present]   relay.inspect.candidate/1 (read-only; the candidate's and
+#   the local hero's STORED spatial fields, member PRESENCE and m_bActive property, the spawn entity's stored transform and
+#   authored properties, and registry membership by entity identity, all on one native frame; the packed groups are decoded by
+#   GlacierRelay.Command.CandidateReadback and every group is logged with its status; presence is never simulation, placement,
+#   visibility or playability; "present" = the candidate expected resolved, "absent" = the M6-B2 stop on an unexpected presence).
 # the relay node name: GLACIER_RELAY_NODE, or relay@<this host> (the node is started with --sname relay)
 node = String.to_atom(System.get_env("GLACIER_RELAY_NODE") || "relay@#{elem(:inet.gethostname(), 1)}")
 true = :net_kernel.connect_node(node)
@@ -137,6 +142,23 @@ entity_line = fn c ->
   "entity: bricks #{fld.(c, "brick_count")} scanned #{fld.(c, "bricks_scanned")} id fields #{Enum.count(obs.(c), fn {k, _} -> String.starts_with?(k, "brick_ids_") end)} truncated #{fld.(c, "bricks_truncated")} | hero resolved #{fld.(c, "hero_resolved")} id #{fld.(c, "hero_entity_id")} flags #{fld.(c, "hero_entity_flags")} activated #{fld.(c, "hero_activated")} predeleted #{fld.(c, "hero_predeleted")} owning_brick #{fld.(c, "hero_owning_brick")} char #{fld.(c, "hero_character_id")} initial_outfit #{fld.(c, "hero_initial_outfit_id")} invincible #{fld.(c, "hero_invincible")} x #{fld.(c, "hero_x")} y #{fld.(c, "hero_y")} z #{fld.(c, "hero_z")} dirty #{fld.(c, "hero_transform_dirty")} room #{fld.(c, "hero_room_behaviour")} | rt #{fld.(c, "rt_outcome")} owner #{fld.(c, "rt_owner_found")} template #{fld.(c, "rt_factory_template")} count #{fld.(c, "rt_subentity_count")} index #{fld.(c, "rt_index")} check #{fld.(c, "rt_index_check")} resolved #{fld.(c, "rt_resolved")} same #{fld.(c, "rt_same_entity")} | cand brick #{fld.(c, "cand_brick")} entity #{fld.(c, "cand_entity_id")} present #{fld.(c, "cand_brick_present")} count #{fld.(c, "cand_subentity_count")} index #{fld.(c, "cand_index")} check #{fld.(c, "cand_index_check")} resolved #{fld.(c, "cand_resolved")} hitman5 #{fld.(c, "cand_hitman5")} distinct #{fld.(c, "cand_distinct_from_local")} | reads_on_frame #{fld.(c, "reads_on_frame")} reasons_dropped #{inspect(mk.(c, "reasons_dropped"))} reduced #{inspect(mk.(c, "observed_reduced"))} fields #{nfields.(c)} frame #{inspect(frame.(c))} generation #{inspect(gen.(c))} reason #{inspect(reason.(c))}"
 end
 
+# M6-D1a: the candidate read-back decoded by the grammar (GlacierRelay.Command.CandidateReadback); every group with its
+# status, the typed value when observed, and the reason when the native side gave one.
+cr = fn c, k, kind ->
+  f = obs.(c)[k]
+  case GlacierRelay.Command.CandidateReadback.field(f, kind) do
+    {:ok, v} -> "observed=" <> inspect(v, limit: :infinity)
+    {:invalid, t} -> "INVALID-GRAMMAR=" <> inspect(t)
+    {:unobserved, s} -> s <> (if is_map(f) and f["reason"], do: "(" <> f["reason"] <> ")", else: "")
+    :missing -> "missing"
+  end
+end
+
+candidate_line = fn c ->
+  d = GlacierRelay.Command.CandidateReadback.decode_readback(obs.(c))
+  "candidate: generation_fresh #{fld.(c, "generation_fresh")} | hero id #{fld.(c, "hero_entity_id")} flags #{fld.(c, "hero_flags")} (#{inspect(GlacierRelay.Command.CandidateReadback.entity_flags(ov.(c, "hero_flags") || 0))}) | bricks #{fld.(c, "brick_count")} scanned #{fld.(c, "bricks_scanned")} targets #{cr.(c, "targets", :targets)} | cand present #{fld.(c, "cand_brick_present")} count #{fld.(c, "cand_subentity_count")} index #{fld.(c, "cand_index")} check #{fld.(c, "cand_index_check")} resolved #{fld.(c, "cand_resolved")} hitman5 #{fld.(c, "cand_hitman5")} flags #{fld.(c, "cand_flags")} (#{inspect(GlacierRelay.Command.CandidateReadback.entity_flags(ov.(c, "cand_flags") || 0))}) id_match #{fld.(c, "cand_id_match")} distinct #{fld.(c, "cand_distinct")} owner #{fld.(c, "cand_brick_owner")} | registry_slots #{cr.(c, "registry_slots", :slots)} | cand world #{cr.(c, "cand_world", :vec3)} local #{cr.(c, "cand_local", :local)} parent #{cr.(c, "cand_parent", :parent)} spatial_flags #{cr.(c, "cand_spatial_flags", :spatial_flags)} members #{cr.(c, "cand_members", :members)} controllers #{cr.(c, "cand_controllers", :controllers)} outfit #{cr.(c, "cand_outfit", :outfit)} active #{fld.(c, "cand_active")} | spawn index #{fld.(c, "spawn_index")} check #{fld.(c, "spawn_index_check")} resolved #{fld.(c, "spawn_resolved")} class #{fld.(c, "spawn_class")} world #{cr.(c, "spawn_world", :vec3)} dirty #{fld.(c, "spawn_dirty")} player_id #{fld.(c, "spawn_player_id")} select #{cr.(c, "spawn_select", :select)} hitman_ref #{fld.(c, "spawn_hitman_ref")} ref_is_cand #{fld.(c, "spawn_ref_is_cand")} | hero world #{cr.(c, "hero_world", :vec3)} local #{cr.(c, "hero_local", :local)} parent #{cr.(c, "hero_parent", :parent)} spatial_flags #{cr.(c, "hero_spatial_flags", :spatial_flags)} members #{cr.(c, "hero_members", :members)} controllers #{cr.(c, "hero_controllers", :controllers)} outfit #{cr.(c, "hero_outfit", :outfit)} active #{fld.(c, "hero_active")} | mission_playing #{fld.(c, "mission_playing")} scene_type #{fld.(c, "scene_type")} receipt_to_frame_ms #{fld.(c, "receipt_to_frame_ms")} reads_on_frame #{fld.(c, "reads_on_frame")} reduced #{inspect(d.reduced)} fields #{nfields.(c)} frame #{inspect(frame.(c))} generation #{inspect(gen.(c))} reason #{inspect(reason.(c))}"
+end
+
 outfit_line = fn c ->
   "outfit: hero #{fld.(c, "hero_outfit_id")}/#{fld.(c, "hero_charset")}/#{fld.(c, "hero_variation")} suit #{fld.(c, "hero_suit")} heroa_valid #{fld.(c, "hero_heroa_valid")}; candidate #{fld.(c, "candidate_id")} found #{fld.(c, "candidate_found")} kits_scanned #{fld.(c, "kits_scanned")}; mission_playing #{fld.(c, "mission_playing")} prev_frame_playing #{fld.(c, "prev_frame_playing")} scene #{fld.(c, "scene_type")} same_as_rise #{fld.(c, "scene_same_as_rise")} stage #{fld.(c, "loading_stage")}; generations expected #{fld.(c, "generation_expected")} receipt #{fld.(c, "generation_at_receipt")} cached #{fld.(c, "generation_cached")} fresh #{fld.(c, "generation_fresh")}; contract_started_seen #{fld.(c, "contract_started_seen")} contract_ended_seen #{fld.(c, "contract_ended_seen")}; epoch #{fld.(c, "relay_transition_epoch")}/#{fld.(c, "epoch_at_receipt")}; rise_age_ms #{fld.(c, "rise_age_ms")} frames #{fld.(c, "rise_age_frames")}; set_outfit_available #{fld.(c, "set_outfit_available")}; precondition_ok #{fld.(c, "precondition_ok")} reasons #{fld.(c, "precondition_reasons")}; reads_on_frame #{fld.(c, "reads_on_frame")} fields #{nfields.(c)} frame #{inspect(frame.(c))} generation #{inspect(gen.(c))}"
 end
@@ -160,7 +182,7 @@ case action do
     log.("linkcheck: #{status_line.(s)}")
     names = advertised_names.(s)
     ev.("link.identified-v2-token-verified", s.link != nil and s.trust.peer == :identified and s.link.protocol_version == 2 and s.trust.token_verified == true, "peer #{inspect(s.trust.peer)} protocol_version #{inspect(s.link && s.link.protocol_version)} token_verified #{inspect(s.trust.token_verified)} generation #{inspect(s.link && s.link.generation)} adapter #{inspect(s.link && s.link.adapter_instance_id)}")
-    ev.("link.four-inert-entries-advertised", names == ["relay.inspect.entity/1", "relay.inspect.outfit/1", "relay.inspect.players/1", "relay.probe/1"], inspect(names))
+    ev.("link.five-inert-entries-advertised", names == ["relay.inspect.candidate/1", "relay.inspect.entity/1", "relay.inspect.outfit/1", "relay.inspect.players/1", "relay.probe/1"], inspect(names) <> " (M6-D1a: relay.inspect.candidate/1 joins the four M6-B2 entries)")
     ev.("link.effectful-entry-absent", "player.outfit.set/2" not in names and "player.outfit.set/2" not in ((s.link && s.link.capabilities) || []), "advertised #{inspect(names)} peer capabilities #{inspect(s.link && s.link.capabilities)}")
     ev.("link.effectful-authority-disabled", s.effectful.enabled == false and s.trust.effectful_armed == false and s.effectful.armed == nil, inspect(s.effectful))
     ev.("link.never-authenticated", s.trust.authenticated == false, inspect(s.trust))
@@ -260,6 +282,61 @@ case action do
 
       other ->
         log.("entity refused locally: #{inspect(other)} (nothing transmitted)")
+    end
+
+    finish.()
+
+  "candidate" ->
+    [brick, eid, ttl_arg, expect | _] = rest ++ ["-", "-", "-", "present"]
+    params = if brick == "-", do: %{}, else: %{"brick" => brick}
+    params = if eid == "-", do: params, else: Map.put(params, "entity_id", eid)
+    opts = ttl_opts.(ttl_arg, [])
+    before = call.(cmd, :status, [])
+    log.("candidate params #{inspect(params)} opts #{inspect(opts)} expect #{expect}: before: #{status_line.(before)}")
+
+    case call.(cmd, :inspect_candidate, [params, opts]) do
+      {:ok, id} ->
+        log.("candidate issued #{id}")
+        File.write!(Path.join(evid, "#{label}-command-id.txt"), id <> "\n")
+        c = wait_terminal.(id, 15_000)
+        dump_record.(c)
+        s = call.(cmd, :status, [])
+        common_evidence.("candidate", c, s)
+        d = GlacierRelay.Command.CandidateReadback.decode_readback(obs.(c))
+        okv = fn t -> match?({:ok, _}, t) end
+        val = fn t -> (match?({:ok, _}, t) && elem(t, 1)) || nil end
+        ev.("candidate.scan-complete", ov.(c, "brick_count") != nil and ov.(c, "bricks_scanned") == ov.(c, "brick_count"), "brick_count #{fld.(c, "brick_count")} bricks_scanned #{fld.(c, "bricks_scanned")} (an incomplete scan is a FINDING: absence then not established)")
+        ev.("candidate.targets-echoed", okv.(d.targets) and (brick == "-" or val.(d.targets).brick == brick) and (eid == "-" or val.(d.targets).entity == eid), "targets #{cr.(c, "targets", :targets)} (the spawn target is the native side's compiled default)")
+        ev.("candidate.hero-control-read", okv.(d.hero_entity_id) and okv.(d.hero.world) and okv.(d.hero.members) and okv.(d.hero.spatial_flags), "the local hero as the control: id #{fld.(c, "hero_entity_id")} flags #{fld.(c, "hero_flags")} world #{cr.(c, "hero_world", :vec3)} members #{cr.(c, "hero_members", :members)} controllers #{cr.(c, "hero_controllers", :controllers)} active #{fld.(c, "hero_active")} (a finding if a group is unavailable)")
+        invalid_groups = (for {k, v} <- Map.take(d, [:targets, :registry_slots]), match?({:invalid, _}, v), do: k) ++ (for {who, h} <- [hero: d.hero, candidate: d.candidate, spawn: d.spawn], {k, v} <- h, match?({:invalid, _}, v), do: "#{who}.#{k}")
+        ev.("candidate.no-invalid-grammar", invalid_groups == [], "STOP-AND-RECORD if NOT (a packed group that does not match the documented grammar — a native encoding fault): invalid #{inspect(invalid_groups)}; targets #{inspect(d.targets)} registry_slots #{inspect(d.registry_slots)}")
+
+        if expect == "present" do
+          ev.("candidate.present-as-expected", ov.(c, "cand_brick_present") == true, "FINDING if NOT (the content not loaded, or absence not established): present #{fld.(c, "cand_brick_present")} brick_count #{fld.(c, "brick_count")} scanned #{fld.(c, "bricks_scanned")}")
+          ev.("candidate.index-in-range", ov.(c, "cand_index_check") == "in_range", "STOP-AND-RECORD if out_of_range / count_invalid (an inconsistent factory answer); a FINDING if negative (authored id not represented): check #{fld.(c, "cand_index_check")} count #{fld.(c, "cand_subentity_count")} index #{fld.(c, "cand_index")}")
+          ev.("candidate.resolved-with-hero-interface", ov.(c, "cand_resolved") == true and ov.(c, "cand_hitman5") == true, "FINDING if NOT: resolved #{fld.(c, "cand_resolved")} hitman5 #{fld.(c, "cand_hitman5")}")
+          ev.("candidate.authored-id-matches", ov.(c, "cand_id_match") == true, "STOP-AND-RECORD if NOT with the candidate resolved (the resolved entity's type does not carry the queried authored id): id_match #{fld.(c, "cand_id_match")}")
+          ev.("candidate.distinct-same-frame", ov.(c, "cand_distinct") == true, "STOP-AND-RECORD if NOT with the candidate resolved (the lookup returned the local hero): distinct #{fld.(c, "cand_distinct")} owner #{fld.(c, "cand_brick_owner")} hero id #{fld.(c, "hero_entity_id")} (pointer inequality on frame #{inspect(frame.(c))}; identity is decided by xcheck from the authored elements)")
+          ev.("candidate.flags-observed", st.(c, "cand_flags") == "observed" and not (GlacierRelay.Command.CandidateReadback.entity_flags(ov.(c, "cand_flags") || 0) |> then(&(is_map(&1) and &1.predeleted))), "cand_flags #{fld.(c, "cand_flags")} #{inspect(GlacierRelay.Command.CandidateReadback.entity_flags(ov.(c, "cand_flags") || 0))} (predeleted set = a FINDING; activated clear is recorded — not a hero gameplay state, M6-D question A)")
+          ev.("candidate.spatial-observed", okv.(d.candidate.world) and okv.(d.candidate.local) and okv.(d.candidate.spatial_flags), "STORED fields only, never a getter: world #{cr.(c, "cand_world", :vec3)} local #{cr.(c, "cand_local", :local)} parent #{cr.(c, "cand_parent", :parent)} flags #{cr.(c, "cand_spatial_flags", :spatial_flags)}" <> (if okv.(d.candidate.spatial_flags) and val.(d.candidate.spatial_flags).dirty, do: " — the stored world translation is DIRTY: potentially stale", else: "") <> " (no rendered position is derived from a cached transform)")
+          ev.("candidate.members-recorded", okv.(d.candidate.members) and okv.(d.candidate.controllers), "PRESENCE only (null / present / interface-resolved), never initialization or simulation: members #{cr.(c, "cand_members", :members)} controllers #{cr.(c, "cand_controllers", :controllers)} outfit #{cr.(c, "cand_outfit", :outfit)} (a group unavailable with the interface resolved = a FINDING)")
+          ev.("candidate.active-recorded", st.(c, "cand_active") in ["observed", "unavailable", "unsupported"], "m_bActive through the property mechanism, recorded, NOT a proven spawn state: cand_active #{fld.(c, "cand_active")} hero_active #{fld.(c, "hero_active")}")
+          ev.("candidate.spawn-resolved", ov.(c, "spawn_resolved") == true and ov.(c, "spawn_index_check") == "in_range", "FINDING if NOT (the authored spawn not represented in the brick's factory): index #{fld.(c, "spawn_index")} check #{fld.(c, "spawn_index_check")} resolved #{fld.(c, "spawn_resolved")} class #{fld.(c, "spawn_class")}")
+          ev.("candidate.spawn-properties-recorded", true, "the spawn's STORED transform and authored properties (an authored relationship, never evidence the spawn system ran): class #{fld.(c, "spawn_class")} world #{cr.(c, "spawn_world", :vec3)} dirty #{fld.(c, "spawn_dirty")} player_id #{fld.(c, "spawn_player_id")} select #{cr.(c, "spawn_select", :select)} hitman_ref #{fld.(c, "spawn_hitman_ref")} ref_is_cand #{fld.(c, "spawn_ref_is_cand")}")
+          ev.("candidate.spawn-references-candidate", ov.(c, "spawn_ref_is_cand") == true, "the authored m_rHitmanCharacter resolves to the candidate on this frame (a FINDING if not: the authored relationship not instantiated): ref_is_cand #{fld.(c, "spawn_ref_is_cand")} hitman_ref #{fld.(c, "spawn_hitman_ref")}")
+          slots = val.(d.registry_slots)
+          in_slot = is_list(slots) and Enum.any?(slots, &(&1.match == :candidate))
+          ev.("candidate.registry-identity-recorded", is_list(slots), "membership by ENTITY IDENTITY on this frame (never by the spawn's player id #{fld.(c, "spawn_player_id")}): #{cr.(c, "registry_slots", :slots)}" <> (cond do not is_list(slots) -> " — unavailable: the verdict is INCONCLUSIVE"; in_slot -> " — the candidate IS in a registry slot: a FINDING (recorded, not a stop)"; Enum.any?(slots, &(&1.match == :inconclusive)) -> " — a populated slot could not be compared: INCONCLUSIVE for that slot"; true -> " — the candidate is in no slot on this frame" end))
+        else
+          ev.("candidate.not-present", ov.(c, "cand_brick_present") != true, "STOP CONDITION if NOT (the candidate brick present where absence is expected): present #{fld.(c, "cand_brick_present")}" <> (cond do ov.(c, "cand_brick_present") == false -> " — absent on a complete scan"; st.(c, "cand_brick_present") == "unavailable" -> " — absence NOT established (inconclusive scan)"; true -> "" end))
+          ev.("candidate.lookup-not-performed", st.(c, "cand_index") != "observed" and st.(c, "cand_resolved") != "observed" and st.(c, "spawn_resolved") != "observed", "STOP CONDITION if NOT: cand_index #{fld.(c, "cand_index")} cand_resolved #{fld.(c, "cand_resolved")} spawn_resolved #{fld.(c, "spawn_resolved")}")
+          ev.("candidate.registry-slots-without-candidate", okv.(d.registry_slots) and not Enum.any?(val.(d.registry_slots), &(&1.match == :candidate)), "registry_slots #{cr.(c, "registry_slots", :slots)} (no slot can be the candidate when it is absent; a populated non-local slot is a FINDING)")
+        end
+
+        log.("candidate summary #{short.(id)}: " <> candidate_line.(c))
+
+      other ->
+        log.("candidate refused locally: #{inspect(other)} (nothing transmitted)")
     end
 
     finish.()

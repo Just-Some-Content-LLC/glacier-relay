@@ -5,6 +5,11 @@ operator-actions.log under the given label and writes <label>-xcheck.txt.
 
   xcheck.py <evidence-dir> <label> --players P --entity E [--outfit O] [--prev-players PP] [--prev-entity PE]
             [--expected-gen GEN] [--session-expect same|different] [--identity-expect same]
+            [--candidate C] [--prev-candidate PC]   (M6-D1a: the relay.inspect.candidate result beside the entity and players
+            inspections of the same phase: the same adapter and link, frames in order, the candidate's presence, lookup facts,
+            flags and stored translation equal to the entity inspection's on adjacent frames, the registry slots by identity
+            consistent with the players inspection's slot presence, the spawn facts recorded; against an earlier candidate
+            result: the identity elements the same, the members / active / translations recorded)
 
 Comparisons: the same adapter instance across the results; frames advancing in issue order; the players
 inspection's slot-0 hero kit id against the M5 outfit inspection's hero_outfit_id (adjacent stable frames);
@@ -23,6 +28,7 @@ ap.add_argument("--players", required=True); ap.add_argument("--entity", require
 ap.add_argument("--prev-players"); ap.add_argument("--prev-entity"); ap.add_argument("--expected-gen")
 ap.add_argument("--session-expect", choices=["same", "different"]); ap.add_argument("--identity-expect", choices=["same"])
 ap.add_argument("--candidate-expect", choices=["present", "absent"], default="absent"); ap.add_argument("--slots-expect", choices=["empty", "recorded"], default="recorded")
+ap.add_argument("--candidate"); ap.add_argument("--prev-candidate")
 a = ap.parse_args()
 
 out_lines = []
@@ -120,6 +126,78 @@ if a.prev_players:
         ev("xcheck.slot0-session-vs-previous", True, f"slot0_session {fld(PP, 'slot0_session')} -> {fld(P, 'slot0_session')}; result generation {PPR.get('mission_generation')!r} -> {PR.get('mission_generation')!r} (recorded)")
     ev("xcheck.registry-words-vs-previous", v(PP, "registry_words") == v(P, "registry_words"), f"{fld(PP, 'registry_words')} -> {fld(P, 'registry_words')}")
     ev("xcheck.slot0-kit-vs-previous", True, f"slot0_hero_kit_id {fld(PP, 'slot0_hero_kit_id')} -> {fld(P, 'slot0_hero_kit_id')}; registry outfit {fld(PP, 'slot0_outfit_id')} -> {fld(P, 'slot0_outfit_id')} (recorded)")
+
+# ---- M6-D1a: the candidate inspection beside the entity and players inspections -------------------------------------------
+def vec3(o, k):
+    t = v(o, k)
+    try:
+        x, y, z = (float(p) for p in t.split(","))
+        return (x, y, z)
+    except (AttributeError, ValueError):
+        return None
+def slots(o):
+    t = v(o, "registry_slots")
+    if not isinstance(t, str): return None
+    out = []
+    for i, part in enumerate(t.split(",")):
+        try:
+            idx, rest = part.split(":")
+        except ValueError:
+            return None
+        if idx != str(i): return None
+        match, hero = (rest[:-len("-nohero")], False) if rest.endswith("-nohero") else (rest, True)
+        if match not in ("empty", "local", "candidate", "other", "inconclusive"): return None
+        out.append((match, hero))
+    return out if len(out) == 4 else None
+def near(p, q, tol=1e-4):
+    return p is not None and q is not None and all(abs(x - y) <= tol for x, y in zip(p, q))
+
+if a.candidate:
+    C, CR = load(a.candidate)
+    log(f"xcheck candidate {a.candidate} (frame {CR.get('frame')}, gen {CR.get('mission_generation')!r})")
+    ev("xcheck.candidate-same-adapter-and-link", CR.get("adapter_instance_id") in adapters and len(adapters) == 1 and CR.get("link_generation") in links and len(links) == 1, f"adapter {CR.get('adapter_instance_id')} link {CR.get('link_generation')} vs players/entity {sorted(x or 'none' for x in adapters)} / {sorted(str(x) for x in links)}")
+    cframes = [PR.get("frame"), ER.get("frame"), CR.get("frame")]
+    ev("xcheck.candidate-frame-after-entity", all(isinstance(x, int) for x in cframes) and CR["frame"] > ER["frame"], f"frames players {PR.get('frame')} entity {ER.get('frame')} candidate {CR.get('frame')} (issue order)")
+    ev("xcheck.candidate-generation-vs-players", CR.get("mission_generation") == PR.get("mission_generation") and ((v(C, "generation_fresh") == CR.get("mission_generation")) or (CR.get("mission_generation") is None and s(C, "generation_fresh") != "observed")), f"candidate result generation {CR.get('mission_generation')!r} fresh {fld(C, 'generation_fresh')} vs players {PR.get('mission_generation')!r} (at the menu a persisting registry id is the C-1 finding)")
+    ev("xcheck.candidate-hero-identity-vs-entity", v(C, "hero_entity_id") == v(E, "hero_entity_id") and v(C, "hero_flags") == v(E, "hero_entity_flags"), f"candidate hero_entity_id {fld(C, 'hero_entity_id')} flags {fld(C, 'hero_flags')} vs entity hero_entity_id {fld(E, 'hero_entity_id')} flags {fld(E, 'hero_entity_flags')} (the same local hero on adjacent frames)")
+    ev("xcheck.candidate-presence-vs-entity", v(C, "cand_brick_present") == v(E, "cand_brick_present") and s(C, "cand_brick_present") == s(E, "cand_brick_present") and v(C, "brick_count") == v(E, "brick_count") and v(C, "bricks_scanned") == v(E, "bricks_scanned"), f"candidate present {fld(C, 'cand_brick_present')} bricks {fld(C, 'brick_count')}/{fld(C, 'bricks_scanned')} vs entity present {fld(E, 'cand_brick_present')} bricks {fld(E, 'brick_count')}/{fld(E, 'bricks_scanned')}")
+    tg = v(C, "targets") or ""
+    ev("xcheck.candidate-targets-vs-entity", isinstance(tg, str) and tg.split(",")[:2] == [v(E, "cand_brick"), v(E, "cand_entity_id")], f"targets {fld(C, 'targets')} vs entity cand_brick {fld(E, 'cand_brick')} cand_entity_id {fld(E, 'cand_entity_id')}")
+    if a.candidate_expect == "present":
+        ev("xcheck.candidate-lookup-vs-entity", v(C, "cand_index") == v(E, "cand_index") and v(C, "cand_subentity_count") == v(E, "cand_subentity_count") and v(C, "cand_index_check") == v(E, "cand_index_check") == "in_range" and v(C, "cand_resolved") is True and v(E, "cand_resolved") is True and v(C, "cand_hitman5") == v(E, "cand_hitman5"), f"candidate count {fld(C, 'cand_subentity_count')} index {fld(C, 'cand_index')} check {fld(C, 'cand_index_check')} resolved {fld(C, 'cand_resolved')} hitman5 {fld(C, 'cand_hitman5')} vs entity count {fld(E, 'cand_subentity_count')} index {fld(E, 'cand_index')} check {fld(E, 'cand_index_check')} resolved {fld(E, 'cand_resolved')} hitman5 {fld(E, 'cand_hitman5')}")
+        ev("xcheck.candidate-flags-vs-entity", v(C, "cand_flags") == v(E, "cand_entity_flags"), f"candidate cand_flags {fld(C, 'cand_flags')} vs entity cand_entity_flags {fld(E, 'cand_entity_flags')} (equal on adjacent stable frames; a change is a finding)")
+        ev("xcheck.candidate-identity-checks", v(C, "cand_id_match") is True and v(C, "cand_distinct") is True and v(E, "cand_distinct_from_local") is True, f"STOP-AND-RECORD if NOT: id_match {fld(C, 'cand_id_match')} distinct {fld(C, 'cand_distinct')} (entity inspection distinct {fld(E, 'cand_distinct_from_local')}) owner {fld(C, 'cand_brick_owner')} vs cand_brick {fld(E, 'cand_brick')}")
+        cw, ew = vec3(C, "cand_world"), (v(E, "cand_x"), v(E, "cand_y"), v(E, "cand_z"))
+        ew = ew if all(isinstance(x, (int, float)) for x in ew) else None
+        ev("xcheck.candidate-stored-translation-vs-entity", near(cw, ew, 1e-3), f"candidate cand_world {fld(C, 'cand_world')} vs entity ({fld(E, 'cand_x')}, {fld(E, 'cand_y')}, {fld(E, 'cand_z')}) (the same STORED cache on adjacent frames, 7 significant digits vs doubles; a difference beyond 1e-3 is a FINDING — recorded, never corrected)")
+        hw, hew = vec3(C, "hero_world"), (v(E, "hero_x"), v(E, "hero_y"), v(E, "hero_z"))
+        hew = hew if all(isinstance(x, (int, float)) for x in hew) else None
+        ev("xcheck.hero-stored-translation-vs-entity", True, f"hero_world {fld(C, 'hero_world')} vs entity ({fld(E, 'hero_x')}, {fld(E, 'hero_y')}, {fld(E, 'hero_z')}): {'within 1e-3' if near(hw, hew, 1e-3) else 'DIFFERENT (recorded: the controlled hero may have moved between the frames)'}")
+        sp = v(C, "spawn_player_id")
+        ev("xcheck.candidate-spawn-recorded", v(C, "spawn_resolved") is True and v(C, "spawn_index_check") == "in_range", f"spawn index {fld(C, 'spawn_index')} check {fld(C, 'spawn_index_check')} class {fld(C, 'spawn_class')} world {fld(C, 'spawn_world')} dirty {fld(C, 'spawn_dirty')} player_id {fld(C, 'spawn_player_id')} select {fld(C, 'spawn_select')} hitman_ref {fld(C, 'spawn_hitman_ref')} ref_is_cand {fld(C, 'spawn_ref_is_cand')} (an authored relationship; never evidence the spawn system ran; player id {sp!r} is NOT registry membership)")
+    else:
+        ev("xcheck.candidate-absent-vs-entity", v(C, "cand_brick_present") is not True and v(E, "cand_brick_present") is not True and s(C, "cand_index") != "observed", f"candidate present {fld(C, 'cand_brick_present')} index {fld(C, 'cand_index')}; entity present {fld(E, 'cand_brick_present')}")
+    sl = slots(C)
+    pres = [v(P, f"slot{i}_entity") for i in range(4)]
+    consistent = sl is not None and all((sl[i][0] == "empty") == (pres[i] is False) for i in range(4) if pres[i] is not None)
+    ev("xcheck.registry-slots-vs-players-presence", consistent, f"registry_slots {fld(C, 'registry_slots')} vs players slot entity presence {pres} (empty <=> no entity reference; identity only the candidate inspection can give)")
+    ev("xcheck.registry-slot0-local", sl is not None and sl[0][0] == "local" and sl[0][1], f"slot 0 {sl[0] if sl else None} (the local hero; STOP if NOT with a hero in slot 0)")
+    in_slot = sl is not None and any(m == "candidate" for m, _ in sl)
+    inconclusive = sl is not None and any(m == "inconclusive" for m, _ in sl)
+    ev("xcheck.registry-membership-by-identity", sl is not None, f"{fld(C, 'registry_slots')}: " + ("unavailable — INCONCLUSIVE" if sl is None else ("the candidate IS in a slot — a FINDING (recorded, not a stop)" if in_slot else ("a populated slot not comparable — INCONCLUSIVE for it" if inconclusive else "the candidate is in NO registry slot on this frame (by entity identity, not by the spawn's player id)"))))
+    if a.prev_candidate:
+        PC, PCR = load(a.prev_candidate)
+        ident = ["targets", "hero_entity_id", "cand_brick_present", "cand_index", "cand_subentity_count", "cand_index_check", "cand_resolved", "cand_hitman5", "cand_id_match", "cand_distinct", "cand_brick_owner", "spawn_index", "spawn_class", "spawn_player_id", "spawn_select", "spawn_hitman_ref", "spawn_ref_is_cand"]
+        same = {k: (v(PC, k) == v(C, k) and s(PC, k) == s(C, k)) for k in ident}
+        ev("xcheck.candidate-identity-vs-previous", all(same.values()), f"vs {a.prev_candidate} (frame {PCR.get('frame')}, gen {PCR.get('mission_generation')!r}): " + "; ".join(f"{k} {'same' if same[k] else 'DIFFERENT'} ({fld(PC, k)} -> {fld(C, k)})" for k in ident) + (" [the same authored identity under a NEW generation; never object survival]" if a.session_expect == "different" else " [identity within the attempt]"))
+        rec = ["cand_flags", "cand_spatial_flags", "cand_members", "cand_controllers", "cand_outfit", "cand_active", "cand_parent", "hero_members", "hero_active", "registry_slots", "spawn_dirty"]
+        changed = [k for k in rec if not (v(PC, k) == v(C, k) and s(PC, k) == s(C, k))]
+        ev("xcheck.candidate-state-vs-previous", True, ("unchanged" if not changed else "CHANGED (recorded, not judged): " + ", ".join(f"{k} {fld(PC, k)} -> {fld(C, k)}" for k in changed)) + f" — groups compared: {', '.join(rec)}")
+        for who in ("cand", "hero", "spawn"):
+            p, q = vec3(PC, f"{who}_world"), vec3(C, f"{who}_world")
+            d = f"|dx| {abs(p[0]-q[0]):.4f} |dy| {abs(p[1]-q[1]):.4f} |dz| {abs(p[2]-q[2]):.4f}" if p and q else "not comparable (a translation unavailable)"
+            ev(f"xcheck.{who}-stored-translation-vs-previous", True, f"{fld(PC, f'{who}_world')} -> {fld(C, f'{who}_world')}; {d} (recorded, not judged; a dirty flag marks the STORED value potentially stale)")
+        ev("xcheck.candidate-frames-advanced-since-previous", isinstance(PCR.get("frame"), int) and isinstance(CR.get("frame"), int) and CR["frame"] > PCR["frame"], f"{PCR.get('frame')} -> {CR.get('frame')}")
 
 with open(os.path.join(a.evid, f"{a.label}-xcheck.txt"), "w", encoding="utf-8") as f: f.write("\n".join(out_lines) + "\n")
 print(f"xcheck: {sum(1 for l in out_lines if ': NOT ' in l)} NOT line(s) of {sum(1 for l in out_lines if 'EVIDENCE' in l)}")
