@@ -18,6 +18,10 @@ cp "$GD/Runtime/packagedefinition.txt" "$ROOT/Runtime/"; cp "$GD/Retail/thumbs.d
 for f in chunk0.rpkg chunk0patch1.rpkg chunk0patch4.rpkg chunk27.rpkg chunk27patch4.rpkg chunk3.rpkg chunk3patch4.rpkg; do printf 'placeholder %s\n' "$f" > "$ROOT/Runtime/$f"; done
 printf 'placeholder dll\n' > "$ROOT/Retail/HITMAN3.exe"; printf 'placeholder\n' > "$ROOT/Retail/mods/NoPause.dll"
 touch -d '2026-09-06 05:07:00' "$ROOT/Runtime"/chunk*.rpkg "$ROOT/Runtime/packagedefinition.txt"
+# the model's package definition carries deliberately NONZERO sub-second creation and write timestamps (the case the real
+# installation has; drvfs truncates them on copy), set from the Windows side (test fixture only; the scratch model)
+powershell.exe -NoProfile -Command "\$f = Get-Item -LiteralPath '$(wslpath -w "$ROOT/Runtime/packagedefinition.txt")'; \$f.CreationTimeUtc = [DateTime]::new(638937700241234567, 'Utc'); \$f.LastWriteTimeUtc = [DateTime]::new(638937700240339088, 'Utc'); 'fixture: creation ' + \$f.CreationTimeUtc.Ticks + ' lastwrite ' + \$f.LastWriteTimeUtc.Ticks" 2>&1 | tr -d '\r' >> "$out"
+case "$(stat -c %y "$ROOT/Runtime/packagedefinition.txt")" in *.0339088*) ;; *) echo "ABORT: the sub-second fixture timestamp was not set ($(stat -c %y "$ROOT/Runtime/packagedefinition.txt")); the scratch root must be on a Windows filesystem"; exit 2;; esac
 # the scratch baseline with the same shape as the real one
 (cd "$ROOT" && find Runtime Retail -type f -printf '%s\t%TY-%Tm-%TdT%TH:%TM:%TS\t%p\n' | sort -k3) > "$BL/listing.tsv"
 (cd "$ROOT/Retail" && find . -type f -print0 | sort -z | xargs -0 sha256sum) > "$BL/retail.sha256"
@@ -35,6 +39,7 @@ run bash "$T/content-rollback.sh" "$ROOT" "$BAK" && say "case 1: rollback ran" |
 
 say "== case 2: interrupted installation (a .installing remnant and one package in place, the package definition untouched)"
 rm -rf "$BAK"; mkdir -p "$BAK"; cp -p "$ROOT/Runtime/packagedefinition.txt" "$BAK/packagedefinition.txt.orig"; cp -p "$BAK/packagedefinition.txt.orig" "$BAK/packagedefinition.txt.orig.2"; sha256sum "$BAK/packagedefinition.txt.orig" | sed 's#  .*#  packagedefinition.txt.orig#' > "$BAK/backup.sha256"
+run bash "$T/timestamps-capture.sh" "$ROOT" "$BAK/timestamps.tsv" "Runtime/packagedefinition.txt" || bad "case 2: the fixture's timestamp capture failed"   # as the installer does before its first write
 cp "$ART/chunk0patch300.rpkg" "$ROOT/Runtime/chunk0patch300.rpkg"; head -c 1000 "$ART/chunk27patch300.rpkg" > "$ROOT/Runtime/chunk27patch300.rpkg.installing"
 run bash "$T/content-rollback.sh" "$ROOT" "$BAK" && say "case 2: rollback ran" || bad "case 2: rollback failed"; verify "case 2"
 
@@ -63,6 +68,34 @@ run bash "$T/content-rollback.sh" "$ROOT" "$BAK" && say "case 6: rollback ran fr
 
 say "== case 7: rollback twice (idempotent) and the verify after a no-op"
 run bash "$T/content-rollback.sh" "$ROOT" "$BAK" && say "case 7: second rollback ran" || bad "case 7: second rollback failed"; verify "case 7"
+
+say "== case 8: the timestamp manifest missing: the rollback restores the bytes, then FAILS clearly; the listing differs in the sub-second field; a rollback with the manifest back succeeds (idempotent)"
+rm -rf "$BAK"; run bash "$T/content-install.sh" "$ROOT" "$ART" "$BAK" "$EXP" && installed_ok && say "case 8: installed" || bad "case 8: install failed"
+mv "$BAK/timestamps.tsv" "$R/timestamps.tsv.aside"
+if run bash "$T/content-rollback.sh" "$ROOT" "$BAK"; then bad "case 8: rollback reported success without the timestamp manifest"; else say "case 8: rollback FAILED as required (rc $?; bytes restored, timestamps not)"; fi
+[ "$(sha256sum "$ROOT/Runtime/packagedefinition.txt" | cut -c1-64)" = "$(cut -c1-64 "$BAK/backup.sha256")" ] && say "case 8: bytes restored before the failure" || bad "case 8: bytes not restored"
+if run bash "$T/content-verify.sh" "$ROOT" "$BL"; then bad "case 8: verify passed although the timestamps were not restored"; else say "case 8: verify FAILED as required (the sub-second timestamp truncated by the copy)"; fi
+mv "$R/timestamps.tsv.aside" "$BAK/timestamps.tsv"
+run bash "$T/content-rollback.sh" "$ROOT" "$BAK" && say "case 8: rollback with the manifest back ran" || bad "case 8: rollback with the manifest failed"; verify "case 8"
+
+say "== case 9: a manifest entry outside the root is refused and nothing is changed"
+mkdir -p "$R/outside"; printf 'outside\n' > "$R/outside/victim.txt"; before=$(stat -c %y "$R/outside/victim.txt")
+printf '..\\outside\\victim.txt\t638937700240339088\t638937700240339088\t638937700240339088\t8\t%s\n' "$(sha256sum "$R/outside/victim.txt" | cut -c1-64)" > "$R/bad-manifest.tsv"
+if run bash "$T/timestamps-restore.sh" "$ROOT" "$R/bad-manifest.tsv"; then bad "case 9: a path outside the root was accepted"; else say "case 9: refused (rc $?)"; fi
+[ "$(stat -c %y "$R/outside/victim.txt")" = "$before" ] && say "case 9: the outside file untouched" || bad "case 9: the outside file's timestamp changed"
+printf 'C:\\Windows\\win.ini\t1\t1\t1\t1\t0000000000000000000000000000000000000000000000000000000000000000\n' > "$R/bad-manifest-2.tsv"
+if run bash "$T/timestamps-restore.sh" "$ROOT" "$R/bad-manifest-2.tsv"; then bad "case 9: an absolute path was accepted"; else say "case 9: absolute path refused (rc $?)"; fi
+
+say "== case 10: the generic capture / restore on another replaced file (mods.ini with sub-second creation and write times), the content check gating the restoration"
+powershell.exe -NoProfile -Command "\$f = Get-Item -LiteralPath '$(wslpath -w "$ROOT/Retail/mods.ini")'; \$f.CreationTimeUtc = [DateTime]::new(638937700247654321, 'Utc'); \$f.LastWriteTimeUtc = [DateTime]::new(638937700246039433, 'Utc')" 2>&1 | tr -d '\r' >> "$out"
+(cd "$ROOT" && find Runtime Retail -type f -printf '%s\t%TY-%Tm-%TdT%TH:%TM:%TS\t%p\n' | sort -k3) > "$BL/listing.tsv"   # the model baseline now carries mods.ini's fixture timestamps
+run bash "$T/timestamps-capture.sh" "$ROOT" "$R/mods-ini.tsv" "Retail/mods.ini" && say "case 10: captured" || bad "case 10: capture failed"
+cp "$ROOT/Retail/mods.ini" "$R/mods.ini.copy"; printf '\n[test]\n' >> "$ROOT/Retail/mods.ini"    # the file replaced with different content, then restored by bytes with a plain cp (new timestamps)
+if run bash "$T/timestamps-restore.sh" "$ROOT" "$R/mods-ini.tsv"; then bad "case 10: timestamps restored although the content differs"; else say "case 10: restoration refused while the content differs (rc $?)"; fi
+cp "$R/mods.ini.copy" "$ROOT/Retail/mods.ini"
+run bash "$T/timestamps-restore.sh" "$ROOT" "$R/mods-ini.tsv" && say "case 10: timestamps restored after the byte restoration" || bad "case 10: restoration failed"
+run bash "$T/timestamps-restore.sh" "$ROOT" "$R/mods-ini.tsv" && say "case 10: restoration idempotent" || bad "case 10: second restoration failed"
+verify "case 10"
 say "real installation untouched: $(bash "$T/game-tree-listing.sh" "$GD" | diff -q "$REALBL" - > /dev/null && echo yes || echo NO)"
 if [ "$fail" = 0 ]; then say "REHEARSAL RESULT: PASS (0 failures)"; else say "REHEARSAL RESULT: FAIL ($fail)"; fi
 exit $fail

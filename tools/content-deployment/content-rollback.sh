@@ -19,4 +19,8 @@ src=""; for c in "$BAK/packagedefinition.txt.orig" "$BAK/packagedefinition.txt.o
 cp -p "$src" "$ROOT/Runtime/packagedefinition.txt.restoring" && [ "$(sha256sum "$ROOT/Runtime/packagedefinition.txt.restoring" | cut -c1-64)" = "$want" ] && mv "$ROOT/Runtime/packagedefinition.txt.restoring" "$ROOT/Runtime/packagedefinition.txt" || die "restore failed"
 [ "$(sha256sum "$ROOT/Runtime/packagedefinition.txt" | cut -c1-64)" = "$want" ] || die "restored packagedefinition.txt hash differs"
 [ "$(ls "$ROOT/Runtime" | grep -cE 'patch300|\.installing$|\.restoring$')" = 0 ] || die "generated content or temporary files remain"
-log "ROLLBACK VERIFIED: patch300 packages absent, packagedefinition.txt restored ($want)"
+# the exact Windows timestamps, only now that the bytes are verified restored (the copy carried whole seconds only);
+# a missing manifest or any mismatch is a clear failure: the bytes are back, the timestamps are not
+T="$(cd "$(dirname "$0")" && pwd)"
+bash "$T/timestamps-restore.sh" "$ROOT" "$BAK/timestamps.tsv" || die "bytes restored but the exact timestamps were NOT restored ($BAK/timestamps.tsv)"
+log "ROLLBACK VERIFIED: patch300 packages absent, packagedefinition.txt restored ($want) with its exact timestamps"

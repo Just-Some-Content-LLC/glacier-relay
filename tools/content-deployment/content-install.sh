@@ -18,6 +18,11 @@ cp -p "$ROOT/Runtime/packagedefinition.txt" "$BAK/packagedefinition.txt.orig" &&
 h0=$(sha256sum "$ROOT/Runtime/packagedefinition.txt" | cut -c1-64); h1=$(sha256sum "$BAK/packagedefinition.txt.orig" | cut -c1-64); h2=$(sha256sum "$BAK/packagedefinition.txt.orig.2" | cut -c1-64)
 [ "$h0" = "$h1" ] && [ "$h0" = "$h2" ] || die "backup hashes differ"
 echo "$h0  packagedefinition.txt.orig" > "$BAK/backup.sha256"; log "package definition backed up twice ($h0)"
+# 1b. the exact Windows timestamps of the file to be replaced (100-ns; drvfs copies carry whole seconds only), captured
+#     BEFORE any write so that the rollback can restore them; a failed capture aborts here with nothing changed
+T="$(cd "$(dirname "$0")" && pwd)"
+bash "$T/timestamps-capture.sh" "$ROOT" "$BAK/timestamps.tsv" "Runtime/packagedefinition.txt" || die "exact timestamp capture failed; nothing installed"
+log "exact timestamps captured ($BAK/timestamps.tsv)"
 # 2. the two new packages (copy to a temp name, verify, rename: an interrupted copy never leaves a half file under the final name)
 for f in chunk0patch300.rpkg chunk27patch300.rpkg; do
   cp "$ART/$f" "$ROOT/Runtime/$f.installing" || die "copy failed: $f"
