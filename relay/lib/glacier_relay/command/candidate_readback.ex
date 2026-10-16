@@ -22,8 +22,12 @@ defmodule GlacierRelay.Command.CandidateReadback do
       targets                "<brick>,<entity>,<spawn>"
 
   with B = 0|1, N an integer, M a member state (0 null, 1 present, 2 valid: an entity reference
-  whose interface resolved). "Present" is never "initialized" or "simulating"; nothing decoded here
-  is an independent observation of the engine.
+  whose interface resolved). A decoded slot is `%{slot: N, match: T, hero: H}`: `empty` means no
+  entity reference (hero: false); a nonempty token means a reference whose ZHitman5 interface
+  resolved (hero: true) unless it carries `-nohero` (hero: false); `empty-nohero` is never emitted
+  by the native encoder and is rejected. A missing or unavailable `registry_slots` field stays
+  missing / unobserved: four empty slots are never synthesized. "Present" is never "initialized"
+  or "simulating"; nothing decoded here is an independent observation of the engine.
   """
 
   @hex16 ~r/^[0-9a-f]{16}$/
@@ -245,11 +249,19 @@ defmodule GlacierRelay.Command.CandidateReadback do
 
   defp decode(_kind, _value), do: :error
 
+  # One slot token "N:T[-nohero]". The native encoder (CandidateObservation::EncodeSlots) writes
+  # "empty" for a null m_HitmanEntity and appends "-nohero" only to a NONEMPTY reference whose
+  # ZHitman5 interface did not resolve, so the hero boolean means "a reference exists and its hero
+  # interface resolved": false for an empty slot (no reference at all), false for a suffixed
+  # nonempty slot, true for an unsuffixed nonempty slot. "empty-nohero" is never emitted and is
+  # rejected as noncanonical (M6-D1a review, correction A: the first decoder read every
+  # unsuffixed word, "empty" included, as hero: true).
   defp slot(part, i) do
     with [index, rest] <- String.split(part, ":"),
          true <- index == Integer.to_string(i),
-         {match, hero} <- split_nohero(rest),
-         true <- match in @slot_matches do
+         {match, suffixed} <- split_nohero(rest),
+         true <- match in @slot_matches,
+         {:ok, hero} <- slot_hero(match, suffixed) do
       {:ok, %{slot: i, match: String.to_existing_atom(match), hero: hero}}
     else
       _ -> :error
@@ -261,10 +273,14 @@ defmodule GlacierRelay.Command.CandidateReadback do
   @slot_match_atoms [:empty, :local, :candidate, :other, :inconclusive]
   def slot_matches, do: @slot_match_atoms
 
+  defp slot_hero("empty", false), do: {:ok, false}
+  defp slot_hero("empty", true), do: :error
+  defp slot_hero(_nonempty, suffixed), do: {:ok, not suffixed}
+
   defp split_nohero(rest) do
     case String.split(rest, "-nohero") do
-      [match] -> {match, true}
-      [match, ""] -> {match, false}
+      [match] -> {match, false}
+      [match, ""] -> {match, true}
       _ -> :error
     end
   end

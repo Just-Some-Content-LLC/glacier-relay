@@ -274,11 +274,13 @@ defmodule GlacierRelay.Command.CandidateInspectionTest do
                :slots
              )
 
+    # (the first expectation here read the empty slot as hero: true — the decoder defect of the
+    # M6-D1a review, correction A; an empty slot has no reference and no hero)
     assert slots == [
              %{slot: 0, match: :local, hero: true},
              %{slot: 1, match: :candidate, hero: false},
              %{slot: 2, match: :other, hero: true},
-             %{slot: 3, match: :empty, hero: true}
+             %{slot: 3, match: :empty, hero: false}
            ]
 
     assert {:ok, [_, %{match: :inconclusive}, _, _]} =
@@ -333,6 +335,85 @@ defmodule GlacierRelay.Command.CandidateInspectionTest do
              CandidateReadback.entity_flags(12).predeleted
 
     assert CandidateReadback.entity_flags("3") == :invalid
+  end
+
+  test "registry slots decode with the hero boolean meaning a resolved hero interface on a nonempty reference: empty slots carry none (M6-D1a review, correction A)" do
+    decode = fn text -> CandidateReadback.field(field("observed", text), :slots) end
+    e = fn i -> %{slot: i, match: :empty, hero: false} end
+
+    # all four slots empty: no reference anywhere, no hero anywhere
+    assert decode.("0:empty,1:empty,2:empty,3:empty") == {:ok, [e.(0), e.(1), e.(2), e.(3)]}
+
+    # the M6-C3 shape: the local hero in slot 0, the other three empty
+    assert decode.("0:local,1:empty,2:empty,3:empty") ==
+             {:ok, [%{slot: 0, match: :local, hero: true}, e.(1), e.(2), e.(3)]}
+
+    # the candidate in an additional slot, with and without a resolved hero interface
+    assert decode.("0:local,1:candidate,2:empty,3:empty") ==
+             {:ok,
+              [
+                %{slot: 0, match: :local, hero: true},
+                %{slot: 1, match: :candidate, hero: true},
+                e.(2),
+                e.(3)
+              ]}
+
+    assert decode.("0:local,1:candidate-nohero,2:empty,3:empty") ==
+             {:ok,
+              [
+                %{slot: 0, match: :local, hero: true},
+                %{slot: 1, match: :candidate, hero: false},
+                e.(2),
+                e.(3)
+              ]}
+
+    # nonempty references whose hero interface did not resolve, in every identity class
+    assert decode.("0:local-nohero,1:other-nohero,2:inconclusive-nohero,3:candidate-nohero") ==
+             {:ok,
+              [
+                %{slot: 0, match: :local, hero: false},
+                %{slot: 1, match: :other, hero: false},
+                %{slot: 2, match: :inconclusive, hero: false},
+                %{slot: 3, match: :candidate, hero: false}
+              ]}
+
+    # the candidate's identity unknown on that frame: inconclusive stays its own classification
+    assert decode.("0:local,1:inconclusive,2:other,3:empty") ==
+             {:ok,
+              [
+                %{slot: 0, match: :local, hero: true},
+                %{slot: 1, match: :inconclusive, hero: true},
+                %{slot: 2, match: :other, hero: true},
+                e.(3)
+              ]}
+
+    # the whole group unavailable or absent: nothing is synthesized
+    assert {:unobserved, "unavailable"} =
+             CandidateReadback.field(
+               field("unavailable", nil, "player registry global null"),
+               :slots
+             )
+
+    assert :missing = CandidateReadback.field(nil, :slots)
+    assert CandidateReadback.decode_readback(%{}).registry_slots == :missing
+
+    # malformed suffixes and shapes are refused whole, never partially decoded
+    for bad <- [
+          "0:local,1:empty-nohero,2:empty,3:empty",
+          "0:local,1:candidate-nohero-nohero,2:empty,3:empty",
+          "0:local,1:-nohero,2:empty,3:empty",
+          "0:local,1:candidate-nohero-,2:empty,3:empty",
+          "0:local,1:candidatenohero,2:empty,3:empty",
+          "0:local,1:candidate-NOHERO,2:empty,3:empty",
+          "1:local,0:empty,2:empty,3:empty",
+          "0:local,1:empty,2:empty,3:empty,4:empty",
+          "0:local,1:empty,2:empty",
+          "0:local,1:agent48,2:empty,3:empty",
+          "0:Local,1:empty,2:empty,3:empty",
+          ""
+        ] do
+      assert {:invalid, ^bad} = decode.(bad)
+    end
   end
 
   test "a candidate inspection is refused while disarmed, travels with its ids after inert arming, and comes back as a native read-back decoded by the grammar",
@@ -400,8 +481,13 @@ defmodule GlacierRelay.Command.CandidateInspectionTest do
     assert d.cand_hitman5 == {:ok, true} and d.cand_id_match == {:ok, true}
     assert d.cand_distinct == {:ok, true} and d.cand_brick_owner == {:ok, @hitmen_brick}
 
-    assert {:ok, [%{match: :local}, %{match: :empty}, %{match: :empty}, %{match: :empty}]} =
-             d.registry_slots
+    assert {:ok,
+            [
+              %{slot: 0, match: :local, hero: true},
+              %{slot: 1, match: :empty, hero: false},
+              %{slot: 2, match: :empty, hero: false},
+              %{slot: 3, match: :empty, hero: false}
+            ]} = d.registry_slots
 
     assert d.candidate.world == {:ok, {0.0, 0.0, -1.539356}}
     assert d.hero.world == {:ok, {-109.5881, -89.883, -0.536}}
@@ -474,7 +560,15 @@ defmodule GlacierRelay.Command.CandidateInspectionTest do
     assert d.candidate.active == {:unobserved, "unavailable"}
     assert d.candidate.world == {:ok, {0.0, 0.0, -1.539356}}
     assert d.spawn.hitman_ref == {:ok, "feed000000000bad"} and d.spawn.ref_is_cand == {:ok, false}
-    assert {:ok, [_, %{match: :candidate, hero: false}, _, _]} = d.registry_slots
+
+    assert {:ok,
+            [
+              %{slot: 0, match: :local, hero: true},
+              %{slot: 1, match: :candidate, hero: false},
+              %{slot: 2, match: :empty, hero: false},
+              %{slot: 3, match: :empty, hero: false}
+            ]} = d.registry_slots
+
     # the player id 2 on the spawn is not a registry classification
     assert d.spawn.player_id == {:ok, 2}
     FakeNative.close(socket)
