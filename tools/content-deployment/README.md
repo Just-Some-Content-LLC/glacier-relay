@@ -1,0 +1,46 @@
+# Content-deployment tooling (M6-C)
+
+Project-owned scripts for the controlled deployment of the historical Agent48 content into a HITMAN installation and for its
+byte-identical removal, the independent verification of the generated packages, the scratch rehearsal of the install and
+rollback, and the operator tooling of the attended runtime experiments. They were written and exercised in M6-C2
+(`docs/design/M6C_CONTENT_DEPLOYMENT.md`, section 16) and committed here under the M6-C3 authorization, functionally identical to
+the versions that passed M6-C2 apart from portability: every machine-specific absolute path became an explicit argument or a
+documented environment variable (`config.example.sh`), and the relay node name is derived from the host. Nothing in this
+directory is production code: the relay application under `relay/` and the native adapter are not changed by it.
+
+Every script that touches a game installation takes the installation root as an explicit argument, writes only the files it
+names, verifies every write by hash, refuses to overwrite an existing `patch300` package, and exits non-zero on any doubt.
+A zero exit code is never the evidence; the written reports are. Pass absolute paths: the install, rollback and verify scripts
+change into the tree they work on and open the expected-hash file and the baseline directory by the path given.
+
+## Scripts
+
+| Script | Purpose | Usage |
+|---|---|---|
+| `content-install.sh` | Installs exactly `Runtime/chunk0patch300.rpkg`, `Runtime/chunk27patch300.rpkg` (new) and `Runtime/packagedefinition.txt` (replaced after a two-copy, timestamp-preserving backup). | `content-install.sh <game-root> <artefacts-dir> <backup-dir> <expected.sha256>` |
+| `content-rollback.sh` | Removes the two packages in whatever state they are (including `.installing` remnants) and restores the package definition from a backup that matches `backup.sha256`, timestamp preserved. Does not depend on a normal game exit. | `content-rollback.sh <game-root> <backup-dir>` |
+| `content-verify.sh` | Byte-identical restoration against a complete baseline: the full `Runtime` + `Retail` listing (sizes, mtimes), every Retail hash, the key files, the chunk0/chunk27 package hashes, no `patch300`, temporary or hitmen-named file. | `content-verify.sh <game-root> <baseline-dir>` |
+| `game-tree-listing.sh` | Read-only listing (size, mtime, path) of `Runtime` and `Retail`. | `game-tree-listing.sh <game-root>` |
+| `rehearsal.sh` | The seven install / rollback / verify cases on a scratch model of the game tree (copies of the three key files, placeholders for the packages). Never touches the real installation; its last line confirms that. | `rehearsal.sh <game-root> <artefacts-dir> <scratch-root> <real-baseline-listing.tsv> <report-file>` |
+| `rpkg_read.py` | Independent RPKG reader (v1 `GKPR` and v2 `2KPR`, patch headers, the 8-byte XOR, pure-Python LZ4 block decoding) written from the public format source. | `python3 -I rpkg_read.py list <file> [--filter HEX,...]` / `extract <file> <HEX> <out>` |
+| `verify-generated.sh` | The M6-C2 package verification: inventories, extraction, conversion with a project-built `ResourceTool.exe`, the structured and dependency comparisons of the Paris scene, the brick content check. Expects the M6-C2 evidence layout. | `verify-generated.sh <evidence-dir> <work-dir> <ResourceTool.exe>` |
+| `run-deploy.cmd` | Runs the framework's `Deploy.exe` with console logging from the framework directory (used only with `outputToSeparateDirectory: true`; the framework must never be pointed at the game tree by this project). | `run-deploy.cmd <framework-dir>` |
+| `provision-secret.sh` | One run-scoped 64-hex token at `<state-root>/token` (mode 600, ext4, never printed). | `provision-secret.sh <state-root>` |
+| `start-beam.sh` | Starts the relay node for a controlled read-only run: recorder on, command subtree on, effectful authority OFF, token from the file, dashboard off, the in-node watcher `m5b_watch.exs` loaded. | `start-beam.sh <evidence-dir> <state-root>` |
+| `m5b_watch.exs` | The in-node read-only watcher (session events, command status). | loaded by `start-beam.sh` |
+| `cmd.exs` | The operator actions over RPC: `status`, `journal`, `linkcheck`, `arm`, `disarm`, `players [ttl|-] [recorded|empty]`, `entity [brick|-] [entity_id|-] [ttl|-] [absent|present]`, `outfit [cand|-] [gen|-] [ttl|-]`. Only inert public functions; no effectful action exists. | `(cd relay && elixir --sname op-<label> -S mix run --no-start cmd.exs <evidence-dir> <label> <action> [args])` |
+| `xcheck.py` | Cross-checks adjacent inspections (same frame source, frames advancing, identity stability, the candidate's presence and same-frame distinctness, slots recorded, slot 0 unchanged). | `python3 -I xcheck.py <evidence-dir> <label> --players P --entity N [...]` |
+| `dry-run-m6c3.sh` | The offline dry run of the operator tooling against the frozen native command probe (no game, no DLL, ephemeral token). | `GLACIER_NATIVE_DIR=... dry-run-m6c3.sh <dry-run-evidence-dir> <throwaway-state-root>` |
+| `run-probe-m6c3.cmd`, `tests-once-m6c3.cmd` | Windows-side launchers used by the dry run for the frozen probe and test executables. | see the scripts |
+
+## Configuration
+
+See `config.example.sh`. The relay directory defaults to `../../relay` from this directory, the node name to
+`relay@<host>`, the BEAM environment file to `~/.local/opt/beam-env.sh` (sourced when present). The dry run requires
+`GLACIER_NATIVE_DIR` (the preserved, hash-verified native probe and test executables). The scripts are written for WSL on the
+machine that hosts the game (`cmd.exe`, `tasklist.exe`, `wslpath`).
+
+## What is not here
+
+Generated game packages, decrypted or extracted proprietary game content, the third-party framework and its executables,
+tokens, and the evidence of the runs. Those stay in the evidence directories described in the design records.
