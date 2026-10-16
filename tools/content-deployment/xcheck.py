@@ -145,8 +145,13 @@ def slots(o):
         except ValueError:
             return None
         if idx != str(i): return None
-        match, hero = (rest[:-len("-nohero")], False) if rest.endswith("-nohero") else (rest, True)
+        suffixed = rest.endswith("-nohero")
+        match = rest[:-len("-nohero")] if suffixed else rest
         if match not in ("empty", "local", "candidate", "other", "inconclusive"): return None
+        # "empty" = no entity reference, so no hero (the native encoder never suffixes it: reject "empty-nohero");
+        # a nonempty token's hero interface resolved unless "-nohero" says it did not (M6-D1a review, correction A)
+        if match == "empty" and suffixed: return None
+        hero = False if match == "empty" else (not suffixed)
         out.append((match, hero))
     return out if len(out) == 4 else None
 def near(p, q, tol=1e-4):
