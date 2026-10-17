@@ -20,6 +20,11 @@
 #   FINDING, never a stop; "empty" keeps the M6-B2 stop semantics); entity [brick|-] [entity_id|-] [ttl|-] [absent|present] — the
 #   candidate expected present in Paris after the content deployment (its lookup facts become EVIDENCE lines; an unexpected
 #   presence under "absent" stays the M6-B2 stop). No set, attest, effectful-arm or reverse action exists.
+#   M6-F: ctransform [ttl|-] [absent|present]   relay.inspect.candidate_transform/1 (read-only, no parameters; the compiled candidate's
+#   and the local hero's EXACT stored transform as binary32 words — a 12-word world group and a 7-word parent-relative group —
+#   with the dirty flags, parents, the identity block and registry membership; decoded by GlacierRelay.Command.TransformReadback;
+#   the seven-digit texts beside the words are for reading only; the words are the expectation source of an M6-F lift or
+#   restoration and the later observation of either (cmd-m6f.exs), never a claim about simulation, rendering or placement).
 #   M6-D1a: candidate [brick|-] [entity_id|-] [ttl|-] [absent|present]   relay.inspect.candidate/1 (read-only; the candidate's and
 #   the local hero's STORED spatial fields, member PRESENCE and m_bActive property, the spawn entity's stored transform and
 #   authored properties, and registry membership by entity identity, all on one native frame; the packed groups are decoded by
@@ -165,6 +170,23 @@ end
 
 ttl_opts = fn ttl_arg, opts -> if ttl_arg == "-", do: opts, else: Keyword.put(opts, :ttl_ms, String.to_integer(ttl_arg)) end
 
+# M6-F: the exact-transform read-back decoded by GlacierRelay.Command.TransformReadback: every word group with its status and,
+# when observed, the canonical text of the words and the seven-digit human rendering derived from the words.
+tw = fn c, k, kind ->
+  f = obs.(c)[k]
+  case GlacierRelay.Command.TransformReadback.words(f, kind) do
+    {:ok, words} -> "observed=" <> GlacierRelay.Command.TransformWords.encode(words) <> (if kind == :world, do: " (" <> GlacierRelay.Command.TransformWords.translation_text(words) <> ")", else: " (" <> GlacierRelay.Command.TransformWords.local_text(words) <> ")")
+    {:invalid, t} -> "INVALID-WORDS=" <> inspect(t)
+    {:unobserved, s} -> s <> (if is_map(f) and f["reason"], do: "(" <> f["reason"] <> ")", else: "")
+    :missing -> "missing"
+  end
+end
+
+transform_line = fn c ->
+  d = GlacierRelay.Command.TransformReadback.decode_inspection(obs.(c))
+  "ctransform: generation_fresh #{fld.(c, "generation_fresh")} targets #{fld.(c, "targets")} version #{fld.(c, "snapshot_version")} | cand present #{fld.(c, "cand_brick_present")} count #{fld.(c, "cand_subentity_count")} index #{fld.(c, "cand_index")} check #{fld.(c, "cand_index_check")} resolved #{fld.(c, "cand_resolved")} hitman5 #{fld.(c, "cand_hitman5")} flags #{fld.(c, "cand_flags")} id_match #{fld.(c, "cand_id_match")} distinct #{fld.(c, "cand_distinct")} owner #{fld.(c, "cand_brick_owner")} spatial #{fld.(c, "cand_spatial")} spatial_distinct #{fld.(c, "cand_spatial_distinct")} | registry_slots #{cr.(c, "registry_slots", :slots)} in_registry #{fld.(c, "cand_in_registry")} | cand world_words #{tw.(c, "cand_world_words", :world)} local_words #{tw.(c, "cand_local_words", :local)} dirty #{fld.(c, "cand_dirty")} parent #{cr.(c, "cand_parent", :parent)} native_text world #{fld.(c, "cand_world")} local #{fld.(c, "cand_local")} flags #{cr.(c, "cand_spatial_flags", :spatial_flags)} | hero id #{fld.(c, "hero_entity_id")} flags #{fld.(c, "hero_flags")} world_words #{tw.(c, "hero_world_words", :world)} local_words #{tw.(c, "hero_local_words", :local)} dirty #{fld.(c, "hero_dirty")} parent #{cr.(c, "hero_parent", :parent)} | mission_playing #{fld.(c, "mission_playing")} scene_type #{fld.(c, "scene_type")} receipt_to_frame_ms #{fld.(c, "receipt_to_frame_ms")} reads_on_frame #{fld.(c, "reads_on_frame")} reduced #{inspect(mk.(c, "observed_reduced"))} fields #{nfields.(c)} frame #{inspect(frame.(c))} generation #{inspect(gen.(c))} reason #{inspect(reason.(c))}; decoded candidate world #{inspect(d.candidate.world_words |> then(fn {:ok, w} -> GlacierRelay.Command.TransformWords.translation(w); other -> other end))}"
+end
+
 case action do
   "status" ->
     s = call.(cmd, :status, [])
@@ -182,8 +204,8 @@ case action do
     log.("linkcheck: #{status_line.(s)}")
     names = advertised_names.(s)
     ev.("link.identified-v2-token-verified", s.link != nil and s.trust.peer == :identified and s.link.protocol_version == 2 and s.trust.token_verified == true, "peer #{inspect(s.trust.peer)} protocol_version #{inspect(s.link && s.link.protocol_version)} token_verified #{inspect(s.trust.token_verified)} generation #{inspect(s.link && s.link.generation)} adapter #{inspect(s.link && s.link.adapter_instance_id)}")
-    ev.("link.five-inert-entries-advertised", names == ["relay.inspect.candidate/1", "relay.inspect.entity/1", "relay.inspect.outfit/1", "relay.inspect.players/1", "relay.probe/1"], inspect(names) <> " (M6-D1a: relay.inspect.candidate/1 joins the four M6-B2 entries)")
-    ev.("link.effectful-entry-absent", "player.outfit.set/2" not in names and "player.outfit.set/2" not in ((s.link && s.link.capabilities) || []), "advertised #{inspect(names)} peer capabilities #{inspect(s.link && s.link.capabilities)}")
+    ev.("link.six-inert-entries-advertised", names == ["relay.inspect.candidate/1", "relay.inspect.candidate_transform/1", "relay.inspect.entity/1", "relay.inspect.outfit/1", "relay.inspect.players/1", "relay.probe/1"], inspect(names) <> " (M6-F: relay.inspect.candidate_transform/1 joins the five M6-D1b entries)")
+    ev.("link.effectful-entries-absent", "player.outfit.set/2" not in names and "candidate.transform.set/1" not in names and "player.outfit.set/2" not in ((s.link && s.link.capabilities) || []) and "candidate.transform.set/1" not in ((s.link && s.link.capabilities) || []), "advertised #{inspect(names)} peer capabilities #{inspect(s.link && s.link.capabilities)}")
     ev.("link.effectful-authority-disabled", s.effectful.enabled == false and s.trust.effectful_armed == false and s.effectful.armed == nil, inspect(s.effectful))
     ev.("link.never-authenticated", s.trust.authenticated == false, inspect(s.trust))
     ev.("link.token-from-file", s.effectful.token_source == :file and s.effectful.token_configured == true, "token_source #{inspect(s.effectful.token_source)} token_configured #{inspect(s.effectful.token_configured)}")
@@ -337,6 +359,45 @@ case action do
 
       other ->
         log.("candidate refused locally: #{inspect(other)} (nothing transmitted)")
+    end
+
+    finish.()
+
+  "ctransform" ->
+    [ttl_arg, expect | _] = rest ++ ["-", "present"]
+    opts = ttl_opts.(ttl_arg, [])
+    before = call.(cmd, :status, [])
+    log.("ctransform opts #{inspect(opts)} expect #{expect}: before: #{status_line.(before)}")
+
+    case call.(cmd, :inspect_candidate_transform, [opts]) do
+      {:ok, id} ->
+        log.("ctransform issued #{id}")
+        File.write!(Path.join(evid, "#{label}-command-id.txt"), id <> "\n")
+        c = wait_terminal.(id, 15_000)
+        dump_record.(c)
+        s = call.(cmd, :status, [])
+        common_evidence.("ctransform", c, s)
+        d = GlacierRelay.Command.TransformReadback.decode_inspection(obs.(c))
+        okv = fn t -> match?({:ok, _}, t) end
+        invalid = (for {k, v} <- Map.take(d, [:registry_slots]), match?({:invalid, _}, v), do: k) ++ (for {who, h} <- [hero: d.hero, candidate: d.candidate], {k, v} <- h, match?({:invalid, _}, v), do: "#{who}.#{k}")
+        ev.("ctransform.no-invalid-words", invalid == [], "STOP-AND-RECORD if NOT (a word group or packed group that does not match its grammar — a native encoding fault): invalid #{inspect(invalid)}")
+        ev.("ctransform.hero-control-exact", okv.(d.hero.world_words) and okv.(d.hero.local_words) and okv.(d.hero.parent) and d.hero.dirty == {:ok, false}, "the local hero's exact words as the control: world_words #{tw.(c, "hero_world_words", :world)} local_words #{tw.(c, "hero_local_words", :local)} dirty #{fld.(c, "hero_dirty")} parent #{cr.(c, "hero_parent", :parent)} (a finding if unavailable or dirty)")
+        ev.("ctransform.words-match-native-text", (not okv.(d.candidate.world_words)) or GlacierRelay.Command.TransformWords.translation_text(elem(d.candidate.world_words, 1)) == ov.(c, "cand_world"), "BEAM's rendering of the candidate's words #{inspect(okv.(d.candidate.world_words) && GlacierRelay.Command.TransformWords.translation_text(elem(d.candidate.world_words, 1)))} vs the native text #{fld.(c, "cand_world")} (reading only; the words are the evidence)")
+
+        if expect == "present" do
+          ev.("ctransform.present-resolved-distinct", ov.(c, "cand_brick_present") == true and ov.(c, "cand_index_check") == "in_range" and ov.(c, "cand_resolved") == true and ov.(c, "cand_hitman5") == true and ov.(c, "cand_id_match") == true and ov.(c, "cand_distinct") == true and ov.(c, "cand_brick_owner") == "007c57a6ea581f8c", "FINDING if NOT (the candidate would not qualify as a lift target): present #{fld.(c, "cand_brick_present")} check #{fld.(c, "cand_index_check")} resolved #{fld.(c, "cand_resolved")} hitman5 #{fld.(c, "cand_hitman5")} id_match #{fld.(c, "cand_id_match")} distinct #{fld.(c, "cand_distinct")} owner #{fld.(c, "cand_brick_owner")}")
+          ev.("ctransform.spatial-distinct", ov.(c, "cand_spatial") == true and ov.(c, "cand_spatial_distinct") == true, "the candidate's spatial interface resolved and differs from the local hero's (compared on frame #{inspect(frame.(c))}, never kept): spatial #{fld.(c, "cand_spatial")} spatial_distinct #{fld.(c, "cand_spatial_distinct")}")
+          ev.("ctransform.exact-snapshot-clean", okv.(d.candidate.world_words) and okv.(d.candidate.local_words) and okv.(d.candidate.parent) and d.candidate.dirty == {:ok, false}, "STORED words only, never a getter: world_words #{tw.(c, "cand_world_words", :world)} local_words #{tw.(c, "cand_local_words", :local)} dirty #{fld.(c, "cand_dirty")} parent #{cr.(c, "cand_parent", :parent)} (a dirty cache = the words establish nothing; a lift would be refused preimage_dirty)")
+          ev.("ctransform.not-in-registry", ov.(c, "cand_in_registry") == false, "membership by ENTITY IDENTITY on this frame: #{cr.(c, "registry_slots", :slots)} in_registry #{fld.(c, "cand_in_registry")} (true or unavailable = the lift gate refuses candidate_in_registry / registry_unreadable)")
+        else
+          ev.("ctransform.not-present", ov.(c, "cand_brick_present") != true, "STOP CONDITION if NOT (the candidate present where absence is expected): present #{fld.(c, "cand_brick_present")}")
+          ev.("ctransform.words-unavailable", not okv.(d.candidate.world_words), "no candidate words when absent: cand_world_words #{tw.(c, "cand_world_words", :world)}")
+        end
+
+        log.("ctransform summary #{short.(id)}: " <> transform_line.(c))
+
+      other ->
+        log.("ctransform refused locally: #{inspect(other)} (nothing transmitted)")
     end
 
     finish.()

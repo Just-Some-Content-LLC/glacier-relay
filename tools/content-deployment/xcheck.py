@@ -5,6 +5,12 @@ operator-actions.log under the given label and writes <label>-xcheck.txt.
 
   xcheck.py <evidence-dir> <label> --players P --entity E [--outfit O] [--prev-players PP] [--prev-entity PE]
             [--expected-gen GEN] [--session-expect same|different] [--identity-expect same]
+            [--transform T] [--prev-transform PT] [--lift L]   (M6-F: the relay.inspect.candidate_transform result beside the others:
+            the same adapter and link, frames in order, the exact word groups well formed, the hero's words against the entity
+            inspection's rendering, the candidate qualified for a lift (resolved, distinct, spatial-distinct, in no slot, clean);
+            against an earlier exact inspection: the candidate's and the hero's words bit-equal / within tolerance / different;
+            against a lift result: the later class held / returned_to_baseline / near_* / drifted / indeterminate, the requested
+            words the compiled lift of the preimage, the hero control)
             [--candidate C] [--prev-candidate PC]   (M6-D1a: the relay.inspect.candidate result beside the entity and players
             inspections of the same phase: the same adapter and link, frames in order, the candidate's presence, lookup facts,
             flags and stored translation equal to the entity inspection's on adjacent frames, the registry slots by identity
@@ -29,6 +35,8 @@ ap.add_argument("--prev-players"); ap.add_argument("--prev-entity"); ap.add_argu
 ap.add_argument("--session-expect", choices=["same", "different"]); ap.add_argument("--identity-expect", choices=["same"])
 ap.add_argument("--candidate-expect", choices=["present", "absent"], default="absent"); ap.add_argument("--slots-expect", choices=["empty", "recorded"], default="recorded")
 ap.add_argument("--candidate"); ap.add_argument("--prev-candidate")
+# M6-F: the exact-transform inspection beside the others, and its later classification against a lift result
+ap.add_argument("--transform"); ap.add_argument("--prev-transform"); ap.add_argument("--lift")
 a = ap.parse_args()
 
 out_lines = []
@@ -203,6 +211,66 @@ if a.candidate:
             d = f"|dx| {abs(p[0]-q[0]):.4f} |dy| {abs(p[1]-q[1]):.4f} |dz| {abs(p[2]-q[2]):.4f}" if p and q else "not comparable (a translation unavailable)"
             ev(f"xcheck.{who}-stored-translation-vs-previous", True, f"{fld(PC, f'{who}_world')} -> {fld(C, f'{who}_world')}; {d} (recorded, not judged; a dirty flag marks the STORED value potentially stale)")
         ev("xcheck.candidate-frames-advanced-since-previous", isinstance(PCR.get("frame"), int) and isinstance(CR.get("frame"), int) and CR["frame"] > PCR["frame"], f"{PCR.get('frame')} -> {CR.get('frame')}")
+
+# ---- M6-F: the exact-transform inspection (relay.inspect.candidate_transform) ------------------------------------------------
+import struct
+def words(o, k, n):
+    t = v(o, k)
+    if not isinstance(t, str): return None
+    parts = t.split(",")
+    if len(parts) != n or any(len(p) != 8 or p != p.lower() or any(c not in "0123456789abcdef" for c in p) for p in parts): return None
+    ws = [int(p, 16) for p in parts]
+    if any(((w >> 23) & 0xff) == 0xff for w in ws): return None
+    return ws
+def floats(ws): return [struct.unpack("<f", struct.pack("<I", w))[0] for w in ws]
+TOL = 1e-4  # the declared comparison tolerance (design section 12.8); never equality
+def within(p, q): return p is not None and q is not None and len(p) == len(q) and all(abs(x - y) <= TOL for x, y in zip(floats(p), floats(q)))
+def classify_later(later, dirty, pre, target):
+    if later is None or dirty is None: return "unavailable"
+    if dirty: return "indeterminate"
+    if later == target: return "held"
+    if later == pre: return "returned_to_baseline"
+    if within(later, target): return "near_target"
+    if within(later, pre): return "near_baseline"
+    return "drifted"
+
+if a.transform:
+    T, TR = load(a.transform)
+    log(f"xcheck transform {a.transform} (frame {TR.get('frame')}, gen {TR.get('mission_generation')!r})")
+    cw, cl, hw, hl = words(T, "cand_world_words", 12), words(T, "cand_local_words", 7), words(T, "hero_world_words", 12), words(T, "hero_local_words", 7)
+    ev("xcheck.transform-same-adapter-and-link", TR.get("adapter_instance_id") in adapters and len(adapters) == 1 and TR.get("link_generation") in links and len(links) == 1, f"adapter {TR.get('adapter_instance_id')} link {TR.get('link_generation')} vs players/entity {sorted(x or 'none' for x in adapters)} / {sorted(str(x) for x in links)}")
+    ev("xcheck.transform-frame-after-entity", isinstance(TR.get("frame"), int) and isinstance(ER.get("frame"), int) and TR["frame"] > ER["frame"], f"frames entity {ER.get('frame')} transform {TR.get('frame')} (issue order)")
+    ev("xcheck.transform-generation-vs-players", TR.get("mission_generation") == PR.get("mission_generation") and ((v(T, "generation_fresh") == TR.get("mission_generation")) or (TR.get("mission_generation") is None and s(T, "generation_fresh") != "observed")), f"transform result generation {TR.get('mission_generation')!r} fresh {fld(T, 'generation_fresh')} vs players {PR.get('mission_generation')!r}")
+    ev("xcheck.transform-hero-identity-vs-entity", v(T, "hero_entity_id") == v(E, "hero_entity_id") and v(T, "hero_flags") == v(E, "hero_entity_flags"), f"hero_entity_id {fld(T, 'hero_entity_id')} flags {fld(T, 'hero_flags')} vs entity {fld(E, 'hero_entity_id')} {fld(E, 'hero_entity_flags')}")
+    ev("xcheck.transform-words-well-formed", (s(T, "cand_world_words") != "observed" or cw is not None) and (s(T, "cand_local_words") != "observed" or cl is not None) and (s(T, "hero_world_words") != "observed" or hw is not None) and (s(T, "hero_local_words") != "observed" or hl is not None), f"STOP-AND-RECORD if NOT (an observed group that is not 12 / 7 finite lowercase eight-hex words): cand {fld(T, 'cand_world_words')} {fld(T, 'cand_local_words')} hero {fld(T, 'hero_world_words')} {fld(T, 'hero_local_words')}")
+    if hw is not None:
+        hx, hy, hz = floats(hw)[9:12]
+        ex, ey, ez = v(E, "hero_x"), v(E, "hero_y"), v(E, "hero_z")
+        agree = all(isinstance(q, (int, float)) and abs(p - q) <= TOL for p, q in zip((hx, hy, hz), (ex, ey, ez)))
+        ev("xcheck.transform-hero-words-vs-entity-translation", agree, f"the hero's exact words translate to ({hx:.7g}, {hy:.7g}, {hz:.7g}) vs the entity inspection's ({ex}, {ey}, {ez}) within {TOL} (adjacent frames; the words are the evidence, the entity texts are renderings)")
+    if a.candidate_expect == "present":
+        C2, _ = load(a.candidate) if a.candidate else ({}, {})
+        ev("xcheck.transform-candidate-qualified", v(T, "cand_resolved") is True and v(T, "cand_distinct") is True and v(T, "cand_spatial_distinct") is True and v(T, "cand_in_registry") is False and v(T, "cand_dirty") is False and cw is not None and cl is not None, f"resolved {fld(T, 'cand_resolved')} distinct {fld(T, 'cand_distinct')} spatial_distinct {fld(T, 'cand_spatial_distinct')} in_registry {fld(T, 'cand_in_registry')} dirty {fld(T, 'cand_dirty')} (the lift gate's identity, distinctness, registry and clean-preimage rules, as the inspection sees them)")
+        if C2 and cw is not None:
+            cv = vec3(C2, "cand_world")
+            agree = cv is not None and all(abs(p - q) <= TOL for p, q in zip(floats(cw)[9:12], cv))
+            ev("xcheck.transform-candidate-words-vs-candidate-inspection", agree, f"the candidate's exact words translate to {tuple(round(x, 7) for x in floats(cw)[9:12])} vs the candidate inspection's rendering {cv} within {TOL} (adjacent frames)")
+    if a.prev_transform:
+        PT, PTR = load(a.prev_transform)
+        pcw, phw = words(PT, "cand_world_words", 12), words(PT, "hero_world_words", 12)
+        cls = "bit-equal" if (pcw is not None and pcw == cw) else ("within tolerance" if within(pcw, cw) else "DIFFERENT")
+        ev("xcheck.transform-candidate-words-vs-previous", True, f"{a.prev_transform} (frame {PTR.get('frame')}) -> {a.transform} (frame {TR.get('frame')}): candidate world words {cls}; dirty {fld(PT, 'cand_dirty')} -> {fld(T, 'cand_dirty')}; parent {fld(PT, 'cand_parent')} -> {fld(T, 'cand_parent')} (recorded, not judged; equality claims rest on bits only)")
+        hcls = "unchanged" if (phw is not None and phw == hw and v(PT, "hero_parent") == v(T, "hero_parent")) else ("within_tolerance" if within(phw, hw) else "changed")
+        ev("xcheck.transform-hero-control-vs-previous", True, f"the local hero's exact words {hcls} ({fld(PT, 'hero_parent')} -> {fld(T, 'hero_parent')}); recorded under the declared policy, never attributed to the candidate's setter")
+    if a.lift:
+        L, LR = load(a.lift)
+        pre, req, post = words(L, "preimage_world_words", 12), words(L, "requested_world_words", 12), words(L, "postimage_world_words", 12)
+        later = classify_later(cw, v(T, "cand_dirty"), pre, req) if pre is not None and req is not None else "unavailable"
+        ev("xcheck.transform-later-vs-lift", later in ("held", "returned_to_baseline", "near_target", "near_baseline", "drifted", "indeterminate", "unavailable"), f"the later exact inspection {a.transform} (frame {TR.get('frame')}) against the lift {a.lift} (frame {LR.get('frame')}, effect {fld(L, 'effect')}, world_match {fld(L, 'world_match')}): {later.upper()} — bit equality decides held / returned_to_baseline; {TOL} per word decides near_*; a dirty cache is indeterminate; a sampled state, not continuous behaviour, not a cause")
+        ev("xcheck.transform-later-frame-after-lift", isinstance(TR.get("frame"), int) and isinstance(LR.get("frame"), int) and TR["frame"] > LR["frame"] and TR.get("mission_generation") == LR.get("mission_generation"), f"frames lift {LR.get('frame')} -> inspection {TR.get('frame')}; generations {LR.get('mission_generation')!r} / {TR.get('mission_generation')!r}")
+        ev("xcheck.transform-lift-requested-is-compiled", pre is not None and req is not None and req[:11] == pre[:11] and req[11] == struct.unpack("<I", struct.pack("<f", struct.unpack("<f", struct.pack("<I", pre[11]))[0] + 0.25))[0], f"requested z word {req[11]:08x} vs preimage z {pre[11]:08x} + 0.25 in binary32 (every other word copied)" if pre and req else "preimage or requested words unavailable")
+        lhw = words(L, "hero_world_words", 12)
+        ev("xcheck.transform-hero-control-vs-lift", True, f"lift hero_control {fld(L, 'hero_control')}; the later inspection's hero words vs the lift frame's: {'not comparable' if lhw is None or hw is None else ('bit-equal' if lhw == hw else ('within tolerance' if within(lhw, hw) else 'DIFFERENT'))} (recorded)")
 
 with open(os.path.join(a.evid, f"{a.label}-xcheck.txt"), "w", encoding="utf-8") as f: f.write("\n".join(out_lines) + "\n")
 print(f"xcheck: {sum(1 for l in out_lines if ': NOT ' in l)} NOT line(s) of {sum(1 for l in out_lines if 'EVIDENCE' in l)}")
