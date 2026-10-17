@@ -74,6 +74,7 @@ defmodule GlacierRelay.Command.Authority do
     Journal,
     Link,
     Schema,
+    TokenHolder,
     TransformBinding,
     TransformReadback,
     TransformWords
@@ -97,7 +98,6 @@ defmodule GlacierRelay.Command.Authority do
 
   @observation_types ~w(visual_confirmation visual_no_change later_frame_read_back engine_consistent note)
   @max_observation_text 500
-  @token_hex ~r/^[0-9a-f]{64}$/
 
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -179,11 +179,15 @@ defmodule GlacierRelay.Command.Authority do
   @impl true
   def init(opts) do
     config = Keyword.merge(@defaults, opts)
-    {token, token_source} = load_token(config)
+    # M6-F1a token-guard correction: the run token lives only in this process's private holder
+    # (`Command.TokenHolder`); the state keeps the holder's opaque reference and the non-secret
+    # source, and the stored config never carries `:token`.
+    {credential, token_source} = TokenHolder.open(config)
 
     {:ok,
      %{
-       config: Keyword.put(config, :token, token),
+       config: Keyword.delete(config, :token),
+       credential: credential,
        token_source: token_source,
        journal: Keyword.get(opts, :journal, Journal),
        link: nil,
@@ -208,58 +212,16 @@ defmodule GlacierRelay.Command.Authority do
      }}
   end
 
-  # The run token: from `:token` (tests; an ephemeral value) or `:token_file` (64 lowercase hex
-  # characters, read once, never logged). Anything else leaves the authority without a token:
-  # no peer can become token_verified and nothing effectful is issuable.
-  defp load_token(config) do
-    cond do
-      is_binary(config[:token]) and Regex.match?(@token_hex, config[:token]) ->
-        {config[:token], :configured}
-
-      is_binary(config[:token]) ->
-        Logger.error(
-          "command authority: the configured token is not 64 lowercase hex characters; ignored"
-        )
-
-        {nil, :invalid}
-
-      is_binary(config[:token_file]) ->
-        case File.read(config[:token_file]) do
-          {:ok, bytes} ->
-            value = String.trim(bytes)
-
-            if Regex.match?(@token_hex, value),
-              do: {value, :file},
-              else:
-                Logger.error(
-                  "command authority: token file is not 64 lowercase hex characters; ignored"
-                ) && {nil, :invalid}
-
-          {:error, reason} ->
-            Logger.error(
-              "command authority: token file unreadable (#{inspect(reason)}); no token"
-            )
-
-            {nil, :unreadable}
-        end
-
-      true ->
-        {nil, :none}
-    end
-  end
-
-  # The run token lives in the state's config; a crash report or :sys.get_status must never print it (the M6-F1a smoke
-  # run's crash report did, with an ephemeral test token — e2e-smoke2-NOTE.txt). The whole config is redacted: the status
-  # map (status/0) is the supported view and never carries the token.
+  # Defense in depth since the token-guard correction moved the token out of the state into the private holder: a
+  # `:token` key in the config is still redacted should one ever appear (the M6-F1a smoke run's crash report printed one,
+  # e2e-smoke2-NOTE.txt). The status map (status/0) is the supported view and never carries the token.
   @impl true
   def format_status(status) do
     Map.update(status, :state, nil, fn
       %{config: config} = state when is_list(config) ->
-        %{
-          state
-          | config:
-              Keyword.put(config, :token, if(config[:token] == nil, do: nil, else: :redacted))
-        }
+        if Keyword.has_key?(config, :token),
+          do: %{state | config: Keyword.put(config, :token, :redacted)},
+          else: state
 
       other ->
         other
@@ -386,8 +348,6 @@ defmodule GlacierRelay.Command.Authority do
         _from,
         %{link: %{generation: generation} = link} = state
       ) do
-    token = state.config[:token]
-
     verdict =
       cond do
         link.protocol_version != 2 ->
@@ -399,7 +359,7 @@ defmodule GlacierRelay.Command.Authority do
         link.token_verified or link.attest_attempts > 0 ->
           {:error, :second_attest}
 
-        token == nil ->
+        not TokenHolder.available?(state.credential) ->
           {:error, :no_token_configured}
 
         attest.link_generation != generation ->
@@ -408,14 +368,15 @@ defmodule GlacierRelay.Command.Authority do
         attest.adapter_instance_id != link.adapter_instance_id ->
           {:error, :adapter_mismatch}
 
-        not Schema.mac_equal?(
-          Schema.attest_mac(token, link.nonce, generation, link.adapter_instance_id),
-          attest.mac
-        ) ->
-          {:error, :mac_mismatch}
-
         true ->
-          :ok
+          # the token is read and used only inside the holder; any failure there is a refusal
+          TokenHolder.verify(
+            state.credential,
+            link.nonce,
+            generation,
+            link.adapter_instance_id,
+            attest.mac
+          )
       end
 
     link = %{link | attest_attempts: link.attest_attempts + 1}
@@ -753,7 +714,7 @@ defmodule GlacierRelay.Command.Authority do
       not state.config[:effectful] ->
         {:error, :effectful_disabled}
 
-      state.config[:token] == nil ->
+      not TokenHolder.available?(state.credential) ->
         {:error, :no_token_configured}
 
       link == nil or link.identity != :identified ->
@@ -2028,7 +1989,7 @@ defmodule GlacierRelay.Command.Authority do
         # M6-F: one lift per authority process; the consumer's id once consumed
         transform_lift_budget: lift_budget_remaining(state),
         transform_lift_consumer: lift_consumer(state),
-        token_configured: state.config[:token] != nil,
+        token_configured: TokenHolder.available?(state.credential),
         token_source: state.token_source,
         armed:
           state.effectful &&

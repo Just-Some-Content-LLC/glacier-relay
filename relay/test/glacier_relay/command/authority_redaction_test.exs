@@ -78,13 +78,14 @@ defmodule GlacierRelay.Command.AuthorityRedactionTest do
     assert log =~ "GenServer GlacierRelay.Command.Authority terminating"
     assert log =~ "Last message"
     assert log =~ "State: "
-    assert log =~ "token: :redacted"
+    # since the token-guard correction the state holds no token to redact
+    refute log =~ "token: "
     assert not String.contains?(log, token), "the generated token appears in the captured log"
 
     assert not String.contains?(status_before, token),
            "the generated token appears in :sys.get_status before the failure"
 
-    assert status_before =~ "redacted"
+    refute Keyword.has_key?(:sys.get_state(Authority).config, :token)
 
     status_after =
       inspect(:sys.get_status(Authority), limit: :infinity, printable_limit: :infinity)

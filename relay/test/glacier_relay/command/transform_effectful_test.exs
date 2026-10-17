@@ -610,7 +610,12 @@ defmodule GlacierRelay.Command.TransformEffectfulTest do
     status = :sys.get_status(GlacierRelay.Command.Authority)
     text = inspect(status, limit: :infinity, printable_limit: :infinity)
     refute text =~ @token
-    assert text =~ "redacted"
+    # since the token-guard correction the token is not in the state at all (no redaction marker
+    # to show): the config carries no :token key and the state only the holder's reference
+    state = :sys.get_state(GlacierRelay.Command.Authority)
+    refute inspect(state, limit: :infinity, printable_limit: :infinity) =~ @token
+    refute Keyword.has_key?(state.config, :token)
+    assert is_reference(state.credential)
     # the supported view never carried it either
     refute inspect(Command.status(), limit: :infinity) =~ @token
     FakeNative.close(socket)
