@@ -179,7 +179,7 @@ No parameters (the target is compiled; nothing is addressable by a peer). On one
 | `cand_world`, `cand_local` | the 7-digit human texts of the same stored values |
 | `hero_entity_id`, `hero_flags`, `hero_world_words`, `hero_local_words`, `hero_dirty`, `hero_parent`, `hero_world` | the local hero (registry slot 0) as the control |
 
-34 entries; no property allocation (the declared transform members are copied directly). It is a precision companion to the transform operation, not an exploratory capability and not a standalone runtime stage; `relay.inspect.candidate` v1 is unchanged.
+34 entries as designed here; the implementation measured **35** (the membership verdict `cand_in_registry` was added as its own field beside `registry_slots`; the M6-F record states the measured count and bytes); no property allocation (the declared transform members are copied directly). It is a precision companion to the transform operation, not an exploratory capability and not a standalone runtime stage; `relay.inspect.candidate` v1 is unchanged.
 
 ### 12.5 The narrow effectful request: `candidate.transform.set` v1
 
