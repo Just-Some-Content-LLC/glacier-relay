@@ -601,7 +601,10 @@ defmodule GlacierRelay.Command.TransformEffectfulTest do
     FakeNative.close(socket)
   end
 
-  test "the authority's crash reports and :sys.get_status never carry the configured token (format_status redacts it)",
+  # Renamed by the M6-F1a binding correction: this checks :sys.get_status and the supported status
+  # API only; an actual crash report is captured by authority_redaction_test.exs, whose module doc
+  # states the path format_status/1 does not cover.
+  test "the authority's :sys.get_status (format_status/1) and its supported status never carry the configured token",
        %{port: port} do
     {socket, _adapter, _} = v2_peer(port)
     status = :sys.get_status(GlacierRelay.Command.Authority)
