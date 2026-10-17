@@ -373,6 +373,24 @@ defmodule GlacierRelay.Command.Schema do
 
   def validate_params(_entry, _params), do: {:error, :params_not_an_object}
 
+  @doc """
+  M6-F1a binding correction: validates the parameters a caller supplied for an entry whose
+  remaining parameters the authority derives from verified evidence — every present key against
+  its declared type, unknown keys refused, absent keys allowed. The complete parameter set is
+  still validated by `validate_params/2` before acceptance.
+  """
+  def validate_supplied(%{params: spec}, params) when is_map(params) do
+    optional =
+      Map.new(spec, fn
+        {key, {:optional, _} = type} -> {key, type}
+        {key, type} -> {key, {:optional, type}}
+      end)
+
+    validate_params(%{params: optional}, params)
+  end
+
+  def validate_supplied(_entry, _params), do: {:error, :params_not_an_object}
+
   defp check_param({:optional, _type}, :error), do: {:ok, :absent}
   defp check_param({:optional, _type}, {:ok, nil}), do: {:ok, :absent}
   defp check_param({:optional, type}, {:ok, value}), do: check_param(type, {:ok, value})

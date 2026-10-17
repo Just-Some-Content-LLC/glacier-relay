@@ -74,6 +74,7 @@ defmodule GlacierRelay.Command.Authority do
     Journal,
     Link,
     Schema,
+    TransformBinding,
     TransformReadback,
     TransformWords
   }
@@ -618,20 +619,28 @@ defmodule GlacierRelay.Command.Authority do
         # An effectful command consumes its one-shot arming first (durably), then is accepted
         # (durably), then transmitted. A failure anywhere before transmission refuses the command
         # and leaves the arming consumed: fail closed, never a second chance on the same arming.
-        with {:ok, state} <- consume_effectful(state, cmd),
+        # The accepted entry journals the parameters exactly as transmitted (M6-F1a binding
+        # correction) and, for a transform command, the binding this authority verified.
+        with {:ok, cmd} <- recheck_at_issuance(state, cmd),
+             {:ok, state} <- consume_effectful(state, cmd),
              {state, :ok} <-
                audit(
                  state,
-                 entry(cmd, "command.accepted", %{
-                   "name" => name,
-                   "version" => version,
-                   "params" => params,
-                   "preconditions" => cmd.preconditions,
-                   "ttl_ms" => cmd.ttl_ms,
-                   "effectful" => cmd.effectful,
-                   "reversal_of" => cmd.reversal_of,
-                   "reversal_inspection" => cmd.reversal_inspection
-                 })
+                 entry(
+                   cmd,
+                   "command.accepted",
+                   %{
+                     "name" => name,
+                     "version" => version,
+                     "params" => cmd.params,
+                     "preconditions" => cmd.preconditions,
+                     "ttl_ms" => cmd.ttl_ms,
+                     "effectful" => cmd.effectful,
+                     "reversal_of" => cmd.reversal_of,
+                     "reversal_inspection" => cmd.reversal_inspection
+                   }
+                   |> put_binding(cmd.binding)
+                 )
                ) do
           transmit(state, cmd)
         else
@@ -1013,10 +1022,12 @@ defmodule GlacierRelay.Command.Authority do
           not Map.has_key?(preconditions, "mission_generation") ->
         {:error, :mission_generation_required}
 
+      entry.effect == :transform ->
+        prepare_transform(state, entry, params, id, ttl, preconditions, effectful, opts)
+
       true ->
         with {:ok, valid} <- Schema.validate_params(entry, params),
              :ok <- check_not_a_noop(entry, valid),
-             :ok <- check_transform(state, entry, valid, opts),
              :ok <- check_reversal_of(state, Keyword.get(opts, :reversal_of)) do
           {:ok,
            build(
@@ -1041,24 +1052,59 @@ defmodule GlacierRelay.Command.Authority do
       else: :ok
   end
 
-  # M6-F: a restore whose target equals its expectation is already at the target (a no-op).
-  defp check_not_a_noop(%{effect: :transform}, %{"mode" => "restore"} = params) do
-    if params["target_world"] == params["expect_world"],
-      do: {:error, :already_at_restore_target},
-      else: :ok
-  end
+  # M6-F: a restore whose supplied target equals its supplied expectation is already at the
+  # target (a no-op).
+  defp check_not_a_noop(
+         %{effect: :transform},
+         %{"mode" => "restore", "target_world" => same, "expect_world" => same}
+       ),
+       do: {:error, :already_at_restore_target}
 
   defp check_not_a_noop(_entry, _params), do: :ok
 
-  # M6-F (design section 12.6): a lift carries no target or restore binding; one lift per authority
-  # process once a lift was accepted whose terminal is not a verified non-application (applied,
-  # failed, unknown or still in flight consume the budget; rejected / expired / precondition_failed
-  # / unavailable leave it); a restore carries both and is issuable only through the planner-bound
-  # facade (`:reversal_of` names the lift it restores and `:reversal_inspection` its binding).
-  defp check_transform(state, %{effect: :transform}, %{"mode" => "lift"} = params, _opts) do
+  # M6-F (design section 12.6) and the M6-F1a binding correction (M6-F record, the corrective
+  # review). The caller supplies the mode, for a restore the lift it restores, and the id of ONE
+  # completed exact inspection (`:inspection_command_id`); the expectation groups — and a
+  # restore's target — are derived by this authority from its own verified journal
+  # (`Command.TransformBinding`); a group the caller also supplied must equal them exactly. A
+  # caller-asserted binding (`:reversal_inspection`) is refused, never trusted, so this entry is
+  # the same check however it is reached. Order: the supplied shape, the no-op, the structural
+  # rules and the one-lift budget, the binding, the complete parameter set.
+  defp prepare_transform(state, entry, params, id, ttl, preconditions, effectful, opts) do
+    with {:ok, supplied} <- Schema.validate_supplied(entry, params),
+         :ok <- check_not_a_noop(entry, supplied),
+         :ok <- check_transform(state, supplied, opts),
+         {:ok, canonical, binding} <- bind_transform(state, supplied, preconditions, opts),
+         {:ok, valid} <- Schema.validate_params(entry, canonical) do
+      cmd =
+        build(
+          state,
+          entry,
+          valid,
+          id,
+          ttl,
+          preconditions,
+          effectful,
+          if(valid["mode"] == "restore", do: valid["restore_of"], else: nil),
+          nil
+        )
+
+      {:ok, with_binding(cmd, binding)}
+    end
+  end
+
+  # A lift carries no target or restore binding; one lift per authority process once a lift was
+  # accepted whose terminal is not a verified non-application (applied, failed, unknown or still in
+  # flight consume the budget; rejected / expired / precondition_failed / unavailable leave it). A
+  # restore names the applied lift it restores (`restore_of`, equal to `:reversal_of`).
+  defp check_transform(state, %{"mode" => "lift"} = params, opts) do
     cond do
-      Map.has_key?(params, "target_world") or Map.has_key?(params, "restore_of") ->
+      Map.has_key?(params, "target_world") or Map.has_key?(params, "restore_of") or
+          Keyword.get(opts, :reversal_of) != nil ->
         {:error, :lift_carries_no_target}
+
+      Keyword.get(opts, :reversal_inspection) != nil ->
+        {:error, :caller_binding_not_accepted}
 
       lift_budget_remaining(state) == 0 ->
         {:error, {:transform_budget_exhausted, lift_consumer(state)}}
@@ -1068,16 +1114,18 @@ defmodule GlacierRelay.Command.Authority do
     end
   end
 
-  defp check_transform(state, %{effect: :transform}, %{"mode" => "restore"} = params, opts) do
+  defp check_transform(state, %{"mode" => "restore"} = params, opts) do
     restore_of = params["restore_of"]
 
     cond do
-      not Map.has_key?(params, "target_world") or not is_binary(restore_of) ->
-        {:error, :restore_requires_target_and_original}
+      not is_binary(restore_of) ->
+        {:error, :restore_requires_original}
 
-      Keyword.get(opts, :reversal_of) != restore_of or
-          Keyword.get(opts, :reversal_inspection) == nil ->
+      Keyword.get(opts, :reversal_of) != restore_of ->
         {:error, :restore_requires_plan}
+
+      Keyword.get(opts, :reversal_inspection) != nil ->
+        {:error, :caller_binding_not_accepted}
 
       not Map.has_key?(state.commands, restore_of) ->
         {:error, {:restore_of_unknown, restore_of}}
@@ -1091,7 +1139,109 @@ defmodule GlacierRelay.Command.Authority do
     end
   end
 
-  defp check_transform(_state, _entry, _params, _opts), do: :ok
+  defp check_transform(_state, _params, _opts), do: {:error, {:invalid_param, "mode", :missing}}
+
+  defp bind_transform(state, supplied, preconditions, opts) do
+    inspection_id = Keyword.get(opts, :inspection_command_id)
+
+    with true <- is_binary(inspection_id) or {:error, :inspection_command_id_required},
+         {:ok, ctx} <- binding_context(state, preconditions) do
+      case supplied["mode"] do
+        "lift" ->
+          TransformBinding.lift(ctx, inspection_id, supplied)
+
+        "restore" ->
+          TransformBinding.restore(ctx, supplied["restore_of"], inspection_id, supplied)
+      end
+    end
+  end
+
+  # The evidence the binding is judged on: this authority's own journal, read from its file and
+  # verified (`Journal.read/1`: header, one journal id, contiguous sequence), with the identity of
+  # the journal the authority is writing; the journal's clock now; the current link; the
+  # command's expected generation; the in-memory records to cross-check.
+  defp binding_context(state, preconditions) do
+    with {:ok, js} <- journal_status(state.journal),
+         true <- js.status == :open or {:error, :journal_degraded},
+         {:ok, read} <- read_journal(js.path),
+         true <- read.journal_id == js.journal_id or {:error, :journal_identity_mismatch} do
+      {:ok,
+       %{
+         journal: read,
+         now_mono_ms: js.elapsed_ms,
+         max_age_ms: state.config[:reversal_inspection_max_age_ms],
+         link: %{
+           generation: state.link.generation,
+           adapter_instance_id: state.link.adapter_instance_id,
+           token_verified: state.link.token_verified
+         },
+         mission_generation: preconditions["mission_generation"],
+         records: state.commands
+       }}
+    end
+  end
+
+  defp read_journal(path) do
+    case Journal.read(path) do
+      {:ok, read} -> {:ok, read}
+      {:error, reason} -> {:error, {:journal_unreadable, reason}}
+    end
+  end
+
+  defp journal_status(journal) do
+    {:ok, Journal.status(journal)}
+  catch
+    :exit, reason -> {:error, {:journal_unavailable, reason}}
+  end
+
+  defp with_binding(cmd, binding) do
+    reversal_inspection =
+      if binding["restore_of"],
+        do: %{
+          inspection_command_id: binding["inspection_command_id"],
+          frame: binding["frame"],
+          age_ms: binding["age_ms"],
+          later_class: :held
+        },
+        else: nil
+
+    %{cmd | binding: binding, reversal_inspection: reversal_inspection}
+  end
+
+  defp put_binding(fields, nil), do: fields
+  defp put_binding(fields, binding), do: Map.put(fields, "inspection_binding", binding)
+
+  # The final issuance point (the M6-F1a binding correction): the binding was judged moments ago
+  # inside this same callback, but an expired arming, a changed link or an inspection that aged
+  # past its bound is never excused by it. The inspection's age is measured again on the journal's
+  # clock and journaled as measured here.
+  defp recheck_at_issuance(_state, %{binding: nil} = cmd), do: {:ok, cmd}
+
+  defp recheck_at_issuance(state, %{binding: binding} = cmd) do
+    e = state.effectful
+
+    cond do
+      e == nil or state.link == nil or e.link_generation != state.link.generation or
+          cmd.link_generation != state.link.generation ->
+        {:error, state, :not_armed_effectful}
+
+      mono() - e.armed_mono > e.ttl_ms ->
+        {:error, state, :effectful_arming_expired}
+
+      true ->
+        with {:ok, js} <- journal_status(state.journal),
+             true <- js.status == :open or {:error, :journal_degraded},
+             {:ok, age} <-
+               TransformBinding.age(%{"mono_ms" => binding["inspection_mono_ms"]}, %{
+                 now_mono_ms: js.elapsed_ms,
+                 max_age_ms: binding["max_age_ms"]
+               }) do
+          {:ok, with_binding(cmd, Map.put(binding, "age_ms", age))}
+        else
+          {:error, reason} -> {:error, state, reason}
+        end
+    end
+  end
 
   defp lift_consumer(state) do
     state.commands
@@ -1138,6 +1288,7 @@ defmodule GlacierRelay.Command.Authority do
       effectful: effectful,
       reversal_of: reversal_of,
       reversal_inspection: inspection,
+      binding: nil,
       link_generation: state.link.generation,
       protocol_version: state.link.protocol_version,
       adapter_instance_id: state.link.adapter_instance_id,

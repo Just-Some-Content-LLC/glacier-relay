@@ -40,8 +40,18 @@ defmodule GlacierRelay.Command.TransformRestore do
   """
   def plan(path, command_id, opts \\ []) when is_binary(path) and is_binary(command_id) do
     with :ok <- check_health(opts),
-         {:ok, journal} <- Journal.read(path),
-         {:ok, stages} <- locate(journal.entries, command_id),
+         {:ok, journal} <- Journal.read(path) do
+      plan_journal(journal, command_id, opts)
+    end
+  end
+
+  @doc """
+  `plan/3` over a journal already read and verified by `Journal.read/1` (M6-F1a binding
+  correction: the issuing authority plans from its own verified read). `opts`: `:record`.
+  """
+  def plan_journal(%{entries: entries} = journal, command_id, opts \\ [])
+      when is_list(entries) and is_binary(command_id) do
+    with {:ok, stages} <- locate(journal.entries, command_id),
          {:ok, accepted} <- check_accepted(stages.accepted),
          {:ok, terminal} <- check_terminal(stages.terminal),
          {:ok, adapter} <- adapter_identity(journal.entries, accepted["link_generation"]),
@@ -154,9 +164,12 @@ defmodule GlacierRelay.Command.TransformRestore do
     end
   end
 
-  # The later state against the plan: the postimage binds a restoration; the preimage means none
-  # is needed; everything else stops effectful issuance with its class.
-  defp state_matches(words, dirty, parent, plan) do
+  @doc """
+  The later state against the plan: the postimage (with the postimage's parent) binds a
+  restoration; the preimage means none is needed (`:already_at_baseline`); a dirty cache is
+  `:inspection_cache_dirty`; everything else stops effectful issuance with its class.
+  """
+  def state_matches(words, dirty, parent, plan) do
     later = %{world_words: {:ok, words}, dirty: {:ok, dirty}}
 
     case TransformReadback.classify_later(later, plan.preimage_world, plan.postimage_world) do

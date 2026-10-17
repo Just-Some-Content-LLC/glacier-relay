@@ -86,11 +86,17 @@ defmodule GlacierRelay.Command do
   @doc """
   M6-F: issues `candidate.transform.set` v1 in mode `lift` — the compiled +0.25 world-z
   displacement of the compiled candidate, computed natively from the freshly validated snapshot.
-  `params`: `%{"expect_world", "expect_local", "expect_parent"}` — the exact words and parent of a
-  recent `relay.inspect.candidate_transform/1`; `opts`: `:expected_generation` (required),
-  `:ttl_ms`. Refused unless the link is token-verified, the entry was advertised, effectful arming
-  is held and this authority's one lift budget is unconsumed; a supplied target or restore binding
-  is refused. The lift is a limited experimental exposure with unknown engine consequences, not
+  `opts`: `:inspection_command_id` (required: ONE completed `relay.inspect.candidate_transform/1`
+  of this authority; never an implicit latest inspection), `:expected_generation` (required),
+  `:ttl_ms`. The authority verifies that inspection from its own journal (the current
+  token-verified link and adapter, the expected generation, within
+  `reversal_inspection_max_age_ms` on the journal's clock, the compiled target tuple qualified, a
+  clean and finite snapshot; `Command.TransformBinding`) and derives the expectation groups from
+  it; `params` may carry `"expect_world"`, `"expect_local"` and `"expect_parent"`, which must then
+  equal them exactly. The accepted entry journals the binding and the parameters as transmitted.
+  Refused unless the link is token-verified, the entry was advertised, effectful arming is held
+  and this authority's one lift budget is unconsumed; a supplied target or restore binding is
+  refused. The lift is a limited experimental exposure with unknown engine consequences, not
   collision-proven safety, and not a visual-presence experiment.
   """
   def lift_candidate(params, opts \\ []) when is_map(params) and is_list(opts) do
@@ -130,8 +136,11 @@ defmodule GlacierRelay.Command do
   lift's postimage, later than the lift, within `reversal_inspection_max_age_ms`) and
   `:expected_generation` (the live attempt's; it must equal the plan's). `{:error,
   :already_at_baseline}` means the engine already shows the preimage: no restoration call is
-  needed and none is submitted. Needs its own effectful arming; nothing restores automatically;
-  the native side revalidates against its own operation record before the one setter call.
+  needed and none is submitted. These checks here give the operator an early answer; the issuing
+  authority repeats the plan and the inspection check itself from its own journal (M6-F1a binding
+  correction) — only the inspection id crosses, never a binding. Needs its own effectful arming;
+  nothing restores automatically; the native side revalidates against its own operation record
+  before the one setter call.
   Restoring observed transform values is not a rollback of physics, perception, script, animation
   or other gameplay consequences.
   """
@@ -164,12 +173,7 @@ defmodule GlacierRelay.Command do
             "restore_of" => command_id
           },
           opts
-          |> Keyword.drop([:inspection_command_id])
           |> Keyword.put(:reversal_of, command_id)
-          |> Keyword.put(
-            :reversal_inspection,
-            Map.take(binding, [:inspection_command_id, :frame, :age_ms, :later_class])
-          )
           |> with_generation()
         )
       end

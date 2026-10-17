@@ -340,8 +340,9 @@ defmodule GlacierRelay.Command.TransformEffectfulTest do
 
     assert {:error, :timeout} = FakeNative.recv(socket, 100)
 
-    # a lift the peer refuses (precondition_failed) leaves the budget; its arming is consumed
-    assert {:ok, refused} = lift()
+    # a lift the peer refuses (precondition_failed) leaves the budget; its arming is consumed (the
+    # M6-F1a binding correction: every lift names its exact inspection)
+    assert {:ok, refused} = lift(@expect, inspection_command_id: insp0)
     assert {:ok, rcmd} = FakeNative.recv(socket)
 
     assert rcmd["params"] == Map.put(@expect, "mode", "lift") and
@@ -365,7 +366,7 @@ defmodule GlacierRelay.Command.TransformEffectfulTest do
 
     # the lift ladder
     arm_eff(adapter)
-    assert {:ok, id} = lift()
+    assert {:ok, id} = lift(@expect, inspection_command_id: insp0)
 
     assert Command.status().effectful.transform_lift_budget == 0 and
              Command.status().effectful.transform_lift_consumer == id
@@ -475,9 +476,9 @@ defmodule GlacierRelay.Command.TransformEffectfulTest do
   test "the restoration is planned from the journal, bound to a later exact inspection, refused when the engine already shows the baseline or drifted, needs its own arming and reports the restore facts",
        %{port: port} do
     {socket, adapter, _} = v2_peer(port)
-    _insp0 = inspect_exact(socket, adapter, @pre, 19_000)
+    insp0 = inspect_exact(socket, adapter, @pre, 19_000)
     arm_eff(adapter)
-    assert {:ok, id} = lift()
+    assert {:ok, id} = lift(@expect, inspection_command_id: insp0)
     assert {:ok, cmd} = FakeNative.recv(socket)
     assert {:error, {:received_entries, 0}} = Command.plan_transform_restore(id)
     applied(socket, cmd, adapter, "lift", @pre, @target, @target)
@@ -615,9 +616,9 @@ defmodule GlacierRelay.Command.TransformEffectfulTest do
   test "an uncertain lift consumes the budget and is never planned; an unapplied restore result is recorded as not restored",
        %{port: port} do
     {socket, adapter, _} = v2_peer(port)
-    _ = inspect_exact(socket, adapter, @pre, 19_000)
+    insp0 = inspect_exact(socket, adapter, @pre, 19_000)
     arm_eff(adapter)
-    assert {:ok, id} = lift()
+    assert {:ok, id} = lift(@expect, inspection_command_id: insp0)
     assert {:ok, cmd} = FakeNative.recv(socket)
 
     applied(
