@@ -600,6 +600,18 @@ defmodule GlacierRelay.Command.TransformEffectfulTest do
     FakeNative.close(socket)
   end
 
+  test "the authority's crash reports and :sys.get_status never carry the configured token (format_status redacts it)",
+       %{port: port} do
+    {socket, _adapter, _} = v2_peer(port)
+    status = :sys.get_status(GlacierRelay.Command.Authority)
+    text = inspect(status, limit: :infinity, printable_limit: :infinity)
+    refute text =~ @token
+    assert text =~ "redacted"
+    # the supported view never carried it either
+    refute inspect(Command.status(), limit: :infinity) =~ @token
+    FakeNative.close(socket)
+  end
+
   test "an uncertain lift consumes the budget and is never planned; an unapplied restore result is recorded as not restored",
        %{port: port} do
     {socket, adapter, _} = v2_peer(port)

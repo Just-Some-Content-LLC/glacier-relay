@@ -247,6 +247,24 @@ defmodule GlacierRelay.Command.Authority do
     end
   end
 
+  # The run token lives in the state's config; a crash report or :sys.get_status must never print it (the M6-F1a smoke
+  # run's crash report did, with an ephemeral test token — e2e-smoke2-NOTE.txt). The whole config is redacted: the status
+  # map (status/0) is the supported view and never carries the token.
+  @impl true
+  def format_status(status) do
+    Map.update(status, :state, nil, fn
+      %{config: config} = state when is_list(config) ->
+        %{
+          state
+          | config:
+              Keyword.put(config, :token, if(config[:token] == nil, do: nil, else: :redacted))
+        }
+
+      other ->
+        other
+    end)
+  end
+
   @impl true
   def handle_call({:link_opened, pid, peer}, _from, %{link: nil} = state) do
     generation = state.next_generation
