@@ -114,7 +114,17 @@ defmodule GlacierRelay.Command.TransformReadback do
   def words(%{"status" => status}, _kind) when is_binary(status), do: {:unobserved, status}
   def words(_other, _kind), do: :missing
 
+  # The packed restore facts' keys, fixed at compile time: a key is never converted to an atom dynamically (a fresh VM has
+  # not necessarily created it; the test VM had, which hid this until the joint matrix ran against a live node).
   @restore_keys ~w(world local parent dirty snapshot within_tol)
+  @restore_atoms %{
+    "world" => :world,
+    "local" => :local,
+    "parent" => :parent,
+    "dirty" => :dirty,
+    "snapshot" => :snapshot,
+    "within_tol" => :within_tol
+  }
 
   @doc "The packed restore facts `world=B,local=B,parent=B,dirty=B,snapshot=B,within_tol=B` as a map of booleans."
   def restore_facts(nil), do: :missing
@@ -133,7 +143,7 @@ defmodule GlacierRelay.Command.TransformReadback do
            end),
          false <- :error in parsed,
          true <- Enum.map(parsed, &elem(&1, 0)) == @restore_keys do
-      {:ok, Map.new(parsed, fn {k, v} -> {String.to_existing_atom(k), v} end)}
+      {:ok, Map.new(parsed, fn {k, v} -> {Map.fetch!(@restore_atoms, k), v} end)}
     else
       _ -> {:invalid, value}
     end
