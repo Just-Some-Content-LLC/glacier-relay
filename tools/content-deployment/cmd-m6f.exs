@@ -5,7 +5,9 @@
 # the +0.25 world-z target; no target, location, direction, rotation, scale, distance, entity, pointer or function name can be
 # supplied here) behind a local guard over the qualifying exact inspection, and its restoration only through
 # Command.restore_candidate/2 (the journal's plan bound to a later exact inspection; "already at baseline" means none is
-# submitted). Every action appends to operator-actions.log and dumps the resulting status and command record under
+# submitted). M6-F1a binding correction: both pass the inspection's id; the issuing authority verifies that inspection from
+# its own journal and journals the binding with the accepted command ("inspection_binding", verified_by "authority"); the
+# local guard below is an early operator check, never the authority. Every action appends to operator-actions.log and dumps the resulting status and command record under
 # <label>-*. The run token is never read, printed or passed by this script.
 #
 #   elixir --sname op-<label> -S mix run --no-start cmd-m6f.exs <evidence-dir> <label> <action> [args]
@@ -297,7 +299,7 @@ case action do
 
     params = %{"expect_world" => ov.(ins, "cand_world_words"), "expect_local" => ov.(ins, "cand_local_words"), "expect_parent" => ov.(ins, "cand_parent")}
     log.("lift expectation (bit for bit, from the inspection, never from its seven-digit text): #{inspect(params)}; the expected native target (replicated for the cross-check only): #{TransformWords.encode(TransformWords.lift_target(elem(TransformWords.decode_world(params["expect_world"]), 1)))}")
-    r = call.(cmd, :lift_candidate, [params, [expected_generation: gen, ttl_ms: ttl]])
+    r = call.(cmd, :lift_candidate, [params, [inspection_command_id: insp, expected_generation: gen, ttl_ms: ttl]])
 
     case r do
       {:ok, id} ->
@@ -310,6 +312,17 @@ case action do
         expected_target = words.(c, "preimage_world_words", :world) && TransformWords.lift_target(words.(c, "preimage_world_words", :world))
         ev.("lift.requested-is-compiled-lift-of-preimage", expected_target != nil and words.(c, "requested_world_words", :world) == expected_target, "requested #{wtext.(words.(c, "requested_world_words", :world))} vs preimage z + 0.25 in binary32 #{wtext.(expected_target)} (every other word copied)")
         ev.("lift.budget-consumed", ov.(c, "budget_remaining") == 0 and call.(cmd, :status, []).effectful.transform_lift_budget == 0, "native budget_remaining #{fld.(c, "budget_remaining")}; BEAM lift budget #{inspect(call.(cmd, :status, []).effectful.transform_lift_budget)}")
+        j = call.(GlacierRelay.Command.Journal, :status, [])
+
+        accepted =
+          case call.(GlacierRelay.Command.Journal, :read, [j.path]) do
+            {:ok, read} -> Enum.find(read.entries, &(&1["event"] == "command.accepted" and &1["command_id"] == id))
+            other -> log.("journal read for the binding failed: #{inspect(other)}"); nil
+          end
+
+        b = (accepted && accepted["inspection_binding"]) || %{}
+        ev.("lift.binding-verified-by-authority", b["verified_by"] == "authority" and b["inspection_command_id"] == insp and b["expect_world"] == params["expect_world"] and b["expect_local"] == params["expect_local"] and b["expect_parent"] == params["expect_parent"] and is_integer(b["age_ms"]) and b["age_ms"] <= b["max_age_ms"], inspect(Map.drop(b, ["label"])))
+        ev.("lift.journaled-params-equal-transmitted", accepted != nil and accepted["params"] == c.params, inspect(accepted && accepted["params"]))
         log.("lift consequences: #{inspect(c.consequences)} (a changed stored matrix is not collision-proven safety, not a rendered position and not a visual-presence result; the later exact observations decide held / returned / drifted)")
 
       other ->
@@ -356,6 +369,8 @@ case action do
           end
 
         ev.("restore.binding-journaled", bound != nil and bound["reversal_of"] == orig and bound["reversal_inspection"]["inspection_command_id"] == insp and bound["reversal_inspection"]["later_class"] == "held", inspect(bound && Map.take(bound, ["reversal_of", "reversal_inspection", "seq"])))
+        rb = (bound && bound["inspection_binding"]) || %{}
+        ev.("restore.binding-verified-by-authority", rb["verified_by"] == "authority" and rb["inspection_command_id"] == insp and rb["restore_of"] == orig and rb["target_world"] == plan.target_world and rb["later_class"] == "held", inspect(Map.drop(rb, ["label"])))
         log.("restore consequences: #{inspect(c.consequences)} (restoring observed transform values is not a rollback of physics, perception, script, animation or other gameplay consequences)")
 
       {:error, :already_at_baseline} ->
