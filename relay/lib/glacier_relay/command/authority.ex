@@ -69,7 +69,14 @@ defmodule GlacierRelay.Command.Authority do
   use GenServer
   require Logger
 
-  alias GlacierRelay.Command.{Correlation, Journal, Link, Schema}
+  alias GlacierRelay.Command.{
+    Correlation,
+    Journal,
+    Link,
+    Schema,
+    TransformReadback,
+    TransformWords
+  }
 
   @defaults [
     ack_timeout_ms: 2_000,
@@ -991,6 +998,7 @@ defmodule GlacierRelay.Command.Authority do
       true ->
         with {:ok, valid} <- Schema.validate_params(entry, params),
              :ok <- check_not_a_noop(entry, valid),
+             :ok <- check_transform(state, entry, valid, opts),
              :ok <- check_reversal_of(state, Keyword.get(opts, :reversal_of)) do
           {:ok,
            build(
@@ -1015,7 +1023,75 @@ defmodule GlacierRelay.Command.Authority do
       else: :ok
   end
 
+  # M6-F: a restore whose target equals its expectation is already at the target (a no-op).
+  defp check_not_a_noop(%{effect: :transform}, %{"mode" => "restore"} = params) do
+    if params["target_world"] == params["expect_world"],
+      do: {:error, :already_at_restore_target},
+      else: :ok
+  end
+
   defp check_not_a_noop(_entry, _params), do: :ok
+
+  # M6-F (design section 12.6): a lift carries no target or restore binding; one lift per authority
+  # process once a lift was accepted whose terminal is not a verified non-application (applied,
+  # failed, unknown or still in flight consume the budget; rejected / expired / precondition_failed
+  # / unavailable leave it); a restore carries both and is issuable only through the planner-bound
+  # facade (`:reversal_of` names the lift it restores and `:reversal_inspection` its binding).
+  defp check_transform(state, %{effect: :transform}, %{"mode" => "lift"} = params, _opts) do
+    cond do
+      Map.has_key?(params, "target_world") or Map.has_key?(params, "restore_of") ->
+        {:error, :lift_carries_no_target}
+
+      lift_budget_remaining(state) == 0 ->
+        {:error, {:transform_budget_exhausted, lift_consumer(state)}}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp check_transform(state, %{effect: :transform}, %{"mode" => "restore"} = params, opts) do
+    restore_of = params["restore_of"]
+
+    cond do
+      not Map.has_key?(params, "target_world") or not is_binary(restore_of) ->
+        {:error, :restore_requires_target_and_original}
+
+      Keyword.get(opts, :reversal_of) != restore_of or
+          Keyword.get(opts, :reversal_inspection) == nil ->
+        {:error, :restore_requires_plan}
+
+      not Map.has_key?(state.commands, restore_of) ->
+        {:error, {:restore_of_unknown, restore_of}}
+
+      state.commands[restore_of].name != "candidate.transform.set" or
+          state.commands[restore_of].params["mode"] != "lift" ->
+        {:error, :restore_of_not_a_lift}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp check_transform(_state, _entry, _params, _opts), do: :ok
+
+  defp lift_consumer(state) do
+    state.commands
+    |> Map.values()
+    |> Enum.find(&lift_consumes?/1)
+    |> case do
+      nil -> nil
+      cmd -> cmd.id
+    end
+  end
+
+  defp lift_consumes?(cmd) do
+    cmd.name == "candidate.transform.set" and cmd.version == 1 and cmd.params["mode"] == "lift" and
+      cmd.status not in [:rejected, :expired, :precondition_failed, :unavailable]
+  end
+
+  @doc false
+  def lift_budget_remaining(state), do: if(lift_consumer(state) == nil, do: 1, else: 0)
 
   defp check_reversal_of(_state, nil), do: :ok
 
@@ -1180,6 +1256,55 @@ defmodule GlacierRelay.Command.Authority do
   # compare against, the hero tuple is compared with the requested and the prior tuples instead
   # (`matches_requested`, `matches_previous`, `other`). The planner still never reverses a
   # `failed` terminal from this: a fresh command with a fresh expect_current is the operator's path.
+  defp later_frame(state, %{name: "candidate.transform.set"} = cmd, base, inspection_id) do
+    # M6-F: the later exact inspection against the lift's exact groups (section 12.8): a sampled
+    # state classified by bit equality and the declared tolerance; never a cause.
+    with true <- is_binary(inspection_id) or {:error, :inspection_command_id_required},
+         {:ok, inspection} <-
+           Map.fetch(state.commands, inspection_id) |> ok_or(:inspection_unknown),
+         true <-
+           (inspection.name == "relay.inspect.candidate_transform" and
+              inspection.status == :applied) or
+             {:error, :inspection_not_applied},
+         true <- observable_later?(cmd) or {:error, :command_not_applied},
+         applied = TransformReadback.decode_apply(cmd.result.observed || %{}),
+         {:ok, preimage} <-
+           applied.preimage.world_words |> ok_or(:preimage_words_unobserved),
+         {:ok, requested} <-
+           applied.requested_world_words |> ok_or(:requested_words_unobserved) do
+      later = TransformReadback.decode_inspection(inspection.result.observed || %{})
+      same_generation = inspection.result.mission_generation == cmd.result.mission_generation
+
+      later? =
+        is_integer(inspection.result.frame) and is_integer(cmd.result.frame) and
+          inspection.result.frame > cmd.result.frame
+
+      conclusion =
+        cond do
+          not same_generation ->
+            "other_generation"
+
+          not later? ->
+            "not_a_later_frame"
+
+          true ->
+            to_string(TransformReadback.classify_later(later.candidate, preimage, requested))
+        end
+
+      {:ok,
+       Map.merge(base, %{
+         "inspection_command_id" => inspection_id,
+         "inspection_frame" => inspection.result.frame,
+         "command_frame" => cmd.result.frame,
+         "conclusion" => conclusion,
+         "comparison" =>
+           "bit equality; tolerance #{TransformWords.tolerance()} per world word for near_*",
+         "evidence_class" =>
+           "native_later_frame (the peer's own exact read-back on a later frame; a sampled state, not continuous behaviour, not independent)"
+       })}
+    end
+  end
+
   defp later_frame(state, cmd, base, inspection_id) do
     with true <- is_binary(inspection_id) or {:error, :inspection_command_id_required},
          {:ok, inspection} <-
@@ -1513,8 +1638,15 @@ defmodule GlacierRelay.Command.Authority do
 
     read_back =
       case Schema.observed_tuple(observed, "current") do
-        {:ok, _} -> :native_same_frame
-        :unobserved -> :none
+        {:ok, _} ->
+          :native_same_frame
+
+        :unobserved ->
+          # M6-F: the transform result's same-frame read-back is its postimage world group
+          case TransformReadback.words(observed["postimage_world_words"], :world) do
+            {:ok, _} -> :native_same_frame
+            _ -> :none
+          end
       end
 
     Map.merge(empty_effect(), %{invocation: invocation, effect: effect, read_back: read_back})
@@ -1522,6 +1654,21 @@ defmodule GlacierRelay.Command.Authority do
 
   # A reversal's terminal: the reported current tuple against the original command's reported
   # previous tuple (native_same_frame), or not restored, or unreported.
+  defp classify_restoration(state, %{name: "candidate.transform.set"} = cmd, result) do
+    # M6-F: the restoration's post world words against the lift's preimage words (bit equality;
+    # section 12.9's world_restored_exact); the finer facts stay in the result's restore_facts.
+    original = state.commands[cmd.reversal_of]
+
+    with %{result: %{observed: observed}} when is_map(observed) <- original,
+         {:ok, preimage} <- TransformReadback.decode_apply(observed).preimage.world_words,
+         {:ok, post} <-
+           TransformReadback.decode_apply(result.observed || %{}).postimage.world_words do
+      if post == preimage, do: :native_same_frame, else: :not_restored
+    else
+      _ -> :unreported
+    end
+  end
+
   defp classify_restoration(state, cmd, result) do
     original = state.commands[cmd.reversal_of]
 
@@ -1709,6 +1856,9 @@ defmodule GlacierRelay.Command.Authority do
       effectful: %{
         enabled: state.config[:effectful] == true,
         reversal_inspection_max_age_ms: state.config[:reversal_inspection_max_age_ms],
+        # M6-F: one lift per authority process; the consumer's id once consumed
+        transform_lift_budget: lift_budget_remaining(state),
+        transform_lift_consumer: lift_consumer(state),
         token_configured: state.config[:token] != nil,
         token_source: state.token_source,
         armed:

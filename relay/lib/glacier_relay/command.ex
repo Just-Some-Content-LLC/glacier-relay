@@ -12,7 +12,7 @@ defmodule GlacierRelay.Command do
   authority advertises it only to a version-2 peer that attests the run token.
   """
 
-  alias GlacierRelay.Command.{Authority, Journal, Reversal}
+  alias GlacierRelay.Command.{Authority, Journal, Reversal, TransformRestore}
 
   @doc "Whether the command subtree is running in this node."
   def enabled?, do: Process.whereis(GlacierRelay.Command.Supervisor) != nil
@@ -71,6 +71,123 @@ defmodule GlacierRelay.Command do
   """
   def inspect_candidate(params \\ %{}, opts \\ []) when is_map(params) and is_list(opts),
     do: guarded(fn -> Authority.issue("relay.inspect.candidate", 1, params, opts) end)
+
+  @doc """
+  M6-F: issues `relay.inspect.candidate_transform` v1 (read-only, no effect, no parameters): on
+  one native frame, the compiled candidate's and the local hero's exact stored transform words
+  (a 12-word world group and a 7-word parent-relative group), dirty flags, parents, the identity
+  block and registry membership. `opts` as `probe/1`. Inert arming only. The read-back decodes
+  with `Command.TransformReadback`; it is the expectation source of a lift and of a restoration,
+  and the later observation of either. A sampled state, never a claim about simulation.
+  """
+  def inspect_candidate_transform(opts \\ []) when is_list(opts),
+    do: guarded(fn -> Authority.issue("relay.inspect.candidate_transform", 1, %{}, opts) end)
+
+  @doc """
+  M6-F: issues `candidate.transform.set` v1 in mode `lift` — the compiled +0.25 world-z
+  displacement of the compiled candidate, computed natively from the freshly validated snapshot.
+  `params`: `%{"expect_world", "expect_local", "expect_parent"}` — the exact words and parent of a
+  recent `relay.inspect.candidate_transform/1`; `opts`: `:expected_generation` (required),
+  `:ttl_ms`. Refused unless the link is token-verified, the entry was advertised, effectful arming
+  is held and this authority's one lift budget is unconsumed; a supplied target or restore binding
+  is refused. The lift is a limited experimental exposure with unknown engine consequences, not
+  collision-proven safety, and not a visual-presence experiment.
+  """
+  def lift_candidate(params, opts \\ []) when is_map(params) and is_list(opts) do
+    guarded(fn ->
+      Authority.issue(
+        "candidate.transform.set",
+        1,
+        Map.put(params, "mode", "lift"),
+        with_generation(opts)
+      )
+    end)
+  end
+
+  @doc """
+  M6-F: plans the restoration of an applied lift from the verified journal file
+  (`Command.TransformRestore`), cross-checked against the authority's record. Performs nothing.
+  """
+  def plan_transform_restore(command_id) when is_binary(command_id) do
+    guarded(fn ->
+      journal = Journal.status()
+      s = Authority.status()
+
+      TransformRestore.plan(journal.path, command_id,
+        record: Authority.command(command_id),
+        journal_status: journal.status,
+        audit: if(s.audit == :intact, do: :intact, else: :degraded)
+      )
+    end)
+  end
+
+  @doc """
+  M6-F: issues the planned restoration of the lift `command_id` — `candidate.transform.set` v1 in
+  mode `restore`, whose `target_world` is the lift's journaled preimage world group and whose
+  expectation is the later exact inspection's words. `opts` must carry `:inspection_command_id`
+  (a completed `relay.inspect.candidate_transform/1` that `TransformRestore.verify_inspection/4`
+  accepts: the current adapter and link, the plan's generation, a clean cache, words equal to the
+  lift's postimage, later than the lift, within `reversal_inspection_max_age_ms`) and
+  `:expected_generation` (the live attempt's; it must equal the plan's). `{:error,
+  :already_at_baseline}` means the engine already shows the preimage: no restoration call is
+  needed and none is submitted. Needs its own effectful arming; nothing restores automatically;
+  the native side revalidates against its own operation record before the one setter call.
+  Restoring observed transform values is not a rollback of physics, perception, script, animation
+  or other gameplay consequences.
+  """
+  def restore_candidate(command_id, opts) when is_binary(command_id) and is_list(opts) do
+    guarded(fn ->
+      status = Authority.status()
+      journal = Journal.status()
+
+      with {:ok, plan} <- plan_transform_restore(command_id),
+           {:ok, read} <- Journal.read(journal.path),
+           {:ok, binding} <-
+             TransformRestore.verify_inspection(
+               read.entries,
+               plan,
+               Keyword.get(opts, :inspection_command_id),
+               now_mono_ms: journal.elapsed_ms,
+               link_generation: status.link && status.link.generation,
+               max_age_ms: status.effectful.reversal_inspection_max_age_ms
+             ),
+           :ok <- confirm_generation(plan, Keyword.get(opts, :expected_generation)) do
+        Authority.issue(
+          "candidate.transform.set",
+          1,
+          %{
+            "mode" => "restore",
+            "expect_world" => binding.expect_world,
+            "expect_local" => binding.expect_local,
+            "expect_parent" => binding.expect_parent,
+            "target_world" => plan.target_world,
+            "restore_of" => command_id
+          },
+          opts
+          |> Keyword.drop([:inspection_command_id])
+          |> Keyword.put(:reversal_of, command_id)
+          |> Keyword.put(
+            :reversal_inspection,
+            Map.take(binding, [:inspection_command_id, :frame, :age_ms, :later_class])
+          )
+          |> with_generation()
+        )
+      end
+    end)
+  end
+
+  defp confirm_generation(plan, generation) do
+    cond do
+      not is_binary(generation) ->
+        {:error, :expected_generation_required}
+
+      generation != plan.mission_generation ->
+        {:error, {:generation_mismatch, plan.mission_generation}}
+
+      true ->
+        :ok
+    end
+  end
 
   @doc """
   M5 C-2A: records the operator's telemetry attestation (the adapter identity read from the

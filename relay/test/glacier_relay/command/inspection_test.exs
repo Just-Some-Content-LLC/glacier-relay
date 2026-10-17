@@ -112,6 +112,7 @@ defmodule GlacierRelay.Command.InspectionTest do
 
     assert Enum.sort(Enum.map(Schema.issuable(), & &1["name"])) == [
              "relay.inspect.candidate",
+             "relay.inspect.candidate_transform",
              "relay.inspect.entity",
              "relay.inspect.outfit",
              "relay.inspect.players",
@@ -160,6 +161,7 @@ defmodule GlacierRelay.Command.InspectionTest do
 
     assert Enum.sort(Enum.map(welcome["allowlist"], & &1["name"])) == [
              "relay.inspect.candidate",
+             "relay.inspect.candidate_transform",
              "relay.inspect.entity",
              "relay.inspect.outfit",
              "relay.inspect.players",

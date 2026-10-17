@@ -163,9 +163,10 @@ defmodule GlacierRelay.Command.SchemaTest do
   end
 
   describe "allowlist and parameters" do
-    test "relay.probe, relay.inspect.outfit, relay.inspect.players, relay.inspect.entity and relay.inspect.candidate are the issuable entries; player.outfit.set is reserved and requires an authenticated peer" do
+    test "the six inert entries (probe, outfit, players, entity, candidate, candidate_transform) are issuable; player.outfit.set is reserved and requires an authenticated peer" do
       assert Schema.issuable() == [
                %{"name" => "relay.inspect.candidate", "version" => 1},
+               %{"name" => "relay.inspect.candidate_transform", "version" => 1},
                %{"name" => "relay.inspect.entity", "version" => 1},
                %{"name" => "relay.inspect.outfit", "version" => 1},
                %{"name" => "relay.inspect.players", "version" => 1},
@@ -236,6 +237,7 @@ defmodule GlacierRelay.Command.SchemaTest do
                "node" => "relay@test",
                "allowlist" => [
                  %{"name" => "relay.inspect.candidate", "version" => 1},
+                 %{"name" => "relay.inspect.candidate_transform", "version" => 1},
                  %{"name" => "relay.inspect.entity", "version" => 1},
                  %{"name" => "relay.inspect.outfit", "version" => 1},
                  %{"name" => "relay.inspect.players", "version" => 1},

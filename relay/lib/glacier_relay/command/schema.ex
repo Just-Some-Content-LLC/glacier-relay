@@ -67,6 +67,19 @@ defmodule GlacierRelay.Command.Schema do
   values that share one availability condition travel as one text field with a fixed grammar
   (`Command.CandidateReadback` decodes it); every field object still carries its own status.
   Presence is never initialization, simulation, placement, visibility or playability.
+
+  M6-F adds the exact-transform pair (`docs/design/M6D2_NEXT_STEP_DESIGN.md` sections 12.3–12.9):
+  `relay.inspect.candidate_transform` v1 (inert, no parameters: the compiled candidate's and the
+  local hero's stored transform as exact binary32 words — a 12-word world group and a 7-word
+  parent-relative group, each eight lowercase hex digits per word, every word finite — with the
+  dirty flag, the parent id and the identity block; `Command.TransformReadback` decodes it) and
+  `candidate.transform.set` v1 (`:effectful`, `:token_verified`: `mode` `lift` — the compiled
+  +0.25 world-z displacement computed natively from a freshly validated snapshot — or `restore`,
+  with `expect_world` / `expect_local` / `expect_parent` from a recent exact inspection and, for a
+  restore only, the journaled `target_world` and the original `restore_of`; a mandatory
+  `mission_generation` precondition). No location, direction, rotation, scale, distance, entity,
+  pointer or function name is a parameter. One lift per authority process (`Command.Authority`);
+  a restore is issuable only through the planner-bound facade (`Command.TransformRestore`).
   """
 
   @protocol_versions [1, 2]
@@ -75,6 +88,8 @@ defmodule GlacierRelay.Command.Schema do
   @nonce_bytes 16
   @uuid ~r/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
   @hex16 ~r/^[0-9a-f]{16}$/
+  @words12 ~r/^[0-9a-f]{8}(,[0-9a-f]{8}){11}$/
+  @words7 ~r/^[0-9a-f]{8}(,[0-9a-f]{8}){6}$/
   @hex32 ~r/^[0-9a-f]{32}$/
   @hex64 ~r/^[0-9a-f]{64}$/
 
@@ -154,6 +169,38 @@ defmodule GlacierRelay.Command.Schema do
       reversal: :none,
       doc:
         "M6-D1a: read-only, frame-local inspection of the candidate hero (the historical hitmen.brick / Agent48 by default) beside the local hero as its control — the stored spatial fields (cached world translation with its dirty flag, parent-relative translation and rotation, parent entity id, transform-tree link presence, visibility bits), the presence of the hero's simulation members and controllers (null / present / interface-resolved; never initialization or simulation), the outfit tuple, the m_bActive property through the SDK's property mechanism, the spawn entity's class, stored transform and four authored properties, and the four registry slots classified by entity identity on the same frame; the two optional ids are 16 lowercase hex digits naming content, never an address; the spawn id is fixed natively; packed groups follow the documented grammar; every read-back field carries its own status; no engine write"
+    },
+    {"relay.inspect.candidate_transform", 1} => %{
+      name: "relay.inspect.candidate_transform",
+      version: 1,
+      effect: :none,
+      issuable: true,
+      trust: :identified,
+      params: %{},
+      preconditions: [],
+      reversal: :none,
+      doc:
+        "M6-F: read-only, frame-local exact snapshot of the compiled candidate (hitmen.brick / Agent48; no parameter) and the local hero — the stored world matrix as twelve binary32 words and the parent-relative transform as seven, the dirty flag, the parent id, the visibility bits, the identity block, whether the candidate's spatial interface differs from the hero's, and registry membership by identity; the seven-digit texts beside the words are for reading only; no property allocation, no refreshing getter, no engine write"
+    },
+    {"candidate.transform.set", 1} => %{
+      name: "candidate.transform.set",
+      version: 1,
+      effect: :transform,
+      issuable: :effectful,
+      trust: :token_verified,
+      params: %{
+        "mode" => {:enum, ["lift", "restore"]},
+        "expect_world" => :words12,
+        "expect_local" => :words7,
+        "expect_parent" => :parent_id,
+        "target_world" => {:optional, :words12},
+        "restore_of" => {:optional, :uuid}
+      },
+      preconditions: [:mission_generation],
+      reversal:
+        "a separate candidate.transform.set v1 in mode restore whose target_world is the lift's journaled preimage world group and whose expectation is a later exact inspection's words, planned from the verified journal (Command.TransformRestore), bound to the original lift and to the native operation record, issued only under fresh arming; an engine return to baseline needs no restoration and none is submitted",
+      doc:
+        "M6-F: the one bounded transform change of the compiled candidate — mode lift: the compiled +0.25 world-z displacement computed natively from the freshly validated snapshot (no target may be supplied); mode restore: the journaled preimage world group of one earlier lift, bound to it; both carry the exact expectation groups (12 and 7 binary32 words) and parent of a recent exact inspection and the mandatory mission_generation precondition; one SetObjectToWorldMatrixFromEditor call behind the applying-frame gate; one lift per process natively and per authority here; issuable only on a token-verified version-2 link under one-shot effectful arming; the setter's runtime semantics on a character are the experiment's question, never assumed"
     },
     {"player.outfit.set", 1} => %{
       name: "player.outfit.set",
@@ -255,6 +302,22 @@ defmodule GlacierRelay.Command.Schema do
   @doc "Exactly 16 lowercase hex digits (a runtime resource id or an authored entity id as text)."
   def hex16?(value), do: is_binary(value) and Regex.match?(@hex16, value)
 
+  @doc "A 12-word world group: twelve eight-lowercase-hex-digit words joined by commas, every word finite."
+  def words12?(value),
+    do: is_binary(value) and Regex.match?(@words12, value) and finite_words?(value)
+
+  @doc "A 7-word parent-relative group, likewise."
+  def words7?(value),
+    do: is_binary(value) and Regex.match?(@words7, value) and finite_words?(value)
+
+  defp finite_words?(value) do
+    value
+    |> String.split(",")
+    |> Enum.all?(fn word ->
+      Bitwise.band(Bitwise.bsr(String.to_integer(word, 16), 23), 0xFF) != 0xFF
+    end)
+  end
+
   # -- attestation (version 2) --------------------------------------------------------------------
 
   @doc "A fresh cryptographically random nonce (#{@nonce_bytes} bytes) as lowercase hex."
@@ -320,6 +383,22 @@ defmodule GlacierRelay.Command.Schema do
 
   defp check_param(:hex16, {:ok, value}),
     do: if(hex16?(value), do: {:ok, value}, else: {:error, :not_16_lowercase_hex_digits})
+
+  defp check_param(:parent_id, {:ok, value}),
+    do:
+      if(value == "none" or hex16?(value),
+        do: {:ok, value},
+        else: {:error, :not_16_lowercase_hex_digits_or_none}
+      )
+
+  defp check_param(:words12, {:ok, value}),
+    do: if(words12?(value), do: {:ok, value}, else: {:error, :not_12_finite_float_words})
+
+  defp check_param(:words7, {:ok, value}),
+    do: if(words7?(value), do: {:ok, value}, else: {:error, :not_7_finite_float_words})
+
+  defp check_param({:enum, allowed}, {:ok, value}),
+    do: if(value in allowed, do: {:ok, value}, else: {:error, {:not_one_of, allowed}})
 
   defp check_param({:integer, min, max}, {:ok, value}) do
     if is_integer(value) and value >= min and value <= max,
