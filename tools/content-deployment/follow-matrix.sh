@@ -114,13 +114,13 @@ prep() {   # <prefix> [sleep-before-attest-s]: inert arming, the binding inspect
   T2=$(ms)
 }
 
-journal_check() {   # <phase-dir> <lift label> <lifts> <armings> <consumed> -> judged: one ok/FAIL line
+journal_check() {   # <phase-dir> <lift label> <lifts> <armings> <consumed> [<inspections after the lift>, default: the follow-up requests]
   local r
-  r=$(python3 -I - "$1" "$2" "$3" "$4" "$5" <<'PY'
+  r=$(python3 -I - "$1" "$2" "$3" "$4" "$5" "${6:-}" <<'PY'
 import json, sys, glob, os
-pd, label, w_lifts, w_arm, w_cons = sys.argv[1:6]
+pd, label, w_lifts, w_arm, w_cons, w_ins = sys.argv[1:7]
 fr = os.path.join(pd, label + "-follow-result.json")
-req = json.load(open(fr))["requests"] if os.path.exists(fr) else 0
+req = int(w_ins) if w_ins else (json.load(open(fr))["requests"] if os.path.exists(fr) else 0)
 idf = os.path.join(pd, label + "-command-id.txt")
 lid = open(idf).read().strip() if os.path.exists(idf) else None
 ents = []
@@ -137,7 +137,7 @@ if lid:
 ins_after = [e for e in after if e.get("name") == "relay.inspect.candidate_transform"]
 arm = sum(1 for e in ents if e.get("event") == "authority.armed_effectful")
 cons = sum(1 for e in ents if e.get("event") == "authority.effectful_consumed")
-facts = "lifts=%d inspections_after=%d other_after=%d restores=%d outfit=%d effectful_armings=%d consumed=%d (follow-up requests %d)" % (len(lifts), len(ins_after), len(after) - len(ins_after), len(restores), len(outfit), arm, cons, req)
+facts = "lifts=%d inspections_after=%d other_after=%d restores=%d outfit=%d effectful_armings=%d consumed=%d (expected inspections after the lift %d)" % (len(lifts), len(ins_after), len(after) - len(ins_after), len(restores), len(outfit), arm, cons, req)
 ok = len(lifts) == int(w_lifts) and not restores and not outfit and len(after) == len(ins_after) == req and arm == int(w_arm) and cons == int(w_cons)
 print(("ok" if ok else "FAIL") + " " + facts)
 PY
@@ -258,7 +258,7 @@ old_or_kit() {   # <old-path|kit-held>
     OPX opf rx-lift lift-follow "$INS" "$GEN" > "$(evg_out "$PD/rx-opsh.txt")" 2>&1
     okc "kit-held: op.sh refuses the reused label rx-lift before invoking anything" "grep -q \"label 'rx-lift'\" '$PD/rx-opsh.txt' && [ ! -e '$PD/op-rx-lift.out' ]"
     (cd "$RELAY" && elixir --sname "mx-rx$RANDOM" -S mix run --no-start "$T/cmd-m6f.exs" "$PD" rx-lift lift-follow "$INS" "$GEN") > "$(evg_out "$PD/rx-cmd.txt")" 2>&1; rc=$?
-    okc "kit-held: cmd-m6f.exs lift-follow itself refuses the reused label (any <label>-* capture; rc 2, nothing issued, nothing written) and the sentinel is unchanged" "[ $rc = 2 ] && grep -q \"label 'rx-lift' already has 1 capture\" '$PD/rx-cmd.txt' && [ \"\$(sha256sum '$PD/rx-lift-command-id.txt' | cut -c1-64)\" = '$s' ] && [ \$(ls '$PD' | grep -c '^rx-lift-') = 1 ]"
+    okc "kit-held: cmd-m6f.exs lift-follow itself refuses the reused label (any <label>-* capture; rc 2, nothing issued, nothing written) and the sentinel is unchanged" "[ $rc = 2 ] && grep -q \"label 'rx-lift' already has 1 capture(s) this action writes\" '$PD/rx-cmd.txt' && [ \"\$(sha256sum '$PD/rx-lift-command-id.txt' | cut -c1-64)\" = '$s' ] && [ \$(ls '$PD' | grep -c '^rx-lift-') = 1 ]"
     # a sealed destination: a scratch "historical" directory UNDER a directory holding the manifest (a sealed root's subdirectory)
     SR=$(evg_dir "$PD/sealed-scratch"); SRS=$(evg_dir "$SR/attempt1"); printf 'sealed sentinel\n' > "$SR/sentinel.txt"; (cd "$SR" && sha256sum sentinel.txt > sha256.txt); ss0=$( (cd "$SR" && find . -type f | sort | xargs sha256sum) )
     (cd "$RELAY" && elixir --sname "mx-sr$RANDOM" -S mix run --no-start "$T/cmd-m6f.exs" "$SRS" sx lift-follow "$INS" "$GEN") > "$(evg_out "$PD/sx-cmd.txt")" 2>&1; rc=$?
@@ -295,7 +295,7 @@ old_or_kit() {   # <old-path|kit-held>
     okc "kit-held: cmd-m6f.exs lift-follow called directly (bypassing op.sh) is refused by its local guard: the budget is consumed (rc $rc)" "[ $rc = 2 ] && grep -q 'lift guard lift-budget-available: FAILED' '$PD/op-r7-direct.out' && ! grep -q 'lift issued' '$PD/op-r7-direct.out'"
   fi
   phase_end
-  journal_check "$PD" r4-lift 1 1 1
+  if [ "$name" = old-path ]; then journal_check "$PD" r4-lift 1 1 1 2; else journal_check "$PD" r4-lift 1 1 1; fi
   if [ "$name" = old-path ]; then printf 'old-path\t%s\t%s\t%s\t-\t-\t-\t-\t%s\t%s\t(old path: two samples, A >= 1 s, B >= 10 s)\t2\t-\t-\t-\t%s\n' "$FRAME_MS" "$((T1 - T0))" "$((T2 - T1))" "${OLD_OBS%% *}" "${OLD_OBS##* }" "$ROW_TEARDOWN" >> "$tsv"
   else timing_row "$PD/r4-lift-follow-result.json"; fi
 }
