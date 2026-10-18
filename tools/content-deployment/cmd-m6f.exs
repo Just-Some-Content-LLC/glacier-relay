@@ -33,7 +33,10 @@
 #                                                                    anything is written, a directory under a sealed root (it or an
 #                                                                    ancestor holds sha256.txt) and a label that already holds any
 #                                                                    capture this action writes.
-#                                                                    Its RPCs are bounded (the request timeout); its stop marker is
+#                                                                    Every RPC is bounded (CmdM6fArgs: the issuance 3 s, the others
+#                                                                    10 s, the follow-up reads the request timeout); an issuance that
+#                                                                    times out or loses its reply is UNCERTAIN, never "nothing
+#                                                                    transmitted": no read follows, no retry. Its stop marker is
 #                                                                    <evidence-dir>/stop.marker, checked before EVERY read's dispatch
 #                                                                    (the immediate first read included) and fail-closed: a marker
 #                                                                    that cannot be looked at is a stop.
@@ -51,8 +54,12 @@ alias GlacierRelay.Command.TransformWords
 Code.require_file("cmd_m6f_args.exs", __DIR__)
 Code.require_file("m6f_follow.exs", __DIR__)
 
-call = fn m, f, a -> :rpc.call(node, m, f, a) end
-# M6-F2a: a bounded RPC (the follow-up's calls; a blocked authority must not hold the schedule past its bounds)
+# M6-F2b preparation (item A): every RPC of lift-follow — before the lift, the issuance, the follow-up, the deferred report — is
+# bounded, so a blocked authority cannot hold the tool indefinitely; the other actions keep the unbounded call they were qualified
+# with, except their issuances (lift, restore, ctransform: bounded, and classified by CmdM6fArgs.issuance/1)
+rpc_ms = if action == "lift-follow", do: CmdM6fArgs.rpc_timeout_ms(), else: :infinity
+call = fn m, f, a -> :rpc.call(node, m, f, a, rpc_ms) end
+# M6-F2a: a bounded RPC with an explicit bound (the follow-up's calls; the issuances)
 call_t = fn m, f, a, t -> :rpc.call(node, m, f, a, t) end
 cmd = GlacierRelay.Command
 now = fn -> DateTime.utc_now() |> DateTime.to_iso8601() end
@@ -97,7 +104,8 @@ wait_terminal = fn id, ms ->
   Stream.repeatedly(fn ->
     Process.sleep(25)
     c = call.(cmd, :command, [id])
-    c != nil and c.status not in [:accepted, :transmitted, :received]
+    # a terminal record ends the wait; so does an RPC failure (a non-map reply other than nil: never waited on forever)
+    (is_map(c) and c.status not in [:accepted, :transmitted, :received]) or not (is_map(c) or c == nil)
   end)
   |> Enum.find(fn done -> done or System.monotonic_time(:millisecond) > deadline end)
 
@@ -142,7 +150,7 @@ end
 finish = fn ->
   s = call.(cmd, :status, [])
   dump.("command-status", s)
-  log.("after: #{status_line.(s)}")
+  log.("after: #{if is_map(s), do: status_line.(s), else: "the status RPC failed: #{inspect(s)}"}")
 end
 
 # Socket-ownership evidence from the Windows side (the C-3 shape): every ESTABLISHED TCP connection whose foreign address
@@ -243,6 +251,13 @@ end
 lift_prepare = fn insp, gen, ttl, extra ->
   s = call.(cmd, :status, [])
   ins = call.(cmd, :command, [insp])
+
+  if not is_map(s) or not (is_map(ins) or ins == nil) do
+    log.("LOCAL GUARD REFUSED: an RPC before the lift failed (status #{inspect(s)}; inspection #{inspect(ins)}); nothing issued")
+    finish.()
+    System.halt(2)
+  end
+
   log.("lift: the compiled +0.25 world-z displacement of the compiled candidate (the native side computes the target; nothing supplied); expectation = inspection #{insp}'s exact words; expected_generation #{gen} ttl #{ttl} ms; the inspection: #{if ins, do: describe.(ins), else: "NOT FOUND"}")
   guard = lift_guard.(ins, gen, s) ++ extra.(s)
   failed = for {name, ok} <- guard, !ok, do: name
@@ -267,11 +282,13 @@ lift_report = fn id, c, insp, gen, params ->
   ev.("lift.preimage-equals-expectation-bits", ov.(c, "preimage_world_words") == params["expect_world"] and ov.(c, "preimage_local_words") == params["expect_local"] and ov.(c, "preimage_parent") == params["expect_parent"] and ov.(c, "preimage_dirty") == false, "preimage #{wtext.(words.(c, "preimage_world_words", :world))} dirty #{fld.(c, "preimage_dirty")} parent #{fld.(c, "preimage_parent")}")
   expected_target = words.(c, "preimage_world_words", :world) && TransformWords.lift_target(words.(c, "preimage_world_words", :world))
   ev.("lift.requested-is-compiled-lift-of-preimage", expected_target != nil and words.(c, "requested_world_words", :world) == expected_target, "requested #{wtext.(words.(c, "requested_world_words", :world))} vs preimage z + 0.25 in binary32 #{wtext.(expected_target)} (every other word copied)")
-  ev.("lift.budget-consumed", ov.(c, "budget_remaining") == 0 and call.(cmd, :status, []).effectful.transform_lift_budget == 0, "native budget_remaining #{fld.(c, "budget_remaining")}; BEAM lift budget #{inspect(call.(cmd, :status, []).effectful.transform_lift_budget)}")
+  st = call.(cmd, :status, [])
+  bud = if is_map(st), do: st.effectful.transform_lift_budget, else: {:status_rpc_failed, st}
+  ev.("lift.budget-consumed", ov.(c, "budget_remaining") == 0 and bud == 0, "native budget_remaining #{fld.(c, "budget_remaining")}; BEAM lift budget #{inspect(bud)}")
   j = call.(GlacierRelay.Command.Journal, :status, [])
 
   entries =
-    case call.(GlacierRelay.Command.Journal, :read, [j.path]) do
+    case is_map(j) && call.(GlacierRelay.Command.Journal, :read, [j.path]) do
       {:ok, read} -> read.entries
       other -> log.("journal read for the binding failed: #{inspect(other)}"); nil
     end
@@ -406,8 +423,8 @@ case action do
     [ttl_arg | _] = rest ++ ["-"]
     opts = if ttl_arg == "-", do: [], else: [ttl_ms: String.to_integer(ttl_arg)]
 
-    case call.(cmd, :inspect_candidate_transform, [opts]) do
-      {:ok, id} ->
+    case CmdM6fArgs.issuance(call_t.(cmd, :inspect_candidate_transform, [opts], CmdM6fArgs.issue_timeout_ms())) do
+      {:issued, id} ->
         log.("ctransform issued #{id}")
         File.write!(Path.join(evid, "#{label}-command-id.txt"), id <> "\n")
         c = wait_terminal.(id, 15_000)
@@ -416,8 +433,12 @@ case action do
         ev.("ctransform.applied", c.status == :applied, "status #{c.status} reason #{inspect(reason.(c))}")
         ev.("ctransform.exact-words-observed", match?({:ok, _}, d.candidate.world_words) and match?({:ok, _}, d.candidate.local_words) and match?({:ok, _}, d.candidate.parent) and match?({:ok, _}, d.candidate.dirty), "cand world_words #{wtext.(words.(c, "cand_world_words", :world))} local_words #{wtext.(words.(c, "cand_local_words", :local))} dirty #{fld.(c, "cand_dirty")} parent #{fld.(c, "cand_parent")} | hero world_words #{wtext.(words.(c, "hero_world_words", :world))} dirty #{fld.(c, "hero_dirty")} parent #{fld.(c, "hero_parent")} | distinct #{fld.(c, "cand_distinct")} spatial_distinct #{fld.(c, "cand_spatial_distinct")} in_registry #{fld.(c, "cand_in_registry")} slots #{fld.(c, "registry_slots")}")
 
-      other ->
-        log.("ctransform refused locally: #{inspect(other)} (nothing transmitted)")
+      {:refused, reason} ->
+        log.("ctransform refused locally: #{inspect(reason)} (refused before transmission: nothing transmitted)")
+
+      {:uncertain, why} ->
+        log.("ctransform issuance UNCERTAIN: #{inspect(why)} (a timeout, a lost reply or a send failure: the read MAY have been transmitted; not retried)")
+        ev.("ctransform.issuance-determined", false, "uncertain: #{inspect(why)}")
     end
 
     finish.()
@@ -465,17 +486,21 @@ case action do
     [insp, gen | more] = rest
     ttl = ttl_of.(more, 5_000)
     {_s, _ins, params} = lift_prepare.(insp, gen, ttl, fn _ -> [] end)
-    r = call.(cmd, :lift_candidate, [params, [inspection_command_id: insp, expected_generation: gen, ttl_ms: ttl]])
+    r = call_t.(cmd, :lift_candidate, [params, [inspection_command_id: insp, expected_generation: gen, ttl_ms: ttl]], CmdM6fArgs.issue_timeout_ms())
 
-    case r do
-      {:ok, id} ->
+    case CmdM6fArgs.issuance(r) do
+      {:issued, id} ->
         log.("lift issued #{id} (candidate.transform.set/1 mode lift; generation #{gen}; ttl #{ttl} ms)")
         File.write!(Path.join(evid, "#{label}-command-id.txt"), id <> "\n")
         c = wait_terminal.(id, 20_000)
         lift_report.(id, c, insp, gen, params)
 
-      other ->
-        log.("lift refused locally: #{inspect(other)} (nothing transmitted)")
+      {:refused, reason} ->
+        log.("lift refused locally: #{inspect(reason)} (refused before transmission: nothing transmitted)")
+
+      {:uncertain, why} ->
+        log.("LIFT ISSUANCE UNCERTAIN: lift_candidate's bounded RPC (#{CmdM6fArgs.issue_timeout_ms()} ms) returned #{inspect(why)} — the lift MAY have been accepted and transmitted; no retry, no second lift; the journal is the record")
+        ev.("lift.issuance-determined", false, "uncertain: #{inspect(why)} (HARD STOP for the run's effectful issuance)")
     end
 
     finish.()
@@ -591,11 +616,11 @@ case action do
 
     # 2 the ONE lift; 3 the schedule, started by the observed terminal; 4 the deferred reports
     t_send = us.()
-    r = call.(cmd, :lift_candidate, [params, [inspection_command_id: a.inspection, expected_generation: a.generation, ttl_ms: a.lift_ttl_ms]])
+    r = call_t.(cmd, :lift_candidate, [params, [inspection_command_id: a.inspection, expected_generation: a.generation, ttl_ms: a.lift_ttl_ms]], CmdM6fArgs.issue_timeout_ms())
     t_ret = us.()
 
-    case r do
-      {:ok, id} ->
+    case CmdM6fArgs.issuance(r) do
+      {:issued, id} ->
         # the issuance is recorded at once, while the lift is in flight (before its terminal is observed — never between the
         # terminal and the first follow-up request): a crash during the terminal wait cannot leave an issued lift unrecorded
         issued = wjson.(%{"event" => "follow.issued", "original_id" => id, "t_send_us" => t_send, "t_ret_us" => t_ret, "utc" => now.()})
@@ -615,10 +640,10 @@ case action do
           if is_map(c) do
             lift_report.(id, c, a.inspection, a.generation, params)
           else
-            # e.g. the authority restarted during the schedule: its records are gone (the journal file keeps them); the lift's
-            # EVIDENCE lines need the live record and are NOT produced; the follow result's original summary (taken when the
-            # terminal was observed) and the journal stand; nothing is reconstructed
-            log.("the authority no longer holds the lift's record #{id} (#{inspect(c)}): the lift's EVIDENCE lines are not produced; the follow result's original summary (taken at the observed terminal) and the journal file are the record")
+            # e.g. the authority restarted during the schedule (nil: its records are gone; the journal file keeps them) or the
+            # bounded RPC failed ({:badrpc, _}); the lift's EVIDENCE lines need the live record and are NOT produced; the follow
+            # result's original summary (taken when the terminal was observed) and the journal stand; nothing is reconstructed
+            log.("the lift's record #{id} could not be read (#{inspect(c)}: nil = the authority no longer holds it, {:badrpc, _} = the bounded RPC failed): the lift's EVIDENCE lines are not produced; the follow result's original summary (taken at the observed terminal) and the journal file are the record")
             j = call.(GlacierRelay.Command.Journal, :status, [])
 
             case is_map(j) && call.(GlacierRelay.Command.Journal, :read, [j.path]) do
@@ -629,10 +654,18 @@ case action do
 
         follow_report.(id, result, entries, msd.(t_ret - t_send), %{plan_written: plan_written, t_plan_us: t_plan_us, t_send_us: t_send, t_ret_us: t_ret, vm_age_ms: vm_age_ms})
 
-      other ->
-        log.("lift refused locally: #{inspect(other)} (nothing transmitted; no follow-up read)")
-        wjson.(%{"event" => "follow.end", "stop" => "lift_not_issued", "detail" => inspect(other), "requests" => 0, "t_send_us" => t_send, "t_ret_us" => t_ret})
-        ev.("follow.lift-not-issued-no-read", true, "lift_candidate returned #{inspect(other)}: no follow-up request was or will be issued; no retry")
+      {:refused, reason} ->
+        log.("lift refused locally: #{inspect(reason)} (refused before transmission: nothing transmitted; no follow-up read)")
+        wjson.(%{"event" => "follow.end", "stop" => "lift_not_issued", "detail" => inspect(r), "requests" => 0, "t_send_us" => t_send, "t_ret_us" => t_ret})
+        ev.("follow.lift-not-issued-no-read", true, "lift_candidate returned #{inspect(r)}: a refusal decided before transmission; no follow-up request was or will be issued; no retry")
+
+      {:uncertain, why} ->
+        # a timeout, a lost reply or a send failure is NOT a refusal: the lift may be in the engine; nothing here follows it, retries
+        # it or issues anything else — the run wrapper makes it a HARD STOP and the journal is the record of what happened
+        log.("LIFT ISSUANCE UNCERTAIN: lift_candidate's bounded RPC (#{CmdM6fArgs.issue_timeout_ms()} ms) returned #{inspect(why)} after #{msd.(t_ret - t_send)} ms — the lift MAY have been accepted and transmitted; no follow-up read, no retry, no second lift")
+        wjson.(%{"event" => "follow.end", "stop" => "lift_issuance_uncertain", "detail" => inspect(why), "requests" => 0, "t_send_us" => t_send, "t_ret_us" => t_ret})
+        ev.("follow.lift-issuance-determined", false, "UNCERTAIN: #{inspect(why)} (HARD STOP for the run's effectful issuance; the journal is the record)")
+        ev.("follow.no-read-after-uncertain-issuance", true, "no follow-up request was or will be issued; no retry")
     end
 
     File.close(fd)
@@ -651,10 +684,10 @@ case action do
     p = call.(cmd, :plan_transform_restore, [orig])
     dump.("plan", p)
     log.("restore of #{orig} bound to the later exact inspection #{insp}, expected_generation #{gen}, ttl #{ttl} ms; plan -> #{inspect(p)}")
-    r = call.(cmd, :restore_candidate, [orig, [inspection_command_id: insp, expected_generation: gen, ttl_ms: ttl]])
+    r = call_t.(cmd, :restore_candidate, [orig, [inspection_command_id: insp, expected_generation: gen, ttl_ms: ttl]], CmdM6fArgs.issue_timeout_ms())
 
-    case r do
-      {:ok, rid} ->
+    case CmdM6fArgs.issuance(r) do
+      {:issued, rid} ->
         log.("restoration issued #{rid}")
         File.write!(Path.join(evid, "#{label}-command-id.txt"), rid <> "\n")
         c = wait_terminal.(rid, 20_000)
@@ -680,12 +713,16 @@ case action do
         ev.("restore.binding-verified-by-authority", rb["verified_by"] == "authority" and rb["inspection_command_id"] == insp and rb["restore_of"] == orig and rb["target_world"] == plan.target_world and rb["later_class"] == "held", inspect(Map.drop(rb, ["label"])))
         log.("restore consequences: #{inspect(c.consequences)} (restoring observed transform values is not a rollback of physics, perception, script, animation or other gameplay consequences)")
 
-      {:error, :already_at_baseline} ->
+      {:refused, :already_at_baseline} ->
         log.("restore NOT submitted: the later exact inspection #{insp} already shows the lift's preimage words (an engine return to baseline — a distinct outcome from a commanded restoration; recorded, nothing written)")
         ev.("restore.already-at-baseline-recorded", true, "no restoration call needed; none submitted to obtain a refusal")
 
-      other ->
-        log.("restore refused locally: #{inspect(other)} (nothing transmitted; drift, an indeterminate cache, a changed parent or generation, or an ambiguous original effect stop effectful issuance)")
+      {:refused, reason} ->
+        log.("restore refused locally: #{inspect(reason)} (refused before transmission: nothing transmitted; drift, an indeterminate cache, a changed parent or generation, a stale inspection, or an ambiguous original effect stop effectful issuance)")
+
+      {:uncertain, why} ->
+        log.("RESTORATION ISSUANCE UNCERTAIN: restore_candidate's bounded RPC (#{CmdM6fArgs.issue_timeout_ms()} ms) returned #{inspect(why)} — the restoration MAY have been accepted and transmitted; no retry")
+        ev.("restore.issuance-determined", false, "uncertain: #{inspect(why)} (HARD STOP for the run's effectful issuance)")
     end
 
     finish.()

@@ -95,6 +95,40 @@ defmodule CmdM6fArgsTest do
     assert src =~ "stop?: stop_marker,"
   end
 
+  test "item A: an issuance reply is issued, refused before transmission, or UNCERTAIN — a timeout is never a refusal" do
+    assert CmdM6fArgs.issuance({:ok, "0f6c1d2e-0000-4000-8000-000000000001"}) == {:issued, "0f6c1d2e-0000-4000-8000-000000000001"}
+    # the authority's refusals (decided before transmission; journaled command.refused) and Command's own local checks
+    for reason <- [:not_armed_effectful, :lift_budget_consumed, :inspection_stale, :already_at_baseline, :command_disabled, {:journal_unavailable, :eio}, {:generation_mismatch, "g"}] do
+      assert CmdM6fArgs.issuance({:error, reason}) == {:refused, reason}, inspect(reason)
+    end
+    # accepted, then the send failed: the authority itself records the outcome as unknown
+    assert CmdM6fArgs.issuance({:error, {:send_failed, :closed}}) == {:uncertain, {:error, {:send_failed, :closed}}}
+    # an RPC timeout, a lost node, a remote exit (the authority's own GenServer timeout), an unexpected shape
+    for reply <- [{:badrpc, :timeout}, {:badrpc, :nodedown}, {:badrpc, {:EXIT, {:timeout, {GenServer, :call, []}}}}, {:ok, :not_an_id}, :ok, nil, {:ok, "a", :b}] do
+      assert {:uncertain, ^reply} = CmdM6fArgs.issuance(reply), inspect(reply)
+    end
+    # the issuance bound sits below the authority's own 5 s GenServer call bound
+    assert CmdM6fArgs.issue_timeout_ms() == 3_000 and CmdM6fArgs.issue_timeout_ms() < 5_000 and CmdM6fArgs.rpc_timeout_ms() == 10_000
+  end
+
+  test "item A: cmd-m6f.exs bounds and classifies every issuance; 'nothing transmitted' only in a refused branch" do
+    src = File.read!(Path.join(__DIR__, "../cmd-m6f.exs"))
+    assert length(Regex.scan(~r/call_t\.\(cmd, :lift_candidate, .*CmdM6fArgs\.issue_timeout_ms\(\)\)/, src)) == 2
+    assert length(Regex.scan(~r/call_t\.\(cmd, :restore_candidate, .*CmdM6fArgs\.issue_timeout_ms\(\)\)/, src)) == 1
+    assert length(Regex.scan(~r/call_t\.\(cmd, :inspect_candidate_transform, .*CmdM6fArgs\.issue_timeout_ms\(\)\)/, src)) == 1
+    refute src =~ ~r/[^_]call\.\(cmd, :(lift_candidate|restore_candidate|inspect_candidate_transform)/
+    assert length(Regex.scan(~r/CmdM6fArgs\.issuance\(/, src)) == 4
+    # every "nothing transmitted" line sits directly in a {:refused, _} branch; every uncertain branch says the operation MAY have been sent
+    lines = String.split(src, "\n")
+    for {l, i} <- Enum.with_index(lines), l =~ "nothing transmitted", not String.starts_with?(String.trim_leading(l), "#") do
+      assert Enum.at(lines, i - 1) =~ ~r/\{:refused, /, "line #{i + 1}: #{l}"
+    end
+    assert length(Regex.scan(~r/\{:uncertain, why\} ->/, src)) == 4
+    assert length(Regex.scan(~r/MAY have been (accepted and )?transmitted/, src)) >= 4
+    # the lift-follow path's own RPCs are bounded
+    assert src =~ ~s|rpc_ms = if action == "lift-follow", do: CmdM6fArgs.rpc_timeout_ms(), else: :infinity|
+  end
+
   test "cmd-m6f.exs dispatches arm-effectful through the parser (no list padding left)" do
     src = File.read!(Path.join(__DIR__, "../cmd-m6f.exs"))
     [arm] = Regex.run(~r/"arm-effectful" ->.*?\n\n  "/s, src)

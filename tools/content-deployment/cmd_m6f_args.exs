@@ -1,5 +1,5 @@
 # M6-F2a: the argument parsing of cmd-m6f.exs's optional values; M6-F2b preparation: also the other small decisions of cmd-m6f.exs
-# that must be testable on their own — the fail-closed stop-marker check (item A). Loaded by cmd-m6f.exs; tested on its own by
+# that must be testable on their own — the fail-closed stop-marker check and the classification of an issuance reply (item A). Loaded by cmd-m6f.exs; tested on its own by
 # tests/cmd_m6f_args_test.exs (no node, no RPC). Operator tooling, not production code.
 #
 # The correction it carries (M6-F1b finding, section 13.7): `arm-effectful <owner>` — the documented owner-only form — raised
@@ -14,10 +14,35 @@ defmodule CmdM6fArgs do
   @owner "HITMAN3.exe"
   @effectful_ttl_ms 30_000
   @lift_ttl_ms 5_000
+  # M6-F2b preparation (item A): the bound of ONE issuance RPC (lift_candidate / restore_candidate / inspect_candidate_transform:
+  # about 40 ms when healthy) — 3 s, BELOW the 5 s default of the authority's own GenServer calls, so that a blocked authority or
+  # link is reported here as an UNCERTAIN issuance before the authority's inner call can time out — and of every other RPC of
+  # lift-follow (10 s)
+  @issue_timeout_ms 3_000
+  @rpc_timeout_ms 10_000
 
   def default_owner, do: @owner
   def default_effectful_ttl_ms, do: @effectful_ttl_ms
   def default_lift_ttl_ms, do: @lift_ttl_ms
+  def issue_timeout_ms, do: @issue_timeout_ms
+  def rpc_timeout_ms, do: @rpc_timeout_ms
+
+  @doc """
+  M6-F2b preparation (item A): the reply of ONE issuance through the public Command API (lift_candidate, restore_candidate,
+  inspect_candidate_transform over a bounded RPC), classified without guessing:
+
+    {:issued, id}         `{:ok, id}` with a binary id: the authority accepted and transmitted it
+    {:refused, reason}    `{:error, reason}` decided BEFORE transmission — the authority's refusal (journaled command.refused) or a
+                          local check of Command (e.g. :already_at_baseline, :inspection_stale): nothing was transmitted
+    {:uncertain, reply}   anything else — an RPC timeout or a lost reply (`{:badrpc, _}`), an exit, an unexpected shape, and the
+                          authority's own `{:error, {:send_failed, _}}` (accepted, then the send failed: journaled command.unknown).
+                          The operation MAY have been transmitted: never reported as "nothing transmitted", never retried, never
+                          followed by an automatic read or issuance; the journal is the record of what the authority did
+  """
+  def issuance({:ok, id}) when is_binary(id), do: {:issued, id}
+  def issuance({:error, {:send_failed, _}} = r), do: {:uncertain, r}
+  def issuance({:error, reason}), do: {:refused, reason}
+  def issuance(other), do: {:uncertain, other}
 
   @doc "`arm-effectful [expected_exe] [ttl_ms]` -> {:ok, exe, ttl_ms} | {:error, reason}"
   def arm_effectful([]), do: {:ok, @owner, @effectful_ttl_ms}
