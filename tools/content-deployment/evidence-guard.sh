@@ -7,7 +7,8 @@
 #   evg_claim  <run-root> [<state-root>]   creates the run root EXCLUSIVELY (an existing directory is refused: choose a new
 #                                          run identifier, never clean or reuse), creates the state root exclusively when
 #                                          given, writes the claim record <run-root>/.evidence-root (never rewritten)
-#   evg_attach <run-root> [<state-root>]   a later script of the same run: requires the claim record; sets the active roots
+#   evg_attach <run-root> [<state-root>]   a later script of the same run: requires the claim record; sets the active roots;
+#                                          refuses a SEALED root (its final manifest sha256.txt present)
 #   evg_check  <path>                      validates a destination (WSL or Windows form) and prints its canonical WSL path:
 #                                          the Windows form is converted first; "." and ".." are normalized; symlinks in the
 #                                          existing part are followed; the deepest existing ancestor is then walked up
@@ -83,6 +84,9 @@ evg_attach() {
   local root=$1 state=${2:-}
   [ -n "$root" ] || { echo "evidence-guard: usage: evg_attach <run-root> [<state-root>]" >&2; return 3; }
   [ -d "$root" ] && [ -f "$root/.evidence-root" ] || { _evg_err "not a claimed run root (no .evidence-root): $root"; return 2; }
+  # M6-F2a: a SEALED root (its final manifest sha256.txt written) is historical evidence: it is never attached again, so no
+  # guarded script can add a file to it (the claim record alone cannot tell an old root from the active one)
+  [ -e "$root/sha256.txt" ] && { _evg_err "the run root is sealed (sha256.txt present): $root — historical evidence is read-only"; return 2; }
   EVG_RUN_ROOT=$(realpath -- "$root"); EVG_RUN_ID=$(basename -- "$EVG_RUN_ROOT")
   grep -q "^run_root	$EVG_RUN_ROOT\$" "$EVG_RUN_ROOT/.evidence-root" || { _evg_err "the claim record names another root than $EVG_RUN_ROOT"; return 2; }
   if [ -n "$state" ]; then

@@ -82,6 +82,15 @@ WINA=$(evg_win "$(wslpath -w "$ACT")\\win-out-2.txt") && cmd.exe /c "$WCMD" "$WI
 WD=$(evg_win "$ACT/nativelogs") && mkdir -p "$ACT/nativelogs" && cmd.exe /c "$WCMD" "$WD\\probe.log" log 2>/dev/null; [ -f "$ACT/nativelogs/probe.log" ] && ok "case 5d: a Windows-side log DIRECTORY under the active root resolves to $WD" || bad "case 5d: log directory"
 TS=$(evg_out "$ACT/timestamps.tsv") && bash "$T/timestamps-capture.sh" "$ACT" "$TS" wsl-out.txt > "$B/ts.out" 2>&1 && [ -s "$ACT/timestamps.tsv" ] && grep -q '^wsl-out.txt	' "$ACT/timestamps.tsv" && ok "case 5e: the PowerShell helper (timestamps-capture.sh) wrote its manifest exactly at $TS" || bad "case 5e: PowerShell manifest: $(tail -2 "$B/ts.out" | tr '\n' ' ')"
 SP=$(evg_out "$ST/token-like.txt") && printf 'state\n' > "$SP" && ok "case 5h: a destination under the declared state root accepted: $SP" || bad "case 5h: state root destination"
+say "== a sealed root is never attached again (M6-F2a)"
+SR=$B/sealed-run1
+( evg_claim "$SR" > /dev/null ) && printf 'sealed sentinel\n' > "$SR/sentinel.txt" && (cd "$SR" && sha256sum sentinel.txt .evidence-root > sha256.txt)
+ssum=$( (cd "$SR" && find . -type f -print0 | sort -z | xargs -0 sha256sum) )
+out6=$(evg_attach "$SR" 2>"$B/stderr.txt"); rc6=$?
+[ "$rc6" = 2 ] && [ -z "$out6" ] && grep -q 'sealed' "$B/stderr.txt" && [ "$( (cd "$SR" && find . -type f -print0 | sort -z | xargs -0 sha256sum) )" = "$ssum" ] && ok "case 6a: attaching a sealed root (sha256.txt present) refused (rc 2); its files unchanged: $(head -c 160 "$B/stderr.txt")" || bad "case 6a: rc $rc6 out '$out6'"
+out6=$(bash -c '. "$1/evidence-guard.sh"; evg_attach "$2" && evg_out "$2/added-later.txt"' _ "$T" "$SR" 2>"$B/stderr.txt"); rc6=$?
+[ "$rc6" = 2 ] && [ ! -e "$SR/added-later.txt" ] && ok "case 6b: a script that attaches a sealed root before writing is refused before anything is created" || bad "case 6b: rc $rc6; added-later exists: $([ -e "$SR/added-later.txt" ] && echo yes)"
+evg_attach "$ACT" "$ST" && ok "case 6c: the active (unsealed) root still attaches" || bad "case 6c: the active root no longer attaches"
 unchanged && ok "case 5f: the historical tree is byte-identical after every case ($(echo "$H0" | wc -l) files)" || bad "case 5f: the historical tree CHANGED"
 expected="final-capture.txt nativelogs/probe.log operator-actions.log preflight-attempt1/preflight.txt r2-players-result.json timestamps.tsv win-out-2.txt win-out.txt wsl-out.txt"
 actual=$(cd "$ACT" && find . -type f ! -name .evidence-root | sed 's#^\./##' | sort | tr '\n' ' ' | sed 's/ $//')
