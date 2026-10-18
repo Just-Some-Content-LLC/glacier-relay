@@ -12,15 +12,42 @@ defmodule CmdM6fArgs do
 
   @owner "HITMAN3.exe"
   @effectful_ttl_ms 30_000
+  @lift_ttl_ms 5_000
 
   def default_owner, do: @owner
   def default_effectful_ttl_ms, do: @effectful_ttl_ms
+  def default_lift_ttl_ms, do: @lift_ttl_ms
 
   @doc "`arm-effectful [expected_exe] [ttl_ms]` -> {:ok, exe, ttl_ms} | {:error, reason}"
   def arm_effectful([]), do: {:ok, @owner, @effectful_ttl_ms}
   def arm_effectful([exe]), do: with(:ok <- exe(exe), do: {:ok, exe, @effectful_ttl_ms})
   def arm_effectful([exe, ttl]), do: with(:ok <- exe(exe), {:ok, t} <- ms(ttl), do: {:ok, exe, t})
   def arm_effectful(more) when is_list(more), do: {:error, {:too_many_arguments, length(more), "arm-effectful [expected_exe] [ttl_ms]"}}
+
+  @doc """
+  `lift-follow <inspection_id> <expected_generation> [lift_ttl_ms|-] [schedule_ms|-] [request_timeout_ms|-] [inspection_ttl_ms|-]`
+  -> {:ok, %{inspection: id, generation: gen, lift_ttl_ms: t, follow: keyword}} | {:error, reason}. `schedule_ms` is a comma-
+  separated list of millisecond offsets after the observed terminal (e.g. 0,250,1000,2000,5000,10000); the follow options are
+  validated again, with their bounds, by M6fFollow.plan/1 before anything is issued.
+  """
+  def lift_follow([insp, gen | more]) when is_binary(insp) and is_binary(gen) do
+    with :ok <- nonempty(insp, :inspection_id),
+         :ok <- nonempty(gen, :expected_generation),
+         true <- length(more) <= 4 || {:error, {:too_many_arguments, length(more) + 2}},
+         [lt, sc, rt, it] = more ++ List.duplicate("-", 4 - length(more)),
+         {:ok, lift_ttl} <- opt(lt, &ms/1, @lift_ttl_ms),
+         {:ok, schedule} <- opt(sc, &schedule/1, nil),
+         {:ok, request_timeout} <- opt(rt, &ms/1, nil),
+         {:ok, inspection_ttl} <- opt(it, &ms/1, nil) do
+      follow =
+        [schedule_ms: schedule, request_timeout_ms: request_timeout, inspection_ttl_ms: inspection_ttl]
+        |> Enum.reject(fn {_, v} -> v == nil end)
+
+      {:ok, %{inspection: insp, generation: gen, lift_ttl_ms: lift_ttl, follow: follow}}
+    end
+  end
+
+  def lift_follow(_), do: {:error, {:usage, "lift-follow <inspection_id> <expected_generation> [lift_ttl_ms|-] [schedule_ms|-] [request_timeout_ms|-] [inspection_ttl_ms|-]"}}
 
   @doc "A plain decimal millisecond count (1-9 digits, no sign, no unit, no spaces)."
   def ms(s) when is_binary(s) do
@@ -29,10 +56,27 @@ defmodule CmdM6fArgs do
 
   def ms(other), do: {:error, {:not_a_millisecond_count, other}}
 
+  @doc "A comma-separated list of millisecond counts."
+  def schedule(s) when is_binary(s) do
+    parts = String.split(s, ",")
+
+    Enum.reduce_while(parts, {:ok, []}, fn p, {:ok, acc} ->
+      case ms(p) do
+        {:ok, v} -> {:cont, {:ok, acc ++ [v]}}
+        {:error, _} -> {:halt, {:error, {:not_a_schedule, s}}}
+      end
+    end)
+  end
+
+  defp opt("-", _f, default), do: {:ok, default}
+  defp opt(s, f, _default), do: f.(s)
+
   # an expected socket owner is an image name (the tool compares it with tasklist's image of the connection's owner)
   defp exe(s) when is_binary(s) do
     if Regex.match?(~r/\A[A-Za-z0-9._-]{1,60}\.exe\z/i, s), do: :ok, else: {:error, {:not_an_image_name, s}}
   end
 
   defp exe(other), do: {:error, {:not_an_image_name, other}}
+
+  defp nonempty(s, what), do: if(String.trim(s) != "" and s != "-", do: :ok, else: {:error, {:missing, what}})
 end

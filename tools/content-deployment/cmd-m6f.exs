@@ -19,6 +19,21 @@
 #   own [expected_exe]                                               collect socket-ownership evidence only
 #   arm-effectful [expected_exe] [ttl_ms]                            collect ownership evidence, then one-shot arm
 #   lift <inspection_id> <expected_generation> [ttl_ms]              the ONE compiled lift, expectation = that inspection's exact words
+#   lift-follow <inspection_id> <expected_generation> [lift_ttl_ms|-] [schedule_ms|-] [request_timeout_ms|-] [inspection_ttl_ms|-]
+#                                                                    M6-F2a: the same ONE lift behind the same local guard, with a
+#                                                                    bounded READ-ONLY follow-up schedule validated and armed BEFORE
+#                                                                    the lift is sent (m6f_follow.exs: at most six exact inspections,
+#                                                                    default 0 / 250 / 1000 / 2000 / 5000 / 10000 ms after this process
+#                                                                    observes the lift's terminal, one in flight, missed slots recorded,
+#                                                                    never a substitute, never a write); every heavy report — the lift's
+#                                                                    EVIDENCE lines and the sample dumps — after the schedule ends.
+#                                                                    Writes <label>-follow.ndjson (created exclusively before the lift:
+#                                                                    the plan, then the issuance at once, one line per sample as it
+#                                                                    completes, the end) and <label>-s<N>-* afterwards. Refuses, before
+#                                                                    anything is written, a directory under a sealed root (it or an
+#                                                                    ancestor holds sha256.txt) and a label with any existing capture.
+#                                                                    Its RPCs are bounded (the request timeout); its stop marker is
+#                                                                    <evidence-dir>/stop.marker.
 #   plan-restore <command_id>                                        Command.plan_transform_restore (performs nothing)
 #   restore <command_id> <inspection_id> <expected_generation> [ttl_ms]   the planner-bound restoration (or already_at_baseline)
 #   observe-later <command_id> <inspection_id> <text...>             the later exact observation classified (held / returned / ...)
@@ -31,8 +46,11 @@ alias GlacierRelay.Command.TransformReadback
 alias GlacierRelay.Command.TransformWords
 
 Code.require_file("cmd_m6f_args.exs", __DIR__)
+Code.require_file("m6f_follow.exs", __DIR__)
 
 call = fn m, f, a -> :rpc.call(node, m, f, a) end
+# M6-F2a: a bounded RPC (the follow-up's calls; a blocked authority must not hold the schedule past its bounds)
+call_t = fn m, f, a, t -> :rpc.call(node, m, f, a, t) end
 cmd = GlacierRelay.Command
 now = fn -> DateTime.utc_now() |> DateTime.to_iso8601() end
 text = fn term -> inspect(term, pretty: true, limit: :infinity, printable_limit: :infinity) <> "\n" end
@@ -213,6 +231,149 @@ apply_evidence = fn prefix, c, gen ->
   ev.("#{prefix}.no-reduction", obs.(c)["observed_reduced"] == nil, "observed_reduced #{inspect(obs.(c)["observed_reduced"])} fields #{map_size(obs.(c))}")
 end
 
+# The lift's local guard and parameters (shared by "lift" and "lift-follow"; `extra` adds the caller's own refusals): halts with 2
+# when the guard refuses, before anything is issued.
+lift_prepare = fn insp, gen, ttl, extra ->
+  s = call.(cmd, :status, [])
+  ins = call.(cmd, :command, [insp])
+  log.("lift: the compiled +0.25 world-z displacement of the compiled candidate (the native side computes the target; nothing supplied); expectation = inspection #{insp}'s exact words; expected_generation #{gen} ttl #{ttl} ms; the inspection: #{if ins, do: describe.(ins), else: "NOT FOUND"}")
+  guard = lift_guard.(ins, gen, s) ++ extra.(s)
+  failed = for {name, ok} <- guard, !ok, do: name
+  for {name, ok} <- guard, do: log.("lift guard #{name}: #{if ok, do: "ok", else: "FAILED"}")
+
+  if failed != [] do
+    log.("LOCAL GUARD REFUSED: #{inspect(failed)}; nothing issued")
+    finish.()
+    System.halt(2)
+  end
+
+  params = %{"expect_world" => ov.(ins, "cand_world_words"), "expect_local" => ov.(ins, "cand_local_words"), "expect_parent" => ov.(ins, "cand_parent")}
+  log.("lift expectation (bit for bit, from the inspection, never from its seven-digit text): #{inspect(params)}; the expected native target (replicated for the cross-check only): #{TransformWords.encode(TransformWords.lift_target(elem(TransformWords.decode_world(params["expect_world"]), 1)))}")
+  {s, ins, params}
+end
+
+# The lift's record and its EVIDENCE lines after its terminal (shared by "lift" and "lift-follow"); returns the journal entries
+# read for the binding (nil when the read failed).
+lift_report = fn id, c, insp, gen, params ->
+  dump_record.(c)
+  apply_evidence.("lift", c, gen)
+  ev.("lift.preimage-equals-expectation-bits", ov.(c, "preimage_world_words") == params["expect_world"] and ov.(c, "preimage_local_words") == params["expect_local"] and ov.(c, "preimage_parent") == params["expect_parent"] and ov.(c, "preimage_dirty") == false, "preimage #{wtext.(words.(c, "preimage_world_words", :world))} dirty #{fld.(c, "preimage_dirty")} parent #{fld.(c, "preimage_parent")}")
+  expected_target = words.(c, "preimage_world_words", :world) && TransformWords.lift_target(words.(c, "preimage_world_words", :world))
+  ev.("lift.requested-is-compiled-lift-of-preimage", expected_target != nil and words.(c, "requested_world_words", :world) == expected_target, "requested #{wtext.(words.(c, "requested_world_words", :world))} vs preimage z + 0.25 in binary32 #{wtext.(expected_target)} (every other word copied)")
+  ev.("lift.budget-consumed", ov.(c, "budget_remaining") == 0 and call.(cmd, :status, []).effectful.transform_lift_budget == 0, "native budget_remaining #{fld.(c, "budget_remaining")}; BEAM lift budget #{inspect(call.(cmd, :status, []).effectful.transform_lift_budget)}")
+  j = call.(GlacierRelay.Command.Journal, :status, [])
+
+  entries =
+    case call.(GlacierRelay.Command.Journal, :read, [j.path]) do
+      {:ok, read} -> read.entries
+      other -> log.("journal read for the binding failed: #{inspect(other)}"); nil
+    end
+
+  accepted = entries && Enum.find(entries, &(&1["event"] == "command.accepted" and &1["command_id"] == id))
+  b = (accepted && accepted["inspection_binding"]) || %{}
+  ev.("lift.binding-verified-by-authority", b["verified_by"] == "authority" and b["inspection_command_id"] == insp and b["expect_world"] == params["expect_world"] and b["expect_local"] == params["expect_local"] and b["expect_parent"] == params["expect_parent"] and is_integer(b["age_ms"]) and b["age_ms"] <= b["max_age_ms"], inspect(Map.drop(b, ["label"])))
+  ev.("lift.journaled-params-equal-transmitted", accepted != nil and accepted["params"] == c.params, inspect(accepted && accepted["params"]))
+  log.("lift consequences: #{inspect(c.consequences)} (a changed stored matrix is not collision-proven safety, not a rendered position and not a visual-presence result; the later exact observations decide held / returned / drifted)")
+  entries
+end
+
+# M6-F2a: the cheap identity snapshot the follow-up sequence compares before each later slot (a few RPCs; the run's full
+# identity monitor stays the run wrapper's): node, authority, journal, link generation, adapter, and the state they must keep.
+follow_ident = fn ->
+  s = call_t.(cmd, :status, [], 2_000)
+  j = call_t.(GlacierRelay.Command.Journal, :status, [], 2_000)
+  # a reply that is not a status map is an RPC failure (M6fFollow.identity_check stops with rpc_failed), not a changed identity
+  sv = fn f -> if is_map(s), do: f.(s), else: {:badrpc, {:status_reply, s}} end
+  jv = fn f -> if is_map(j), do: f.(j), else: {:badrpc, {:journal_reply, j}} end
+
+  %{
+    node_os_pid: call_t.(:os, :getpid, [], 2_000),
+    authority_pid: call_t.(Process, :whereis, [GlacierRelay.Command.Authority], 2_000),
+    journal_pid: call_t.(Process, :whereis, [GlacierRelay.Command.Journal], 2_000),
+    journal_id: jv.(& &1.journal_id),
+    journal_status: jv.(& &1.status),
+    link_generation: sv.(&(&1.link && &1.link.generation)),
+    adapter_instance_id: sv.(&(&1.link && &1.link.adapter_instance_id)),
+    protocol_version: sv.(&(&1.link && &1.link.protocol_version)),
+    token_verified: sv.(&(&1.link && &1.link.token_verified)),
+    peer: sv.(& &1.trust.peer),
+    audit: sv.(& &1.audit)
+  }
+end
+
+# M6-F2a: the follow-up's report, written only after the schedule ended: one line per slot, the EVIDENCE lines, every sample's
+# command record and read-back under <label>-s<N>-*, and the whole result as <label>-follow-result.json.
+follow_report = fn id, r, entries, lift_call_ms, marks ->
+  slots = r.slots
+  req = Enum.filter(slots, &(&1.outcome == "requested"))
+  s0 = List.first(slots)
+  p = r.plan
+  classes = M6fFollow.classes() ++ ["not_a_later_frame"]
+  log.("follow: schedule #{inspect(p.schedule_ms)} ms after this process observed the lift's terminal (windows #{inspect(p.windows_ms)} ms; on time <= #{p.on_time_ms} ms late; overall deadline #{p.overall_deadline_ms} ms; inspection ttl #{p.inspection_ttl_ms} ms; request timeout #{p.request_timeout_ms} ms); lift_candidate returned after #{lift_call_ms} ms; the terminal observed #{r.terminal_wait_ms} ms after the wait began (#{r.terminal_polls} polls); the lift's native frame #{inspect(r.original && r.original.frame)} at #{inspect(r.original && r.original.native_at)} (native clock); the authority's ladder #{inspect(r.original && r.original.authority_stages)} (ms since issue, the authority's clock)")
+
+  for sl <- slots do
+    log.("follow slot #{sl.slot}: planned +#{sl.planned_ms} ms (window #{sl.window_ms} ms): #{sl.outcome} #{sl.timing}#{if sl[:lateness_ms], do: " late #{sl.lateness_ms} ms", else: ""}#{if sl[:request_ms], do: "; requested +#{sl.request_ms} ms, result +#{sl[:result_ms]} ms (round trip #{sl[:round_trip_ms]} ms, #{sl[:result_polls]} polls)", else: ""}#{if sl[:inspection_id], do: "; #{short.(sl.inspection_id)} #{sl[:status]}", else: ""}#{if sl[:frame], do: "; native frame #{sl.frame} (+#{sl[:frames_after_lift]} frames, +#{inspect(sl[:native_ms_after_lift])} ms native)", else: ""}#{if sl[:class], do: "; class #{sl.class} (journal: #{inspect(sl[:conclusion])})", else: ""}#{if sl[:refusal], do: "; refused #{sl.refusal}", else: ""}")
+  end
+
+  ev.("follow.plan-armed-before-lift", marks.plan_written == :ok and is_integer(marks.t_plan_us) and marks.t_plan_us < marks.t_send_us,
+    "the schedule #{inspect(p.schedule_ms)} validated, the follow file created exclusively and its follow.plan line written (#{inspect(marks.plan_written)}) at #{inspect(marks.t_plan_us)} us, before lift_candidate was called at #{inspect(marks.t_send_us)} us (this process's monotonic clock)")
+  ev.("follow.original-applied", r.original != nil and r.original.status == "applied", "status #{inspect(r.original && r.original.status)} (anything else: no follow-up read, no retry)")
+  ev.("follow.at-most-six-requests", r.requests <= M6fFollow.max_requests() and r.requests <= length(p.schedule_ms), "#{r.requests} request(s), #{r.missed} missed slot(s), #{length(slots)} slot(s)")
+  pairs = Enum.zip(req, Enum.drop(req, 1))
+  ev.("follow.one-in-flight", Enum.all?(pairs, fn {a1, b1} -> is_number(a1[:result_ms]) and b1.request_ms >= a1.result_ms end), "every request sent after the previous result was received (#{length(pairs)} pair(s))")
+  ev.("follow.no-catch-up", Enum.all?(req, &(&1.lateness_ms >= 0 and &1.lateness_ms <= &1.window_ms)) and Enum.all?(slots, &(&1.outcome != "missed" or &1[:inspection_id] == nil)), "each request inside its own slot window, never early; a missed slot has no request and no substitute")
+  ev.("follow.first-request-within-target", s0 != nil and s0.outcome == "requested" and s0.planned_ms == 0 and s0.request_ms <= p.first_request_target_ms, "first request +#{inspect(s0 && s0[:request_ms])} ms after the observed terminal (this process's clock; target <= #{p.first_request_target_ms} ms)")
+  ev.("follow.first-observation-later-frame", s0 != nil and s0[:later_frame] == true, "first read on native frame #{inspect(s0 && s0[:frame])} vs the lift's #{inspect(r.original && r.original.frame)} (+#{inspect(s0 && s0[:frames_after_lift])} frames; a same-frame read is not a later-frame sample)")
+  ev.("follow.first-observation-within-target", s0 != nil and s0[:later_frame] == true and is_integer(s0[:native_ms_after_lift]) and s0.native_ms_after_lift <= p.first_observation_target_ms, "first later observation +#{inspect(s0 && s0[:native_ms_after_lift])} ms after the lift on the native clock (target <= #{p.first_observation_target_ms} ms; an observation time, not a return time)")
+  ev.("follow.classes-committed", Enum.all?(req, &(&1[:class] == nil or &1.class in classes)), "classes #{inspect(Enum.map(req, & &1[:class]))}")
+  ev.("follow.journal-agrees", Enum.all?(req, &(&1[:class] == nil or &1[:conclusion_agrees] == true)), "the authority's Command.observe conclusion equals the local class at every classified slot: #{inspect(Enum.map(req, & &1[:conclusion]))}")
+
+  after_lift =
+    case entries && Enum.find_index(entries, &(&1["event"] == "command.accepted" and &1["command_id"] == id)) do
+      nil -> nil
+      i -> entries |> Enum.drop(i + 1) |> Enum.filter(&(&1["event"] == "command.accepted"))
+    end
+
+  ev.("follow.only-reads-after-the-lift", after_lift != nil and Enum.all?(after_lift, &(&1["name"] == "relay.inspect.candidate_transform")) and length(after_lift) == r.requests, "commands accepted after the lift (journal): #{inspect(after_lift && Enum.map(after_lift, & &1["name"]))} (#{r.requests} follow-up request(s); no restoration, no second lift, no outfit command)")
+  journaled =
+    for e <- entries || [], e["event"] == "operator.observation", e["type"] == "later_frame_read_back", e["command_id"] == id, do: e["inspection_command_id"]
+
+  classified = for sl <- req, sl[:conclusion] != nil, do: sl.inspection_id
+  ev.("follow.observations-journaled", entries != nil and Enum.sort(journaled) == Enum.sort(classified), "the journal holds #{length(journaled)} later_frame_read_back observation(s) of the lift; #{length(classified)} classified slot(s) were journaled through Command.observe/4")
+  ev.("follow.completed", r.stop == nil, "stop #{inspect(r.stop)} (nil = the schedule ran to its end; any stop is a recorded outcome, never retried)")
+  ev.("follow.evidence-lines-written", r.emit_errors == [], "follow file lines: #{inspect(r.emit_errors)}")
+
+  for sl <- req, is_binary(sl[:inspection_id]) do
+    rec = call.(cmd, :command, [sl.inspection_id])
+    n = "#{label}-s#{sl.slot}"
+    File.write!(Path.join(evid, "#{n}-command-id.txt"), sl.inspection_id <> "\n")
+    File.write!(Path.join(evid, "#{n}-command-record.txt"), text.(rec))
+    File.write!(Path.join(evid, "#{n}-command-record.bin"), :erlang.term_to_binary(rec))
+
+    if is_map(rec) and rec.result do
+      File.write!(Path.join(evid, "#{n}-observed.json"), JSON.encode!(obs.(rec)) <> "\n")
+      File.write!(Path.join(evid, "#{n}-result.json"), JSON.encode!(%{
+        "command_id" => rec.id, "name" => rec.name, "version" => rec.version, "command_status" => to_string(rec.status),
+        "status" => to_string(rec.result.status), "reason" => rec.result.reason, "frame" => rec.result.frame,
+        "native_at" => rec.result.native_at, "mission_generation" => rec.result.mission_generation,
+        "adapter_instance_id" => rec.result.adapter_instance_id, "link_generation" => rec.link_generation,
+        "fields" => map_size(obs.(rec)), "stages" => Enum.map(rec.stages, fn {k, v} -> [to_string(k), v] end)
+      }) <> "\n")
+    end
+  end
+
+  File.write!(Path.join(evid, "#{label}-follow-result.json"), JSON.encode!(%{
+    "original_id" => id, "stop" => M6fFollow.text(r.stop), "requests" => r.requests, "missed" => r.missed,
+    "terminal_wait_ms" => r.terminal_wait_ms, "terminal_polls" => r.terminal_polls, "lift_call_ms" => lift_call_ms,
+    "clock" => %{"basis" => "this operator process's monotonic clock, microseconds (never compared with another process's clock)",
+      "vm_age_ms_at_plan" => marks.vm_age_ms, "t_plan_us" => marks.t_plan_us, "t_send_us" => marks.t_send_us, "t_ret_us" => marks.t_ret_us,
+      "t_follow_start_us" => r.t0_us, "t_terminal_observed_us" => r.terminal_observed_us},
+    "original" => Map.new(r.original || %{}, fn {k, v} -> {to_string(k), v} end),
+    "plan" => Map.new(p, fn {k, v} -> {to_string(k), v} end),
+    "slots" => Enum.map(slots, fn sl -> Map.new(sl, fn {k, v} -> {to_string(k), if(is_tuple(v), do: inspect(v), else: v)} end) end)
+  }) <> "\n")
+end
+
 case action do
   "status" ->
     s = call.(cmd, :status, [])
@@ -296,21 +457,7 @@ case action do
   "lift" ->
     [insp, gen | more] = rest
     ttl = ttl_of.(more, 5_000)
-    s = call.(cmd, :status, [])
-    ins = call.(cmd, :command, [insp])
-    log.("lift: the compiled +0.25 world-z displacement of the compiled candidate (the native side computes the target; nothing supplied); expectation = inspection #{insp}'s exact words; expected_generation #{gen} ttl #{ttl} ms; the inspection: #{if ins, do: describe.(ins), else: "NOT FOUND"}")
-    guard = lift_guard.(ins, gen, s)
-    failed = for {name, ok} <- guard, !ok, do: name
-    for {name, ok} <- guard, do: log.("lift guard #{name}: #{if ok, do: "ok", else: "FAILED"}")
-
-    if failed != [] do
-      log.("LOCAL GUARD REFUSED: #{inspect(failed)}; nothing issued")
-      finish.()
-      System.halt(2)
-    end
-
-    params = %{"expect_world" => ov.(ins, "cand_world_words"), "expect_local" => ov.(ins, "cand_local_words"), "expect_parent" => ov.(ins, "cand_parent")}
-    log.("lift expectation (bit for bit, from the inspection, never from its seven-digit text): #{inspect(params)}; the expected native target (replicated for the cross-check only): #{TransformWords.encode(TransformWords.lift_target(elem(TransformWords.decode_world(params["expect_world"]), 1)))}")
+    {_s, _ins, params} = lift_prepare.(insp, gen, ttl, fn _ -> [] end)
     r = call.(cmd, :lift_candidate, [params, [inspection_command_id: insp, expected_generation: gen, ttl_ms: ttl]])
 
     case r do
@@ -318,29 +465,166 @@ case action do
         log.("lift issued #{id} (candidate.transform.set/1 mode lift; generation #{gen}; ttl #{ttl} ms)")
         File.write!(Path.join(evid, "#{label}-command-id.txt"), id <> "\n")
         c = wait_terminal.(id, 20_000)
-        dump_record.(c)
-        apply_evidence.("lift", c, gen)
-        ev.("lift.preimage-equals-expectation-bits", ov.(c, "preimage_world_words") == params["expect_world"] and ov.(c, "preimage_local_words") == params["expect_local"] and ov.(c, "preimage_parent") == params["expect_parent"] and ov.(c, "preimage_dirty") == false, "preimage #{wtext.(words.(c, "preimage_world_words", :world))} dirty #{fld.(c, "preimage_dirty")} parent #{fld.(c, "preimage_parent")}")
-        expected_target = words.(c, "preimage_world_words", :world) && TransformWords.lift_target(words.(c, "preimage_world_words", :world))
-        ev.("lift.requested-is-compiled-lift-of-preimage", expected_target != nil and words.(c, "requested_world_words", :world) == expected_target, "requested #{wtext.(words.(c, "requested_world_words", :world))} vs preimage z + 0.25 in binary32 #{wtext.(expected_target)} (every other word copied)")
-        ev.("lift.budget-consumed", ov.(c, "budget_remaining") == 0 and call.(cmd, :status, []).effectful.transform_lift_budget == 0, "native budget_remaining #{fld.(c, "budget_remaining")}; BEAM lift budget #{inspect(call.(cmd, :status, []).effectful.transform_lift_budget)}")
-        j = call.(GlacierRelay.Command.Journal, :status, [])
-
-        accepted =
-          case call.(GlacierRelay.Command.Journal, :read, [j.path]) do
-            {:ok, read} -> Enum.find(read.entries, &(&1["event"] == "command.accepted" and &1["command_id"] == id))
-            other -> log.("journal read for the binding failed: #{inspect(other)}"); nil
-          end
-
-        b = (accepted && accepted["inspection_binding"]) || %{}
-        ev.("lift.binding-verified-by-authority", b["verified_by"] == "authority" and b["inspection_command_id"] == insp and b["expect_world"] == params["expect_world"] and b["expect_local"] == params["expect_local"] and b["expect_parent"] == params["expect_parent"] and is_integer(b["age_ms"]) and b["age_ms"] <= b["max_age_ms"], inspect(Map.drop(b, ["label"])))
-        ev.("lift.journaled-params-equal-transmitted", accepted != nil and accepted["params"] == c.params, inspect(accepted && accepted["params"]))
-        log.("lift consequences: #{inspect(c.consequences)} (a changed stored matrix is not collision-proven safety, not a rendered position and not a visual-presence result; the later exact observations decide held / returned / drifted)")
+        lift_report.(id, c, insp, gen, params)
 
       other ->
         log.("lift refused locally: #{inspect(other)} (nothing transmitted)")
     end
 
+    finish.()
+
+  "lift-follow" ->
+    # 1 everything that can be refused is refused before the lift: the arguments and the follow plan, the destination, the
+    #   follow file (created exclusively), the warm-up of the code the timed sequence uses, the identity baseline, the guard
+    # a sealed destination — the directory or any ancestor holding sha256.txt (a sealed root keeps its manifest at its top) — is
+    # refused first, and nothing at all is written into it (not even the log line)
+    sealed =
+      Path.expand(evid)
+      |> Stream.iterate(&Path.dirname/1)
+      |> Enum.reduce_while(nil, fn d, _ -> if File.exists?(Path.join(d, "sha256.txt")), do: {:halt, d}, else: if(d == Path.dirname(d), do: {:halt, nil}, else: {:cont, nil}) end)
+
+    if sealed do
+      IO.puts("#{now.()} #{label} lift-follow REFUSED: #{sealed} holds sha256.txt (a sealed evidence root is never written, nor any directory under it); nothing issued, nothing written")
+      System.halt(2)
+    end
+
+    # a reused label: ANY existing <label>-* capture is refused (the evidence guard's rule), before anything is written
+    existing = Path.wildcard(Path.join(evid, "#{label}-*"))
+
+    if existing != [] do
+      IO.puts("#{now.()} #{label} lift-follow REFUSED: label '#{label}' already has #{length(existing)} capture(s) in #{evid} (e.g. #{Path.basename(hd(existing))}); choose a new label; nothing issued, nothing written")
+      System.halt(2)
+    end
+
+    {a, plan} =
+      with {:ok, a} <- CmdM6fArgs.lift_follow(rest), {:ok, plan} <- M6fFollow.plan(a.follow) do
+        {a, plan}
+      else
+        e ->
+          log.("lift-follow refused locally before anything was issued: #{inspect(e)}")
+          System.halt(2)
+      end
+
+    ffile = Path.join(evid, "#{label}-follow.ndjson")
+
+    # the follow file is created exclusively (a race with another writer of the same label is refused here too)
+    fd =
+      case File.open(ffile, [:write, :exclusive, :binary]) do
+        {:ok, fd} -> fd
+        {:error, e} ->
+          log.("lift-follow REFUSED: the follow file #{ffile} cannot be created exclusively (#{inspect(e)}); nothing issued")
+          System.halt(2)
+      end
+
+    wjson = fn m -> IO.binwrite(fd, JSON.encode!(m) <> "\n") end
+    us = fn -> System.monotonic_time(:microsecond) end
+    msd = fn d -> Float.round(d / 1000, 3) end
+    tw0 = us.()
+    for m <- [M6fFollow, TransformReadback, TransformWords, GlacierRelay.Command.CandidateReadback, JSON, DateTime, Float, Regex], do: Code.ensure_loaded!(m)
+    warm = TransformReadback.decode_inspection(%{})
+    _ = TransformReadback.classify_later(warm.candidate, [], [])
+    _ = TransformReadback.classify_control(warm.hero, warm.hero)
+    _ = TransformReadback.decode_apply(%{})
+    _ = JSON.encode!(%{"warm" => [1, "x", 2.5]})
+    ident0 = follow_ident.()
+    warm_ms = msd.(us.() - tw0)
+
+    run_base =
+      case File.read(Path.join(evid, "ident-baseline.bin")) do
+        {:ok, bin} -> :erlang.binary_to_term(bin)
+        _ -> nil
+      end
+
+    run_changed = if run_base, do: for(k <- M6fFollow.identity_keys(), Map.get(run_base, k) != Map.get(ident0, k), do: k), else: []
+    log.("lift-follow: the run's identity baseline (ident-baseline.bin) #{if run_base, do: "compared: changed #{inspect(run_changed)}", else: "NOT present in #{evid}: not compared (the cheap follow-up baseline is taken now)"}")
+
+    {s, ins, params} =
+      lift_prepare.(a.inspection, a.generation, a.lift_ttl_ms, fn s ->
+        [
+          {"follow-plan-validated", true},
+          {"follow-inert-armed-for-the-reads", s.trust.armed == true},
+          {"follow-no-stop-marker", not File.exists?(Path.join(evid, "stop.marker"))},
+          {"follow-identity-baseline-captured", M6fFollow.identity_check(%{identity: fn -> ident0 end}, ident0) == :ok},
+          {"follow-identity-equals-run-baseline-when-present", run_base == nil or run_changed == []}
+        ]
+      end)
+
+    {vm_age_ms, _} = :erlang.statistics(:wall_clock)
+    t_plan_us = us.()
+
+    plan_written =
+      wjson.(%{"event" => "follow.plan", "label" => label, "utc" => now.(), "t_plan_us" => t_plan_us, "vm_age_ms" => vm_age_ms, "inspection_binding" => a.inspection,
+      "expected_generation" => a.generation, "lift_ttl_ms" => a.lift_ttl_ms, "link_generation" => s.link.generation, "adapter_instance_id" => s.link.adapter_instance_id,
+      "plan" => Map.new(Map.drop(plan, [:first_request_target_ms, :first_observation_target_ms]), fn {k, v} -> {to_string(k), v} end),
+      "targets" => %{"first_request_ms" => plan.first_request_target_ms, "first_observation_native_ms" => plan.first_observation_target_ms},
+      "warm_up_ms" => warm_ms, "run_baseline_compared" => run_base != nil,
+      "baseline_identity" => Map.new(ident0, fn {k, v} -> {to_string(k), inspect(v)} end)})
+
+    if plan_written != :ok do
+      log.("lift-follow REFUSED: the follow.plan line was not written (#{inspect(plan_written)}); nothing issued")
+      System.halt(2)
+    end
+
+    rt = plan.request_timeout_ms
+
+    client = %{
+      now_us: us,
+      sleep_ms: &Process.sleep/1,
+      inspect: fn ttl -> call_t.(cmd, :inspect_candidate_transform, [[ttl_ms: ttl]], rt) end,
+      command: fn id -> call_t.(cmd, :command, [id], rt) end,
+      identity: follow_ident,
+      observe: fn orig, insp, t -> call_t.(cmd, :observe, [orig, "later_frame_read_back", t, [inspection_command_id: insp]], rt) end,
+      stop?: fn -> File.exists?(Path.join(evid, "stop.marker")) end,
+      emit: wjson
+    }
+
+    # 2 the ONE lift; 3 the schedule, started by the observed terminal; 4 the deferred reports
+    t_send = us.()
+    r = call.(cmd, :lift_candidate, [params, [inspection_command_id: a.inspection, expected_generation: a.generation, ttl_ms: a.lift_ttl_ms]])
+    t_ret = us.()
+
+    case r do
+      {:ok, id} ->
+        # the issuance is recorded at once, while the lift is in flight (before its terminal is observed — never between the
+        # terminal and the first follow-up request): a crash during the terminal wait cannot leave an issued lift unrecorded
+        issued = wjson.(%{"event" => "follow.issued", "original_id" => id, "t_send_us" => t_send, "t_ret_us" => t_ret, "utc" => now.()})
+        idw = File.write(Path.join(evid, "#{label}-command-id.txt"), id <> "\n")
+        log.("lift issued #{id} (candidate.transform.set/1 mode lift; generation #{a.generation}; ttl #{a.lift_ttl_ms} ms); the follow-up schedule #{inspect(plan.schedule_ms)} ms was armed before it#{if issued == :ok and idw == :ok, do: "", else: "; WARNING: issuance record writes #{inspect({issued, idw})}"}")
+
+        ctx = %{
+          original_id: id, expected_generation: a.generation, link_generation: s.link.generation, adapter_instance_id: s.link.adapter_instance_id,
+          baseline_identity: ident0, binding_observed: obs.(ins)
+        }
+
+        result = M6fFollow.run(client, plan, ctx)
+        c = call.(cmd, :command, [id])
+        c = if is_map(c) and c.status in [:accepted, :transmitted, :received], do: wait_terminal.(id, 20_000), else: c
+
+        entries =
+          if is_map(c) do
+            lift_report.(id, c, a.inspection, a.generation, params)
+          else
+            # e.g. the authority restarted during the schedule: its records are gone (the journal file keeps them); the lift's
+            # EVIDENCE lines need the live record and are NOT produced; the follow result's original summary (taken when the
+            # terminal was observed) and the journal stand; nothing is reconstructed
+            log.("the authority no longer holds the lift's record #{id} (#{inspect(c)}): the lift's EVIDENCE lines are not produced; the follow result's original summary (taken at the observed terminal) and the journal file are the record")
+            j = call.(GlacierRelay.Command.Journal, :status, [])
+
+            case is_map(j) && call.(GlacierRelay.Command.Journal, :read, [j.path]) do
+              {:ok, read} -> read.entries
+              other -> log.("journal read failed: #{inspect(other)}"); nil
+            end
+          end
+
+        follow_report.(id, result, entries, msd.(t_ret - t_send), %{plan_written: plan_written, t_plan_us: t_plan_us, t_send_us: t_send, t_ret_us: t_ret, vm_age_ms: vm_age_ms})
+
+      other ->
+        log.("lift refused locally: #{inspect(other)} (nothing transmitted; no follow-up read)")
+        wjson.(%{"event" => "follow.end", "stop" => "lift_not_issued", "detail" => inspect(other), "requests" => 0, "t_send_us" => t_send, "t_ret_us" => t_ret})
+        ev.("follow.lift-not-issued-no-read", true, "lift_candidate returned #{inspect(other)}: no follow-up request was or will be issued; no retry")
+    end
+
+    File.close(fd)
     finish.()
 
   "plan-restore" ->
