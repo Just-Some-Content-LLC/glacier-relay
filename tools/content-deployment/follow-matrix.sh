@@ -280,8 +280,8 @@ lift_refused_phase() {
     prep p 62
     tool "$PD" $PL cmd-m6f.exs $FA "$INS" "$GEN"; rc=$?
     okc "$FK-refused: the local guard passed and the AUTHORITY refused the $FK (its candidate call returned an error); no follow-up read" \
-      "! grep -q 'LOCAL GUARD REFUSED' '$PD/op-$PL.out' && grep -q '$FK refused locally: :inspection_stale (refused before transmission: nothing transmitted' '$PD/op-$PL.out' && grep -q '\"stop\":\"${FK}_not_issued\"' '$PD/$PL-follow.ndjson' && grep -q 'EVIDENCE follow.lift-not-issued-no-read: ok' '$PD/op-$PL.out' && [ ! -e '$PD/$PL-command-id.txt' ]"
-    say "$FK-refused: $(grep -o '$FK refused locally: .*' "$PD/op-$PL.out" | cut -c1-220) (rc $rc)"
+      "! grep -q 'LOCAL GUARD REFUSED' '$PD/op-$PL.out' && grep -q '$FK refused locally: :inspection_stale (refused before transmission: nothing transmitted' '$PD/op-$PL.out' && grep -q '\"stop\":\"${FK}_not_issued\"' '$PD/$PL-follow.ndjson' && grep -q 'EVIDENCE follow.$FK-not-issued-no-read: ok' '$PD/op-$PL.out' && [ ! -e '$PD/$PL-command-id.txt' ]"
+    say "$FK-refused: $(grep -o "$FK refused locally: .*" "$PD/op-$PL.out" | cut -c1-220) (rc $rc)"
     bud=$(pp_rpc 's = :rpc.call(:"'"$NODE"'", GlacierRelay.Command, :status, []); IO.puts("#{s.effectful.transform_lift_budget} #{s.trust.effectful_armed}")')
     okc "$FK-refused: the forward budget is still 1 (nothing issued; the arming is not consumed: '$bud')" "[ '${bud%% *}' = 1 ]"
   fi
@@ -313,11 +313,11 @@ issue_timeout_phase() {
       IO.puts("resumed #{inspect(link)} -> #{inspect(r)} after #{System.monotonic_time(:millisecond) - t0} ms (#{seen})")
     ' "$NODE" "$PD/op-$PL.out" "$PD/link-hold.ready" "$FKU ISSUANCE UNCERTAIN") > "$hout" 2>&1 & hold=$!
     for _ in $(seq 1 300); do [ -s "$PD/link-hold.ready" ] && break; sleep 0.05; done
-    okc "issue-timeout: the phase's own Link process suspended before lift-follow started ($(cat "$PD/link-hold.ready" 2>/dev/null | cut -c1-80))" "[ -s '$PD/link-hold.ready' ]"
+    okc "issue-timeout: the phase's own Link process suspended before $FA started ($(cat "$PD/link-hold.ready" 2>/dev/null | cut -c1-80))" "[ -s '$PD/link-hold.ready' ]"
     tool "$PD" $PL cmd-m6f.exs $FA "$INS" "$GEN"; rc=$?
     wait "$hold"
     say "issue-timeout: $(grep -oE "$FKU ISSUANCE UNCERTAIN.{0,200}" "$PD/op-$PL.out" | head -1) | hold: $(tail -1 "$hout" | cut -c1-160)"
-    okc "issue-timeout: lift-follow reports the issuance UNCERTAIN after its 3 s bound ({:badrpc, :timeout}) — not a refusal, never 'nothing transmitted'" \
+    okc "issue-timeout: $FA reports the issuance UNCERTAIN after its 3 s bound ({:badrpc, :timeout}) — not a refusal, never 'nothing transmitted'" \
       "grep -q '$FKU ISSUANCE UNCERTAIN: .*returned {:badrpc, :timeout}' '$PD/op-$PL.out' && ! grep -q 'nothing transmitted' '$PD/op-$PL.out' && grep -q 'EVIDENCE follow.$FK-issuance-determined: NOT' '$PD/op-$PL.out' && grep -q 'EVIDENCE follow.no-read-after-uncertain-issuance: ok' '$PD/op-$PL.out'"
     okc "issue-timeout: the follow file holds the plan and the uncertain end, no issuance record and no slot; no command-id file" \
       "grep -q '\"event\":\"follow.plan\"' '$PD/$PL-follow.ndjson' && grep -q '\"stop\":\"${FK}_issuance_uncertain\"' '$PD/$PL-follow.ndjson' && ! grep -qE '\"event\":\"follow.(issued|slot)\"' '$PD/$PL-follow.ndjson' && [ ! -e '$PD/$PL-command-id.txt' ]"
@@ -325,8 +325,8 @@ issue_timeout_phase() {
     # what the authority did meanwhile (read now, after the tool ended — never by the tool): the lift accepted, transmitted, applied
     lid=$(python3 -I -c "import json,glob,sys; e=[json.loads(l) for f in glob.glob(sys.argv[1]+'/commands/commands-*.ndjson') for l in open(f) if l.strip()]; a=[x for x in e if x.get('event')=='command.accepted' and x.get('name')=='candidate.transform.set']; print(a[0]['command_id'] if len(a)==1 else 'none:%d' % len(a))" "$ST")
     for _ in $(seq 1 100); do st=$(pp_rpc 'c = :rpc.call(:"'"$NODE"'", GlacierRelay.Command, :command, ["'"$lid"'"]); IO.puts(if is_map(c), do: c.status, else: inspect(c))'); case "$st" in applied|failed|unknown|expired|precondition_failed|unavailable) break;; esac; sleep 0.1; done
-    say "issue-timeout: the journal's one lift $lid: authority status $st"
-    okc "issue-timeout: the authority accepted, transmitted and APPLIED the lift after the tool's timeout (the timeout was not a refusal)" "[ '$st' = applied ]"
+    say "issue-timeout: the journal's one $FK $lid: authority status $st"
+    okc "issue-timeout: the authority accepted, transmitted and APPLIED the $FK after the tool's timeout (the timeout was not a refusal)" "[ '$st' = applied ]"
     st=$(pp_rpc 'IO.puts(inspect(:rpc.call(:"'"$NODE"'", Process, :whereis, [GlacierRelay.Command.Authority])))')
     okc "issue-timeout: the authority was not restarted by the hold (the same pid $apid0 before and after: its own 5 s call bound not reached)" "[ -n '$apid0' ] && [ '$st' = '$apid0' ]"
   fi
@@ -353,11 +353,11 @@ restore_phase() {   # <name> <transform-later> <held|returned|drifted> [aged]
   T2=$(ms)
   OPX note "MATRIX: simulated operator go-ahead for the lift" > /dev/null
   M6F1B_MODE=dry-run M6F1B_OWNER=$IMG M6F1B_GUARD_ROOT=$E M6F1B_RUN_DIR=$run bash "$run/$SEQF" "$PD" "$S" r4 r3-players r3-entity r3-ct > "$(evg_out "$PD/seq-lift.console")" 2>&1; rc=$?
-  okc "$name: seq-lift completed (R4 done, rc $rc)" "[ $rc = 0 ] && grep -q 'R4 done' '$PD/r4-sequence.txt'"
+  okc "$name: the R4 sequence $SEQF completed (R4 done, rc $rc)" "[ $rc = 0 ] && grep -q 'R4 done' '$PD/r4-sequence.txt'"
   follow_checks $KL "d['stop'] is None" "d['requests'] == 6" "$( [ "$kind" = held ] && echo held || ([ "$kind" = returned ] && echo returned_to_baseline || echo drifted))" fast
   LS=$(python3 -I -c "import json,sys; d=json.load(open(sys.argv[1])); r=[s for s in d['slots'] if s['outcome']=='requested']; print('$KL-s%d' % r[-1]['slot'])" "$PD/$KL-follow-result.json")
   LSID=$(tr -d '\n' < "$PD/$LS-command-id.txt" 2>/dev/null)
-  okc "$name: the last lift-follow sample $LS is returned through the existing file / result convention (command id, result, observed)" "[ -n '$LSID' ] && [ -s '$PD/$LS-result.json' ] && [ -s '$PD/$LS-observed.json' ]"
+  okc "$name: the last $FA sample $LS is returned through the existing file / result convention (command id, result, observed)" "[ -n '$LSID' ] && [ -s '$PD/$LS-result.json' ] && [ -s '$PD/$LS-observed.json' ]"
   if [ "$aged" = aged ]; then
     age=$(( $(date +%s) - $(stat -c %Y "$PD/$KL-follow-result.json") ))
     say "$name: waiting $(( 62 - age > 0 ? 62 - age : 0 )) s more so that the last sample ($LS) is older than the authority's 60 s inspection window"
@@ -440,12 +440,12 @@ old_or_kit() {   # <old-path|kit-held>
     sc1=$( (cd "$SC" && find . -type f | sort | xargs sha256sum) )
     okc "kit-held: op.sh pointed at a sealed claimed root is refused by the guard (rc $rc) and that root is unchanged" "[ $rc != 0 ] && grep -q 'sealed' '$PD/sy-opsh.txt' && [ \"\$sc1\" = \"\$sc0\" ]"
     bud=$(pp_rpc 's = :rpc.call(:"'"$NODE"'", GlacierRelay.Command, :status, []); IO.puts(s.effectful.transform_lift_budget)')
-    okc "kit-held: the lift budget is still 1 after the four refusals (nothing was issued)" "[ '$bud' = 1 ]"
+    okc "kit-held: the forward budget is still 1 after the four refusals (nothing was issued)" "[ '$bud' = 1 ]"
   fi
   OPX note "MATRIX: simulated operator go-ahead for the lift" > /dev/null
   M6F1B_MODE=dry-run M6F1B_OWNER=$IMG M6F1B_GUARD_ROOT=$E M6F1B_RUN_DIR=$run bash "$run/$seqf" "$PD" "$S" r4 r3-players r3-entity r3-ct > "$(evg_out "$PD/seq-lift.console")" 2>&1; rc=$?
-  say "$name: seq-lift rc $rc: $(grep -E 'R4 done|STOPPED|HARD STOP|lift issued|NOT issued' "$PD/r4-sequence.txt" | sed -E 's/^[^ ]+ //' | cut -c1-200 | tr '\n' '|')"
-  okc "$name: seq-lift completed (R4 done)" "[ $rc = 0 ] && grep -q 'R4 done' '$PD/r4-sequence.txt'"
+  say "$name: $seqf rc $rc: $(grep -E 'R4 done|STOPPED|HARD STOP|lift issued|NOT issued' "$PD/r4-sequence.txt" | sed -E 's/^[^ ]+ //' | cut -c1-200 | tr '\n' '|')"
+  okc "$name: $seqf completed (R4 done)" "[ $rc = 0 ] && grep -q 'R4 done' '$PD/r4-sequence.txt'"
   if [ "$name" = old-path ]; then
     M6F1B_MODE=dry-run M6F1B_OWNER=$IMG M6F1B_GUARD_ROOT=$E M6F1B_RUN_DIR=$run bash "$run/seq-later.sh" "$PD" "$S" r5 $KL r4-ct r3-players r3-entity > "$(evg_out "$PD/seq-later.console")" 2>&1
     say "old-path: seq-later: $(grep -E 'sample [ab] \(|classes:' "$PD/r5-sequence.txt" | sed -E 's/^[^ ]+ //' | cut -c1-200 | tr '\n' '|')"
@@ -456,11 +456,11 @@ old_or_kit() {   # <old-path|kit-held>
     follow_checks $KL "d['stop'] is None" "d['requests'] == 6" held fast
     KIT_OBS="$(jget "$PD/$KL-follow-result.json" "d['slots'][0]['frames_after_lift']") $(jget "$PD/$KL-follow-result.json" "d['slots'][0]['native_ms_after_lift']")"
     say "kit-held: $(grep -E '^[^ ]+ r4:   deferred|the last sample' "$PD/r4-sequence.txt" | sed -E 's/^[^ ]+ r4: //' | cut -c1-200 | tr '\n' '|')"
-    okc "kit-held: the deferred per-sample xcheck ran for all six samples after the schedule, each 0 NOT and HELD" "[ \$(ls '$PD'/xc-$KL-s*-x.out 2>/dev/null | wc -l) = 6 ] && [ \$(grep -l 'xcheck: 0 NOT line' '$PD'/xc-$KL-s*-x.out | wc -l) = 6 ] && [ \$(grep -l 'transform-later-vs-lift: ok .*: HELD' '$PD'/xc-$KL-s*-x.out | wc -l) = 6 ]"
+    okc "kit-held: the deferred per-sample xcheck ran for all six samples after the schedule, each 0 NOT and HELD" "[ \$(ls '$PD'/xc-$KL-s*-x.out 2>/dev/null | wc -l) = 6 ] && [ \$(grep -l 'xcheck: 0 NOT line' '$PD'/xc-$KL-s*-x.out | wc -l) = 6 ] && [ \$(grep -l 'transform-later-vs-$FK: ok .*: HELD' '$PD'/xc-$KL-s*-x.out | wc -l) = 6 ]"
     OPX opf r7-${FK}2 $FA "$INS" "$GEN" > "$(evg_out "$PD/r7-opsh.txt")" 2>&1
-    okc "kit-held: op.sh refuses a second lift-follow (lift-follow counts as the run's one lift)" "grep -q '$KIT_SECOND_REFUSAL' '$PD/r7-opsh.txt' && [ ! -e '$PD/op-r7-${FK}2.out' ]"
+    okc "kit-held: op.sh refuses a second $FA ($FA counts as the run's one forward)" "grep -q '$KIT_SECOND_REFUSAL' '$PD/r7-opsh.txt' && [ ! -e '$PD/op-r7-${FK}2.out' ]"
     OPX opf r7-${FK}3 $FK "$INS" "$GEN" > "$(evg_out "$PD/r7b-opsh.txt")" 2>&1
-    okc "kit-held: op.sh refuses a plain lift after the lift-follow" "grep -q '$KIT_SECOND_REFUSAL' '$PD/r7b-opsh.txt' && [ ! -e '$PD/op-r7-${FK}3.out' ]"
+    okc "kit-held: op.sh refuses a plain $FK after the $FA" "grep -q '$KIT_SECOND_REFUSAL' '$PD/r7b-opsh.txt' && [ ! -e '$PD/op-r7-${FK}3.out' ]"
     tool "$PD" r7-direct cmd-m6f.exs $FA "$INS" "$GEN"; rc=$?
     okc "kit-held: cmd-m6f.exs $FA called directly (bypassing op.sh) is refused by its local guard: the budget is consumed (rc $rc)" "[ $rc = 2 ] && grep -q '$FK guard $BUDGET_CHECK: FAILED' '$PD/op-r7-direct.out' && ! grep -q '$FK issued' '$PD/op-r7-direct.out'"
   fi
