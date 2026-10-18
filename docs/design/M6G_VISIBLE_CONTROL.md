@@ -1,6 +1,6 @@
 # M6-G — One bounded, observable external action on the visible Agent48 (design, 2026-10-18)
 
-**Status:** design only, from read-only source examination. Nothing implemented, built, generated, installed or launched; no token, no command. M6 is not complete; nothing is tagged.
+**Status:** sections 1–5 are the design, from read-only source examination. Section 6 is the reviewed M6-G1 contract. Section 7 records M6-G1: `candidate.transform.set` v2 `step_y` implemented and validated **offline** (build of record native5 `f271d129…`, not installed; evidence `m6g1-offline\`, sealed `b65c87ff…`). Nothing was installed or launched; no real token was provisioned and no game command issued. M6-G2 is proposed, not authorized. M6 is not complete; nothing is tagged.
 
 **Authorization:** "M6-E3 Acceptance and Bounded Visible-Control Design". The acceptance addendum is `M6E_VISUAL_PLACEMENT.md` section 13.
 
@@ -191,3 +191,272 @@ M6 stays open; no tag.
 - **Binding:** the v2 step needs the same specific, recent, completed exact inspection, verified by the issuing authority against its own journal and current context. Canonical expectation values come from that evidence: no caller-asserted binding map, no implicit latest-inspection shortcut.
 - **Native revalidation on the applying frame** stays complete: identity, distinctness, registry absence, generation, parent, the clean exact expectation, a finite and non-no-op target, the budget, the capacity, the link and the checked pre-call line. Unsupported internal entry / mode combinations are refused, never fallen through into another operation. There is no extra setter, direct field write, physics write, input, activation or registry operation.
 - **Restoration is never an automatic inverse.** It needs the original preimage, a later exact inspection and journal / ledger eligibility, and is refused for uncertain, dirty, drifted, already-returned, ambiguous or otherwise ineligible evidence. It cannot refill the forward budget. World, parent-relative, parent, dirty-state and whole-snapshot facts stay separate.
+
+## 7. M6-G1 — implementation and offline gate record (2026-10-18)
+
+**Authorization:** "M6-G1 offline visible-step implementation authorization" (section 6). Offline only. Nothing was installed and HITMAN was not launched; no real run token was provisioned, and no camera operation, content generation or game command took place. Ephemeral offline test tokens and FAKE-engine commands ran inside guarded test roots. M6-G2 is not authorized; section 7.9 is a proposal. M6 stays open; nothing tagged.
+
+### 7.1 Identities
+
+| What | Identity |
+|---|---|
+| Starting checkpoint (verified, `m6g1-offline\checkpoint.txt` PASS) | glacier-relay `main` `1aba9b58` · ZHMModSDK `relay/m2` `3b892cad` · native4 `806de7a9…` intact · content `5ac64848…` / `58e9a10f…` / `9433888b…` · manifests `5121856e…` (M6-E3) and `cd1e7856…` (M6-G design) · six sealed roots and four committed recordings unchanged · the complete game baseline, M0 26/26 · no relay process, port or token file |
+| Reconciliation (docs, before code) | glacier-relay `b0f9c85d` (section 6) |
+| Native | ZHMModSDK `relay/m2` **`06a2c48c`** (the entry, gate, ledger and tests) · **`76c407f3`** (the command probe, tests only); both pushed |
+| BEAM | glacier-relay `main` **`8a1fa37c`** (schema, authority, binding, planner, facade, tests); pushed |
+| Tooling | glacier-relay `main` **`ff828880`** (`cmd-m6f.exs`, `cmd.exs`, `xcheck.py`, `follow-matrix.sh`, the tooling test, README); pushed |
+| Corrections after the matrix and the independent check (7.5, 7.7) | glacier-relay `main` `ff692019` (the matrix's step-blind checks) · `925e8be` (BEAM: the binding's restore version required; direct tests) · `656a428` (the `cmd-m6f.exs` header) · **`874d404c`** (the at-p world's one known xcheck line); pushed. `874d404c` is the commit of record of the gate, the matrix and record (a) |
+| Offline readiness record (a) | `m6g1-offline\readiness-attempt2\record-a.json` **`e74a68586a9e4c6032d90f8ec3112240b5ed605d1c886547fad103595b24aa0f`** (139 checks ok; run id `m6g1-offline`; qualifies, does not authorize) |
+| **Build of record `native5`** (clean, `-j 1`, from `76c407f3`; NOT installed, not tagged, not a replacement for native4) | `GlacierRelay.dll` **`f271d1292096bbcdfed41a89f0162d430944042789f1975ea69a80883d5e4280`** (11,069,952 B) · PDB `884b5a9e…` · `GlacierRelayTests.exe` `4d64a572…` · `GlacierRelayCommandProbe.exe` `6de83c7c…` · `GlacierRelayWireProbe.exe` `8a2c0cd3…` (`m6g1-offline\native5\artifacts.sha256`) |
+| Evidence | `%TEMP%\glacier-m0\hitmen\m6g1-offline\` (state root `~/.local/state/glacier-relay-m6g1-offline`), sealed, **4,566 entries, manifest `sha256.txt` `b65c87ff2f82b865d85734ddd1cea06ab3ecb15240dbed7a17dcf30f653fdf3b`** (written last, after every writer stopped; verified) |
+
+native4 (`806de7a9…`), its tree, and every older binary, tag, recording, exception list and sealed root are preserved unchanged.
+
+### 7.2 What was implemented
+
+**Native (`06a2c48c`, 9 source files):**
+- `CommandProtocol`: entry `candidate.transform.set/2` with `TransformMode::StepY`. The decode is shared with v1, and version-specific refusal texts say which modes each version takes. A forward carrying `target_world` or `restore_of` is refused, and the request records its version.
+- `TransformObservation::StepYTarget`: all twelve words are copied and only word 10 is replaced with binary32 `y + 0.25f`.
+- `TransformApply`:
+  - gate rule 0 refuses every (version, mode) pair outside v1 {lift, restore} and v2 {step_y, restore}, before any target is computed;
+  - a command-entry version that differs from the request version is refused (`entry_mode_unsupported`);
+  - the one forward budget is consumed by either forward at the call, after the checked applying line, and the ledger records the forward's version and mode;
+  - a restore of another version's forward is refused (`restore_version_mismatch`);
+  - the applying line names the version and mode (`applying candidate.transform.set/2 mode step_y`).
+- `CommandScheduler`: v2 dispatches into the same transform path.
+- `CommandLink`: `candidate.transform.set/2` is advertised only under the effectful setting.
+
+The setter call site, the detour, the observation model, the native revalidation, the capacity and the log discipline are unchanged.
+
+**BEAM (`8a1fa37c`):**
+- `Schema`: `{"candidate.transform.set", 2}` takes `step_y | restore`; it is effectful, `:token_verified`, with the mission-generation precondition.
+- `TransformWords.step_y_target/1`: a cross-check replica only.
+- `Authority`:
+  - per version, it accepts only that version's forward;
+  - one shared forward budget (`forward_consumes?`: accepted and not verifiably unapplied);
+  - it compares a restore's version with the journaled original whichever facade is used;
+  - the status keys `transform_lift_budget` / `transform_lift_consumer` are kept and documented as shared.
+- `TransformBinding.step_y/3`: the same one specific, recent, exact inspection; `restore/5` checks the plan's version.
+- `TransformRestore`: plans v1 lifts and v2 steps, carrying the journaled version and mode. Historical v1 records already carry their version and are used without rewriting.
+- `Command.step_candidate/2`; `Command.restore_candidate/2` issues the plan's version.
+
+**Tooling (`ff828880`):**
+- `cmd-m6f.exs` `step` / `step-follow` reuse the lift's guarded path through one forward descriptor. That includes the bounded `rpc_ms` (now for `step-follow` too), the stop before every read, uncertain issuance, the sealed-root and label refusals, and the deferred reports.
+- The step's evidence is named `step.*`, with `step.entry-is-v2-step_y`. The lift's texts and EVIDENCE names are unchanged.
+- `xcheck.py --step`; the `cmd.exs` linkcheck covers every `candidate.transform.set/<n>`.
+- `follow-matrix.sh` is parametrized by environment variables; its defaults are the M6-F2a / F2b lift behaviour.
+- The finite sampler is unchanged (at most six reads, one in flight).
+
+### 7.3 Offline proof against the authorization's list
+
+Native tests are in `TransformObservationTests.cpp`, `TransformApplyTests.cpp` and `CommandLinkTests.cpp` on `relay/m2`. BEAM tests are in `transform_step_v2_test.exs` (14 tests) and `transform_restore_test.exs`. The matrix is the FAKE probe `6de83c7c…` with the reviewed BEAM application (7.4).
+
+| Required (authorization section 6) | Where it is shown |
+|---|---|
+| E3's exact words, only word 10 changed (`416d47ae` → `417147ae`), signed zeros kept; non-finite and unchanged targets refused | native: the step target on E3's words with a planted −0, its no-op and non-finite cases (`target_equals_current`, `target_not_finite`); BEAM: the words replica; matrix: `xcheck --step` `step-requested-is-compiled` on every step phase |
+| version / mode combinations and cross-version refusals, including native-only inputs | native: the decode of v2, v1 `step_y` / v2 `lift` / v0 / v3 refused, the refusal table run for both versions, the unsupported (version, mode) pairs reached natively and the command / request version mismatch (`entry_mode_unsupported`); BEAM: the schema test, the authority's per-version mode check |
+| multi-version advertisement, a v1-only peer, effectful-off, a transport-v1 peer | native: the effectful hello carries `/1` and `/2` and no `/3`; the inert hello carries neither; a version-1 link refuses `/2`. BEAM: a v1-only peer gets `:entry_not_advertised_to_peer`, effectful off gives `:effectful_disabled` with neither in the welcome, a transport-v1 peer gets `:peer_protocol_version_1`; tooling: the linkcheck covers every `candidate.transform.set/<n>` |
+| the shared budget in both orders; fresh ids, re-arming and restoration give no allowance; pre-call refusals vs uncertain / in-flight consumption | native: the qualified step then a lift refused, and the reverse order; the scheduler dispatch with the shared budget; an unaccepted applying line consumes nothing. BEAM: the step ladder, the other order, a verified refusal leaving the budget, an unknown step consuming it across a reconnect and a fresh arming, a restoration never refilling it. Matrix: `step-refused` (budget 1, arming unconsumed), `issue-timeout` (uncertain issuance, the step applied meanwhile, no read) |
+| a journal-derived v2 plan transmits a v2 restore; a v1 plan still transmits v1; forged metadata, version substitutions and altered targets fail | BEAM: the v2 plan and transmission, the v1 plan, forged / version-substituted / altered restorations, a v2 restore of a v1 lift; native: cross-version restores (`restore_version_mismatch`), every v2 restore substitution refused against the record; matrix: `restore.version-is-the-original's` on every restoration |
+| the complete step-follow → sample → eligibility → fake approval → fresh arming → restore workflow, including the stale-sample path | matrix step-kit: `kit-held`, `restore-held`, `restore-aged` (the just-in-time path and the DIRECT stale refusal), `restore-returned`, `restore-drifted` through the M6-G2 kit's `op.sh`, `seq-step.sh` and `seq-restore.sh` in dry-run mode |
+| the fake held / returned / drift / dirty / unchanged / unavailable / uncertain / fault outcomes; log failures on the `/2` line | native: the step's setter outcomes — unchanged, elsewhere, axes elsewhere, local follows, dirty post-state, read-back unavailable, a generation / parent / entity change after the call, a fault during the call, a control change — each with one invocation and the budget consumed, restorable only when changed with the control unchanged; the checked `/2` applying line (no call on an unaccepted line, the budget not consumed); matrix step-direct: `returned`, `drifted`, `dirty`, `near`, `slow`, `fault`, `exit-after-call` |
+| the v2 binding refusals (missing, stale, foreign, wrong generation, twin-bit, unqualified) | BEAM: the v2 binding refusals and the stale / old-link test; matrix: `step-refused` (stale binding refused by the authority after the local guard passed) |
+| operator stop, bounded RPCs, uncertain issuance, link loss, authority restart | matrix step-direct: `operator-stop`, `issue-timeout`, `disconnect`, `no-link`, `authority-restart` |
+| v1 compatibility; no dynamic-atom regression | the unchanged v1 tests in both suites (25 native runs, five BEAM suites); matrix lift-regression on native5; no `String.to_atom` on wire or journal input (the independent check, 7.7) |
+
+### 7.4 The gate
+
+Every gate run below ran in sequence, never alongside another run that used ports, a BEAM node or the build tree.
+
+**Native** (`gate-attempt1`, `native5\`):
+- **Clean build:** `-j 1`, tree `_build/relay-x64-Debug`, rebuilt from an empty directory. 0 Relay-owned warnings. The one warning is the third-party ZHMTools `ZHMEnums.cpp` C4244 (MSVC `utility(274)`), the same one native4's build reported.
+- **Tests:** **25 / 25** consecutive runs of `GlacierRelayTests.exe` `4d64a572…`, exit 0 every time.
+- **Raw import / export symbols vs native4: 0 added, 0 removed (202 / 202).** The expected engine-import growth was zero, and it is zero. The imported DLLs are unchanged.
+- **Source scans:**
+  - one `AddDetour` site, one `ZHitman5_SetOutfit->Call` (OutfitApplier.cpp), one `->SetObjectToWorldMatrixFromEditor(` (TransformApplier.cpp), no other `->Call(`;
+  - `SetProperty(` / `SetTransform(` / `m_pPhysicsObject` / `Activate(` / `SendInput` / `keybd_event` / `mouse_event`: 0;
+  - the transform applier is constructed only under the effectful setting;
+  - `forward_budget = 1`, consumed at the call;
+  - `k_LiftZ` and `k_StepY` once each;
+  - `/1` and `/2` advertised, both inside `if (m_Options.effectful)`.
+- **Line bounds (run 1):** the candidate's good read set is 3,562 B and its maximal observed set 4,009 B. The transform inspection is 2,643 B, the v1 lift result 3,864 B and the v2 step result 3,845 B, all of 4,096 (47 entries each for the two results).
+- **Capability lists:** the effectful hello carries `/1` and `/2` and nothing else of that name; the inert hello carries neither.
+
+**BEAM** (`beam-gate-attempt2`, relay `874d404c`, after the verifier's corrections):
+- `mix compile --warnings-as-errors` (dev) and `MIX_ENV=test mix compile --warnings-as-errors`: ok. The scoped format check (command lib and tests, test support): ok.
+- **Five full suites: 618 tests, 0 failures each, exit 0** (seeds 247988, 137993, 155303, 695372, 7060). `beam-gate-attempt1` on `ff828880` gave the same: 618 / 0 × 5.
+- Areas alone: the M6-F / M6-G1 transform files 73 / 0, the command directory 176 / 0, headless + boundary 16 / 0.
+- Tooling tests: `cmd_m6f_args_test` 11 / 0, `m6f_follow_test` 33 / 0, `readiness_test.py` OK.
+- `gate-attempt1` also recorded that, compared with `b0f9c85d`, the recording, wire, web and token-holder code, `mix.exs` and `mix.lock` are unchanged (0 lines); the four committed recordings are unchanged; and the whole-tree format check lists 12 files, all M2-era (`lib/glacier_relay/{attempt_history,disguise,events,lifecycle,player_state,summary}.ex` and six tests) and none of them this stage's.
+- **Disclosure:** the test files are not warning-free. Four untouched command test files emit warnings while compiling; their last changes are `eade3aa`, `a91a5fb` and `a6d23fe`, all from earlier stages:
+  - `candidate_inspection_test.exs`: nine OTP 27 `0.0` pattern warnings;
+  - `players_inspection_test.exs`, `transform_binding_test.exs` and `effectful_test.exs`: an unused default argument each.
+  So `mix test --warnings-as-errors` (`gate-attempt1`) completed all five suites at 618 / 0 and then exited 1 on those warnings alone. The gate of record uses the established form of the M6-F1a … F2b gates (compile with warnings as errors, then plain `mix test`). The files this stage added or changed emit no warnings. Cleaning the four files is a separate test-hygiene item and was not done here.
+
+**Matrix** (`follow-matrix.sh` at `874d404c`, the native5 probe `6de83c7c…`, the BEAM application at `874d404c`, one group at a time):
+
+| Group (attempt of record) | Phases | Result |
+|---|---|---|
+| `step-direct` (`matrix-step-direct-attempt3`; `M6F2A_FORWARD=step`, `at-p` world) | returned, drifted, dirty, near, slow, fault, exit-after-call, disconnect, authority-restart, operator-stop, no-link, step-refused, issue-timeout | **PASS, 0 failures** (81 checks ok) |
+| `step-kit` (`matrix-step-kit-attempt2`; the M6-G2 kit's `op.sh` / `seq-step.sh` / `seq-restore.sh` in dry-run mode) | kit-held, restore-held, restore-aged, restore-returned, restore-drifted | **PASS, 0 failures** (75 checks ok) |
+| `lift-regression` (`matrix-lift-regression-attempt2`; v1 on native5, the default world) | returned, fault, lift-refused | **PASS, 0 failures** (16 checks ok) |
+
+What the groups show:
+- **The steps and samples:** every step phase's request is the compiled target (`xcheck --step` `step-requested-is-compiled`, `step-entry-is-v2`). Every follow-up sample was on time, except the one slot the slow phase is designed to miss (700 ms frames: 5 on time, 1 missed, no catch-up).
+- **Restoration:** every restoration was issued at version 2 (`restore.version-is-the-original's`). After `restore-held`'s one restoration, the world and parent-relative words are bit-equal to the pre-step inspection.
+- **The second forward:** refused by `op.sh`, by `cmd-m6f.exs` called directly (its local guard: budget consumed) and by the authority. The independent journal check counted one forward, its armings and its consumption in every phase.
+- **The FAKE first observation:** +4 to 5 frames, +61 to 78 ms native, at 10 ms frames. This is a property of the FAKE probe, not a prediction (7.8).
+- **Per-sample cross-check:** the `at-p` world's one known xcheck line (7.5, item 4) is named and tolerated only in kit-held. No other NOT line occurred.
+
+**Drift rule** (`deps-attempt3`, against the final `run_manifest.py`): the kit's drift check on a scratch clone, **7 / 7**:
+- passes: HEAD = A, one docs-only commit, two docs-only commits;
+- fails: a tools commit, a relay commit, a docs-only head that does not descend from A, a non-docs file renamed into `docs/`.
+The real repository was unchanged and the clone removed. It ran with `python -I -B`, so no `__pycache__` was written into the kit; `scripts/drift-test-NOTE.txt` records this.
+
+**Final state** (`final-checks.txt`, after every other writer stopped and before the manifest):
+- the game verified against the complete baseline (`content-verify.sh`), M0 26 / 26, no patch300 file and no relay file under `mods\`;
+- no HITMAN, probe, test or `beam.smp` process, and no listener on 4747–4749;
+- no token file, an empty state root, and no token-shaped value anywhere in the root;
+- the accepted package set, the six sealed roots' manifests, native4 and native5 (5 / 5 each), the decoded matrix pin and record (a) all unchanged;
+- both repositories clean and on their upstreams (`874d404c`, `76c407f3`).
+
+### 7.5 Preliminary failures (preserved)
+
+All of these are preserved in `m6g1-offline\`, each with a NOTE beside it. None of them is of record.
+
+1. **`native\build-incr-A`:** the incremental build failed to compile. A `\n` inside a Python heredoc string put a literal newline into a `CommandProbe.cpp` `printf`. It was fixed before the commit; builds B–D passed, and the clean build of record followed.
+2. **`gate-attempt1`, BEAM half:**
+   - It ran `mix test --warnings-as-errors`. All five suites completed at 618 / 0 and then exited 1, solely on the warnings of four untouched test files (7.4).
+   - The gate of record is `beam-gate-attempt2`, in the established form. `beam-gate-attempt1` is the same form on `ff828880`, superseded by the corrections below.
+   - The native half of `gate-attempt1` is of record.
+3. **`matrix-step-direct-attempt1`** (1 failure):
+   - The step-refused check expected the lift's `follow.lift-not-issued-no-read`, while `cmd-m6f.exs` correctly wrote `follow.step-not-issued-no-read`. The behaviour was as designed: the authority refused before transmission, with no read, the budget still 1, and 0 forwards in the journal.
+   - The same pattern was found by reading in kit-held. Both were fixed in `ff692019`.
+4. **`matrix-step-kit-attempt1`** (16 failures), from two causes:
+   - **kit-held:** every sample had exactly one NOT line, `transform-hero-words-vs-entity-translation`. The probe's `at-p` mode seeds the transform words at P but keeps its entity inspection's default hero translation. That is a FAKE-world inconsistency, not a step result. Since `874d404` the matrix names and tolerates exactly that line, in `at-p` mode only; the probe is unchanged.
+   - **restore-held / restore-aged:** the kit's `restore-eligibility.py`, adapted in this stage, sliced `-step` but still tested `endswith("-lift")`. So `seq-restore.sh` refused before arming (exit 10), and nothing was armed or issued; the other failures in those phases followed from it. The kit file was corrected.
+5. **Superseded passes:** `matrix-step-direct-attempt2` and `matrix-lift-regression-attempt1` both passed with 0 failures at `ff692019`. After them, `relay/lib` (`925e8be`, the verifier's M2 / N6, no behaviour change) and two tools (`656a428`, `874d404`) changed, and every group's tooling table binds those. So the groups were re-run once on `874d404` (`matrix-reruns-NOTE.txt`).
+6. **`readiness-attempt1`:** `run_manifest.py prep` raised on the matrix groups' `absent` rows. These are files `follow-matrix.sh` names but a group does not use: the lift kit's `seq-lift.sh` and the M6-F1b old-path kit. No manifest was produced and the gate refused the empty record. The generator now checks each absent path as absent instead of hashing it. A dry run into the scratchpad then showed only the two reuses keyed to the previous `run_manifest.py` invalidated. Both were re-run (`run-rehearsal-attempt2`, `deps-attempt3`) before `readiness-attempt2`, the record of record. `run-rehearsal-attempt1` and `deps-attempt1` / `-attempt2` passed and are superseded.
+
+### 7.6 The M6-G2 kit, rehearsal and offline record
+
+**The kit** (`m6g1-offline\kit\`; 28 files and `SOURCE.txt`, which gives every file's sha256 and source):
+- 11 files are byte-identical copies from the M6-F2b and M6-E2 kits; 16 were adapted; `RUNBOOK.txt` is new. The adapted branches:
+  - `op.sh`: `step` / `step-follow`; `lift` / `lift-follow` refused; one forward per run; at most two effectful armings.
+  - `seq-step.sh` (from `seq-lift.sh`):
+    - R3's exact inspection must classify `at_P_exact` against the E2 matrix (`placement.py`, matrix `cd90df8d…`), otherwise it stops before arming;
+    - `xcheck --step`;
+    - 18 step and 14 follow EVIDENCE lines.
+  - `seq-restore.sh`: `--step`, 20 restore EVIDENCE lines.
+  - `restore-eligibility.py`: the `-step` label.
+  - `ident.exs`: `ident.v2-step-advertised` required at the baseline.
+  - The installer group (`r1-install.sh`, `cleanup-m6g2.sh`, `record-check.py`, `run_manifest.py`, `refresh.sh`, `make-readiness.sh`): native5 `f271d129…`, `effectful = true`, the run ids `m6g2-run1` / `m6g2-run1-rehearsal`, and this stage's qualifications.
+  - `verify-after.sh`: exactly one v2 step, at most one v2 restoration, no lift and no outfit command; v1 and v2 received-line counts.
+- **Exercised end to end** (dry-run mode) by the step-kit matrix group (7.4).
+
+**Installer rehearsal** (`run-rehearsal-attempt2`, **PASS, 0 failures**; scratch copies only, the real installation read and never written):
+- **V:** a valid record installs the exact delta; the settings file holds the five reviewed lines with `effectful = true`, and `mods.ini` = `mods.ini.run`. The cleanup then restores the tree byte for byte with the exact 100-ns creation / write ticks, and the original `mods.ini` with `crash_reporting = true`.
+- **Refused before any write**, with the scratch sentinels unchanged:
+  - P: a wrong pin;
+  - X: another readiness tool;
+  - Y: a changed manifest;
+  - S1 / S2: a stale record;
+  - N: a not-ready record;
+  - R: another run's record;
+  - O: another state root;
+  - M: a missing record;
+  - I: a changed INI;
+  - D: a changed DLL;
+  - A0 / A1: the M6-C2 package, before / after the record;
+  - **W0 / W1** (new): the native4 DLL in place of native5, before the record (a not-ready record, refused by the gate) and after it (refused at the copy boundary).
+- **B:** a late failure rolls back.
+- **K:** the sentinel and timestamp comparisons are not vacuous.
+- **C:** the real game root and the run's state root are refused.
+- **Disclosed:** case V's message still says `effectful = false`, text inherited from the E2 kit. The check on the same line compares against `effectful = true` and passed, and the installed copy reads `effectful = true` (`run-rehearsal-attempt1-NOTE.txt`; attempt 2 is the same script).
+
+**Drift rule** (`deps-attempt3`, 7 / 7): as in 7.4, re-run against the final `run_manifest.py`.
+
+**Offline readiness record (a)** (`readiness-attempt2`): `record-a.json` `e74a68586a9e4c6032d90f8ec3112240b5ed605d1c886547fad103595b24aa0f`, pinned (`record.sha256`), relay commit `874d404c`. **ok, 139 checks:** 126 performed now, 13 reused, 0 cached, 0 FAIL, 0 INVALIDATED. The reuses are the gate's three parts, the three matrix groups, the installer rehearsal, the drift test, and the earlier unchanged qualifications (the guard self-test, the timestamps test, the readiness / placement tests, the content rehearsal), each keyed to the identities it ran with. Seven files a matrix group recorded as absent are checked absent now. The native source scan was performed now: the source changed, so the earlier cache did not hit. The gate passes the pin and refuses a wrong one. Every qualification the M6-G2 installer's `record-check.py` requires of record (a) is present and ok. It qualifies the run; it does not authorize anything, and no installer gates on it. The M6-G2 refresh (`kit/refresh.sh`) would produce record (b) after the operator's confirmation. That is the ONE record the installer gates on.
+
+**The refresh, previewed** (`preview-check-attempt1`, **PASS, 0 failures**; read-only for the game; a scratch confirmation; run id `m6g2-run1-preview`, which the live installer never accepts):
+- `kit/refresh.sh` reused record (a) by its pin, made the real pre-install captures and produced record (b)-preview `refresh-attempt1`: ok, 135 checks.
+- The installer's binding steps held on its copies: the pin, the tool, the manifest, and record (a) as `readiness-a` names it.
+- `readiness.py gate` passed: created after the confirmation, at most 1,800 s old.
+- `record-check.py` LIVE refused exactly the one check a preview inside M6-G1 cannot carry, the absent `root-m6g1-offline` (the root was not sealed yet). As the live run id it also refused the run id.
+- `relied-on.py`: 32 references verified. The four captures resolve through the gated copy.
+- The first refresh that carries the sealed-root check would be M6-G2's own.
+- Disclosed: the harness's console message names the E2 root, adaptation text; the check greps the M6-G1 root (`preview-check-attempt1-NOTE.txt`).
+
+### 7.7 The independent check
+
+One independent verifier read the native diff `3b892cad..76c407f3` and the BEAM / tooling diff `b0f9c85d..ff828880` against section 6. It was read-only, ran nothing and delegated nothing. Its report and the disposition are `m6g1-offline\checker-report.txt` and `checker-disposition.txt`.
+
+**No BLOCKER and no MAJOR.** It confirmed by reading:
+- the version / mode pairs on both sides, and that no unsupported pair reaches the setter;
+- the word-10-only target;
+- (name, version) as the capability identity throughout;
+- `/2` advertised only under the effectful setting;
+- the v1-only peer, effectful-off and transport-v1 refusals;
+- v1 unchanged, including historical v1 journals (checked on `m6f2b-run1`'s journal);
+- no dynamic atoms;
+- one budget shared and never reset on either side;
+- the same exact-inspection binding;
+- restoration at the plan's version, checked by the authority, by the binding and natively;
+- `step-follow` inheriting the bounded and guarded path;
+- the sampler unchanged.
+
+| Finding | Disposition |
+|---|---|
+| M1 (MINOR): two step-blind checks in `follow-matrix.sh` | fixed, `ff692019` (found independently by `matrix-step-direct-attempt1`) |
+| M2 (MINOR): `TransformBinding.restore/5` defaulted `version \\ 1` (fail-closed, but a default literal) | fixed, `925e8be`: required and integer-guarded |
+| M3 (MINOR): the binding's journal-plan version check was unreached by any test (the authority's record check refuses first) | fixed, `925e8be`: direct tests for a v2 step's plan and a v1 lift's plan |
+| N6: stale docs (`restore_candidate/2`, the `cmd-m6f.exs` header; the M6-F2b kit's v1-only received-line count) | fixed, `925e8be` / `656a428`; the M6-G2 kit's `verify-after.sh` counts v1 and v2 |
+| N1: natively an effectful protocol-v1 link is not refused; the BEAM authority refuses it, and an effectful run always provisions a token (protocol v2). The native test "a version-1 link refuses v2" proves only the effectful-off decode | recorded; pre-existing, unchanged |
+| N2: on the setter-not-called path natively the budget is consumed (`unavailable`) while BEAM does not count `:unavailable`; the next forward is then refused natively | recorded; pre-existing, fails safe |
+| N3 / N4 / N5 / N7: no BEAM-side one-restore guard (native enforces it); entry-vs-version unreachable; restore-without-target unreachable; float64 → binary32 cross-check rounding exact for one addition | recorded |
+
+### 7.8 Runtime unknowns (not answered offline)
+
+Not answered offline, and not inferred from the FAKE probe:
+- **native5 in HITMAN:** whether the build loads, attaches its one detour and advertises both entries without a WARN / ERROR / FAULT. This is its first runtime use.
+- **The engine's answer to the step:** the same-frame post-state of the one setter call with word 10 changed and the parent-relative words that follow, whether the twelve stored words equal the request, and the later samples' classes. M6-F's z results (a return within six frames) do not predict a y result at P: the axis, location, initialization and run context all differ (section 6, item 3).
+- **Timing:** the FAKE first sample here (7.4) and M6-F2b's +58 ms are references, not predictions.
+- **Visibility:** whether a 0.25 m lateral shift is visible from the operator's view, whether the render follows the stored transform, and what a continuous recording shows. Clearance, floor and NPC occupancy at P + 0.25 y are not measured.
+- **Restoration:** eligibility depends on the runtime samples. Whether the engine accepts the preimage again is not established.
+- **The writer** of any return, and the candidate's spawn / activation semantics, stay open (M6-E3 13.3); no writer tracing is proposed.
+
+### 7.9 The proposed M6-G2 checkpoint (not authorized)
+
+Prepared and not executed: `m6g1-offline\kit\RUNBOOK.txt`, with the kit pinned by record (a) (7.6). An M6-G2 authorization would need to cover:
+1. **Frozen inputs:**
+   - the accepted M6-E3 package set (`5ac64848…` / `58e9a10f…` / `9433888b…`);
+   - the native5 DLL `f271d129…` with `effectful = true`;
+   - the BEAM node started with the authority on and disarmed;
+   - `mods.ini.run` `f4f44345…`;
+   - record (a) of this stage and its pin;
+   - glacier-relay `main` at record (a)'s commit or a docs-only descendant (the refresh's drift rule); ZHMModSDK `76c407f3`.
+2. **Before any token, node or installation step:**
+   - the operator names an available recording method and its save location, and commits to keeping one continuous recording; no software is installed and nothing uploaded;
+   - then a fresh, explicit Ready, recorded verbatim with the capture answer;
+   - without the commitment the visual record is not attempted.
+3. **R1–R3:** the installation is gated on ONE refreshed post-confirmation record (b). The main menu is native5's first runtime use: both entries advertised, one detour, no WARN / ERROR / FAULT, else stop before Paris. Then one stationary Paris attempt, with R3's exact inspection classified at_P_exact against the E2 matrix, else stop before arming.
+4. **R4, the ONE v2 step:**
+   - only after the operator's separate step go-ahead, with the framing set and the recording started before issuance;
+   - `seq-step.sh`: just-in-time binding, qualification, attestation, ONE arming, `step-follow` with six exact samples (+0, +250 ms, +1, +2, +5, +10 s);
+   - the recording runs past the last sample; no fps or synchronization is claimed.
+5. **R5:** six separate verdicts:
+   1. request and invocation;
+   2. the same-frame stored transform;
+   3. the later samples with their actual frames and times;
+   4. the recorded or reported visual response;
+   5. identity and controls;
+   6. restoration eligibility.
+   A numeric step without seen motion, or a seen shift without matching inspections, is qualified, not attributed.
+6. **R6:** at most ONE restoration, at the plan's version (v2), only if eligible and after a separate approval and a fresh arming. Already-at-baseline submits nothing.
+7. **R7:**
+   - a normal exit;
+   - the exact-boundary capture after the exit;
+   - the rollback with exact timestamps, the complete baseline and M0 26/26;
+   - `verify-after.sh`: exactly one v2 step, at most one v2 restoration, no lift and no outfit command;
+   - the sealed manifest; the record appended; then stop for review.
+8. **Excluded:** a restart, a second forward, escalation, a camera mod, walking, a collision test, fallback placement, automatic writer tracing or a repeat.
