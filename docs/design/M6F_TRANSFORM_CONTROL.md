@@ -693,3 +693,53 @@ A provenance and confirmation **PASS** · B the installer's ONE gate and the exa
 The timing question is answered as far as a read-only follow-up can answer it: with this setter at this placement the stored transform is back within six frames. Repeating it, or adding writer instrumentation, would not make the representation visible. **Recommended next step toward a visibly observable representation: an offline content study (no runtime, no native or BEAM change) of whether Agent48's stored placement is content-defined.** It would establish, from the deployed `hitmen` brick and the `agent47_default` template, whether the parent-relative values the engine returns to — translation (0, 0, −1.5393555), identity rotation, under the brick root `007c57a6ea581f8c` — are Agent48's authored `m_mTransform` and its parent's, or are derived by the template's sub-entities. The M6-D record's section 3 found that a hero's authored transform is not, in general, where a hero stands, so this cannot be assumed. If the values are authored, the following design could weigh a content-authored placement in Agent 47's starting view, observed by read-only inspections and operator testimony, with no effectful command, against activating or spawning the representation. That design would itself need its own review and authorization. If they are derived, the study says what sets them and closes the content route before any runtime.
 
 **Stop.** Architectural review of this record. M6 is not complete; nothing is tagged; no further runtime, writer instrumentation or timing repeat is authorized by it.
+
+## 17. M6-F2b accepted (bounded) — acceptance addendum (2026-10-18; documentation only)
+
+**Authorization:** "M6-F2b Acceptance and Bounded Visual-Placement Design". M6-F2b is accepted for the scope section 16 records. Sections 13–16 and both runs' raw evidence are unchanged; this section adds to them. The visual-placement design this authorization asked for is `docs/design/M6E_VISUAL_PLACEMENT.md` (M6-E1). The M6-E1 checkpoint (`m6e1-design\checkpoint.txt`, 10:08Z) re-verified two separate facts about `m6f2b-run1`: the manifest file hashes to `05fd0a4e…`, and all 7,215 files it lists verify.
+
+### 17.1 What is accepted, as qualified
+
+- **Frame 64573 (the call frame):**
+  - All twelve stored world words were observed exactly as requested (z `bfc5099a` → `bfa5099a`).
+  - The parent-relative z followed, and the cache was clean.
+  - The native same-frame control comparison passed (`hero_control` unchanged).
+- **Frame 64579 (the first follow-up read):** the stored values were at baseline. So at least one return happened within frames (64573, 64579]. On the native clock that interval is 58 ms.
+- **All six samples were at baseline (bit equality).** Not established:
+  - a continuous trajectory or a return on the very next frame;
+  - a per-frame overwrite;
+  - the writer;
+  - rendering behaviour;
+  - how other x / y placements would behave;
+  - anything about other visible-placement designs. M6-E1 does not rest on this timing result.
+- **The bracket belongs to this repeat only.** It does not say when run 1 returned within its 23 s interval (section 13). Section 16.3's phrase "narrows run 1's bracket" means only that this repeat measured a narrower bracket. It says nothing about when run 1's return happened.
+- **Restoration and visual observation were NOT ATTEMPTED.**
+  - The runtime restoration path has never been invoked.
+  - Values returning to baseline by themselves do not validate a commanded restoration.
+- **The local hero:**
+  - On the call frame the native control comparison passed.
+  - At sample 2 one parent-relative rotation word of the stationary local hero differed by one ULP from the binding inspection's (`0x3f43969e` vs `0x3f43969f`). The follow classifier, which requires bit equality, labelled `hero_control` "changed"; `xcheck.py`'s declared tolerance judged the same comparison within tolerance (verdict J PASS with this finding). This is a strict numerical difference and is recorded as one.
+  - It is not evidence that Relay affected the local hero, nor that control transferred.
+  - The local hero's values were therefore not identical throughout, and no tolerance was changed.
+- **Attribution (`NOTE-operator-observations.txt` stands):**
+  - The operator's own words are those quoted in 16.2 and 16.7.
+  - The 09:17:06Z line, written under the `operator:` prefix, is the tool-runner's (Claude's) analysis.
+  - The label and parenthetical around the quoted 09:14:35Z go-ahead are also the tool-runner's.
+  - Agent analysis is never operator consent or visual testimony.
+  - The sealed evidence was not relabelled.
+- **Within section 16.5's recorded scope:**
+  - The final capture at the exact boundary r=8 and the fresh-node replay at that boundary agree on every comparison made.
+  - The rollback was verified against the complete baseline with exact timestamps; M0 26/26.
+
+### 17.2 Correction to 16.8's inference
+
+Section 16.8 treated the provenance of the returned values as open: "authored" would make a content placement worth weighing, and "derived" would close the content route before any runtime. Both halves over-reach.
+
+- **A derived value does not rule out a content route.** Content can still give the representation a different initial value.
+- **An authored value would not prove that editing it controls the runtime placement.**
+- **Two questions are separate:** what initializes the transform (visible in source), and what later maintains or restores it (a runtime mechanism). An offline study can answer the first and leave the runtime writer unknown.
+- **The provenance was not open.** The earlier records had already answered it (M6-D section 3; M6-D2 F1, F2 and 3.1): no transform on Agent48's instance; the identity default on the template root; the brick's one transform belongs to the spawn.
+
+M6-E1 starts from those findings. Its result: a candidate-local `m_mTransform` on Agent48 is expressible, scoped and testable. Whether the engine honours it is that design's hypothesis, not a finding.
+
+**Stop.** M6 is not complete; nothing is tagged; no runtime, writer instrumentation or timing repeat is authorized by this addendum.
