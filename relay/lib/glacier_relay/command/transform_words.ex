@@ -22,12 +22,14 @@ defmodule GlacierRelay.Command.TransformWords do
   @local_words 7
   @tolerance 1.0e-4
   @lift_z 0.25
+  @step_y 0.25
   @word ~r/^[0-9a-f]{8}$/
 
   def world_words, do: @world_words
   def local_words, do: @local_words
   def tolerance, do: @tolerance
   def lift_z, do: @lift_z
+  def step_y, do: @step_y
 
   @doc "Decodes a world group (12 words) strictly: `{:ok, [word]}` or `{:error, reason}`."
   def decode_world(text), do: decode(text, @world_words)
@@ -167,4 +169,19 @@ defmodule GlacierRelay.Command.TransformWords do
     z = to_float(Enum.at(words, 11))
     List.replace_at(words, 11, to_word(z + @lift_z))
   end
+
+  @doc """
+  M6-G1: the v2 compiled displacement replicated for cross-checks only: every word copied, `Trans.y`
+  (word 10) replaced by `y + 0.25` rounded to binary32. Never a target sent to the native side,
+  which computes its own; world y is not a model-relative direction.
+  """
+  def step_y_target(words) when is_list(words) and length(words) == @world_words do
+    y = to_float(Enum.at(words, 10))
+    List.replace_at(words, 10, to_word(y + @step_y))
+  end
+
+  @doc "M6-G1: the compiled forward target of a `{version, mode}` pair (v1 lift, v2 step_y), or nil."
+  def forward_target(1, "lift", words), do: lift_target(words)
+  def forward_target(2, "step_y", words), do: step_y_target(words)
+  def forward_target(_version, _mode, _words), do: nil
 end

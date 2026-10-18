@@ -111,8 +111,32 @@ defmodule GlacierRelay.Command do
   end
 
   @doc """
-  M6-F: plans the restoration of an applied lift from the verified journal file
-  (`Command.TransformRestore`), cross-checked against the authority's record. Performs nothing.
+  M6-G1: issues `candidate.transform.set` v2 in mode `step_y` — the compiled +0.25 world-y
+  displacement of the compiled candidate, computed natively from the freshly validated snapshot
+  (every other world word copied; world y is not a model-relative direction). `opts` and the
+  authority's checks are exactly `lift_candidate/2`'s: ONE completed exact inspection named by
+  `:inspection_command_id` and verified by the authority from its own journal, `:expected_generation`
+  required, the expectation groups derived from that evidence, a token-verified link that
+  advertised `candidate.transform.set/2`, fresh effectful arming, and the ONE forward budget this
+  authority shares between the v1 lift and the v2 step. A supplied target, axis, distance or
+  restore binding is refused. The step is a limited experimental exposure with unknown engine
+  consequences; its clearance is not measured.
+  """
+  def step_candidate(params, opts \\ []) when is_map(params) and is_list(opts) do
+    guarded(fn ->
+      Authority.issue(
+        "candidate.transform.set",
+        2,
+        Map.put(params, "mode", "step_y"),
+        with_generation(opts)
+      )
+    end)
+  end
+
+  @doc """
+  M6-F: plans the restoration of an applied lift (M6-G1: or v2 step) from the verified journal
+  file (`Command.TransformRestore`), cross-checked against the authority's record; the plan carries
+  the forward's journaled `version`. Performs nothing.
   """
   def plan_transform_restore(command_id) when is_binary(command_id) do
     guarded(fn ->
@@ -143,6 +167,9 @@ defmodule GlacierRelay.Command do
   before the one setter call.
   Restoring observed transform values is not a rollback of physics, perception, script, animation
   or other gameplay consequences.
+  M6-G1: the restoration is issued at the plan's verified version — v1 for a v1 lift, v2 for a v2
+  step — never a default literal and never a caller's choice; the authority compares that version
+  with the journaled original again, and the native gate before its setter.
   """
   def restore_candidate(command_id, opts) when is_binary(command_id) and is_list(opts) do
     guarded(fn ->
@@ -163,7 +190,7 @@ defmodule GlacierRelay.Command do
            :ok <- confirm_generation(plan, Keyword.get(opts, :expected_generation)) do
         Authority.issue(
           "candidate.transform.set",
-          1,
+          plan.version,
           %{
             "mode" => "restore",
             "expect_world" => binding.expect_world,

@@ -217,6 +217,41 @@ defmodule GlacierRelay.Command.TransformRestoreTest do
     assert plan.consequences == :unknown and plan.label =~ "never assigned"
   end
 
+  # M6-G1: the v2 step's journal records: the accepted and terminal stages of a v2 step_y.
+  defp v2_entries(accepted_mode, terminal_mode, version \\ 2) do
+    v = %{"version" => version}
+
+    [
+      %{"event" => "journal.opened"},
+      %{"event" => "link.connected", "link_generation" => 1},
+      %{"event" => "peer.identified", "link_generation" => 1, "adapter_instance_id" => @adapter},
+      Map.merge(accepted(%{"mode" => accepted_mode}), v),
+      Map.merge(stage("command.transmitted"), v),
+      Map.merge(stage("command.received"), v),
+      Map.merge(terminal(%{"mode" => field("observed", terminal_mode)}), v)
+    ]
+  end
+
+  test "M6-G1: a v2 step plans at version 2; historical v1 records plan at version 1 unchanged; every other version or mode pairing fails closed" do
+    assert {:ok, v1} = TransformRestore.plan(write(base_entries()), @id, record: record())
+    assert v1.version == 1 and v1.forward_mode == "lift"
+
+    assert {:ok, v2} = TransformRestore.plan(write(v2_entries("step_y", "step_y")), @id)
+    assert v2.version == 2 and v2.forward_mode == "step_y" and v2.target_world == @pre
+
+    assert {:error, :not_a_step} =
+             TransformRestore.plan(write(v2_entries("lift", "step_y")), @id)
+
+    assert {:error, :not_a_step} =
+             TransformRestore.plan(write(v2_entries("step_y", "lift")), @id)
+
+    assert {:error, :not_a_lift} =
+             TransformRestore.plan(write(v2_entries("step_y", "step_y", 1)), @id)
+
+    assert {:error, :not_a_transform_command} =
+             TransformRestore.plan(write(v2_entries("step_y", "step_y", 3)), @id)
+  end
+
   test "every incomplete, ambiguous, uncertain or drifted lift fails closed with a named reason" do
     refusals = [
       {"unknown command", [], :command_not_in_journal,

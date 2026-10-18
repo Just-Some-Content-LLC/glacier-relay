@@ -97,6 +97,8 @@ defmodule GlacierRelay.Command.Authority do
   ]
 
   @observation_types ~w(visual_confirmation visual_no_change later_frame_read_back engine_consistent note)
+  # M6-G1: the forward mode of each candidate.transform.set version ({name, version} identity).
+  @forward_modes %{1 => "lift", 2 => "step_y"}
   @max_observation_text 500
 
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -1034,8 +1036,8 @@ defmodule GlacierRelay.Command.Authority do
   defp prepare_transform(state, entry, params, id, ttl, preconditions, effectful, opts) do
     with {:ok, supplied} <- Schema.validate_supplied(entry, params),
          :ok <- check_not_a_noop(entry, supplied),
-         :ok <- check_transform(state, supplied, opts),
-         {:ok, canonical, binding} <- bind_transform(state, supplied, preconditions, opts),
+         :ok <- check_transform(state, entry, supplied, opts),
+         {:ok, canonical, binding} <- bind_transform(state, entry, supplied, preconditions, opts),
          {:ok, valid} <- Schema.validate_params(entry, canonical) do
       cmd =
         build(
@@ -1054,29 +1056,41 @@ defmodule GlacierRelay.Command.Authority do
     end
   end
 
-  # A lift carries no target or restore binding; one lift per authority process once a lift was
-  # accepted whose terminal is not a verified non-application (applied, failed, unknown or still in
-  # flight consume the budget; rejected / expired / precondition_failed / unavailable leave it). A
-  # restore names the applied lift it restores (`restore_of`, equal to `:reversal_of`).
-  defp check_transform(state, %{"mode" => "lift"} = params, opts) do
+  # A forward (a v1 lift or, M6-G1, a v2 step_y) carries no target or restore binding; ONE forward
+  # per authority process, shared by both versions, once a forward was accepted whose terminal is
+  # not a verified non-application (applied, failed, unknown or still in flight consume the
+  # budget; rejected / expired / precondition_failed / unavailable leave it). A restore names the
+  # applied forward it restores (`restore_of`, equal to `:reversal_of`), and that forward's
+  # command version must be the restore's own: the {name, version} pair is the capability
+  # identity (v1 restores a v1 lift only, v2 a v2 step only) — judged here on the authority's own
+  # records whichever facade, if any, was used, and again from the verified journal in the binding.
+  defp check_transform(state, entry, %{"mode" => mode} = params, opts)
+       when mode in ["lift", "step_y"] do
     cond do
+      @forward_modes[entry.version] != mode ->
+        {:error, {:mode_not_of_version, entry.version}}
+
       Map.has_key?(params, "target_world") or Map.has_key?(params, "restore_of") or
           Keyword.get(opts, :reversal_of) != nil ->
-        {:error, :lift_carries_no_target}
+        {:error, if(mode == "lift", do: :lift_carries_no_target, else: :step_carries_no_target)}
 
       Keyword.get(opts, :reversal_inspection) != nil ->
         {:error, :caller_binding_not_accepted}
 
-      lift_budget_remaining(state) == 0 ->
-        {:error, {:transform_budget_exhausted, lift_consumer(state)}}
+      forward_budget_remaining(state) == 0 ->
+        {:error, {:transform_budget_exhausted, forward_consumer(state)}}
 
       true ->
         :ok
     end
   end
 
-  defp check_transform(state, %{"mode" => "restore"} = params, opts) do
+  defp check_transform(state, entry, %{"mode" => "restore"} = params, opts) do
     restore_of = params["restore_of"]
+    original = is_binary(restore_of) && Map.get(state.commands, restore_of)
+
+    not_a_forward =
+      if(entry.version == 2, do: :restore_of_not_a_step, else: :restore_of_not_a_lift)
 
     cond do
       not is_binary(restore_of) ->
@@ -1088,21 +1102,27 @@ defmodule GlacierRelay.Command.Authority do
       Keyword.get(opts, :reversal_inspection) != nil ->
         {:error, :caller_binding_not_accepted}
 
-      not Map.has_key?(state.commands, restore_of) ->
+      original == nil ->
         {:error, {:restore_of_unknown, restore_of}}
 
-      state.commands[restore_of].name != "candidate.transform.set" or
-          state.commands[restore_of].params["mode"] != "lift" ->
-        {:error, :restore_of_not_a_lift}
+      original.name != "candidate.transform.set" ->
+        {:error, not_a_forward}
+
+      original.version != entry.version ->
+        {:error, {:restore_version_mismatch, original.version, entry.version}}
+
+      original.params["mode"] != @forward_modes[entry.version] ->
+        {:error, not_a_forward}
 
       true ->
         :ok
     end
   end
 
-  defp check_transform(_state, _params, _opts), do: {:error, {:invalid_param, "mode", :missing}}
+  defp check_transform(_state, _entry, _params, _opts),
+    do: {:error, {:invalid_param, "mode", :missing}}
 
-  defp bind_transform(state, supplied, preconditions, opts) do
+  defp bind_transform(state, entry, supplied, preconditions, opts) do
     inspection_id = Keyword.get(opts, :inspection_command_id)
 
     with true <- is_binary(inspection_id) or {:error, :inspection_command_id_required},
@@ -1111,8 +1131,17 @@ defmodule GlacierRelay.Command.Authority do
         "lift" ->
           TransformBinding.lift(ctx, inspection_id, supplied)
 
+        "step_y" ->
+          TransformBinding.step_y(ctx, inspection_id, supplied)
+
         "restore" ->
-          TransformBinding.restore(ctx, supplied["restore_of"], inspection_id, supplied)
+          TransformBinding.restore(
+            ctx,
+            supplied["restore_of"],
+            inspection_id,
+            supplied,
+            entry.version
+          )
       end
     end
   end
@@ -1204,23 +1233,29 @@ defmodule GlacierRelay.Command.Authority do
     end
   end
 
-  defp lift_consumer(state) do
+  # M6-G1: the one forward budget, shared by the v1 lift and the v2 step.
+  defp forward_consumer(state) do
     state.commands
     |> Map.values()
-    |> Enum.find(&lift_consumes?/1)
+    |> Enum.find(&forward_consumes?/1)
     |> case do
       nil -> nil
       cmd -> cmd.id
     end
   end
 
-  defp lift_consumes?(cmd) do
-    cmd.name == "candidate.transform.set" and cmd.version == 1 and cmd.params["mode"] == "lift" and
+  defp forward_consumes?(cmd) do
+    cmd.name == "candidate.transform.set" and is_binary(cmd.params["mode"]) and
+      @forward_modes[cmd.version] == cmd.params["mode"] and
       cmd.status not in [:rejected, :expired, :precondition_failed, :unavailable]
   end
 
   @doc false
-  def lift_budget_remaining(state), do: if(lift_consumer(state) == nil, do: 1, else: 0)
+  def forward_budget_remaining(state), do: if(forward_consumer(state) == nil, do: 1, else: 0)
+
+  @doc false
+  # The M6-F name, kept for compatibility: the same shared forward budget.
+  def lift_budget_remaining(state), do: forward_budget_remaining(state)
 
   defp check_reversal_of(_state, nil), do: :ok
 
@@ -1986,9 +2021,11 @@ defmodule GlacierRelay.Command.Authority do
       effectful: %{
         enabled: state.config[:effectful] == true,
         reversal_inspection_max_age_ms: state.config[:reversal_inspection_max_age_ms],
-        # M6-F: one lift per authority process; the consumer's id once consumed
-        transform_lift_budget: lift_budget_remaining(state),
-        transform_lift_consumer: lift_consumer(state),
+        # M6-F: one lift per authority process; the consumer's id once consumed. M6-G1: the field
+        # names are kept for compatibility; the budget is the ONE forward budget shared by the v1
+        # lift and the v2 step, and the consumer is whichever forward consumed it.
+        transform_lift_budget: forward_budget_remaining(state),
+        transform_lift_consumer: forward_consumer(state),
         token_configured: TokenHolder.available?(state.credential),
         token_source: state.token_source,
         armed:

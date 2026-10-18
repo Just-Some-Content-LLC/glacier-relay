@@ -27,6 +27,12 @@ defmodule GlacierRelay.Command.TransformBinding do
   authority journals with the accepted command. It is evidence of the candidate's exact words at
   the inspection's frame, not proof they are unchanged since: the native applying-frame
   expectation gate stays the final state-drift check.
+
+  M6-G1: the v2 step (`step_y/3`) needs exactly the same specific, recent, completed exact
+  inspection as the lift; a restoration (`restore/5`) names the version it is issued at, which
+  must equal the version of the forward the journal's plan restores (`{:restore_version_mismatch,
+  plan_version, requested_version}` otherwise) — v1 restores v1 lifts only, v2 restores v2 steps
+  only.
   """
 
   alias GlacierRelay.Command.{TransformReadback, TransformRestore, TransformWords}
@@ -46,11 +52,21 @@ defmodule GlacierRelay.Command.TransformBinding do
   the expectation groups the caller gave, if any. Returns `{:ok, params, binding}` or
   `{:error, reason}`.
   """
-  def lift(ctx, inspection_id, supplied) when is_map(ctx) and is_map(supplied) do
+  def lift(ctx, inspection_id, supplied) when is_map(ctx) and is_map(supplied),
+    do: forward(ctx, inspection_id, supplied, "lift")
+
+  @doc """
+  M6-G1: the v2 step's canonical parameters and binding — the same qualifying inspection and the
+  same comparison as `lift/3`; only the mode differs (the displacement is compiled natively).
+  """
+  def step_y(ctx, inspection_id, supplied) when is_map(ctx) and is_map(supplied),
+    do: forward(ctx, inspection_id, supplied, "step_y")
+
+  defp forward(ctx, inspection_id, supplied, mode) do
     with {:ok, q} <- qualify(ctx, inspection_id),
          canonical = expectations(q),
          :ok <- compare(supplied, canonical, @lift_keys) do
-      {:ok, Map.put(canonical, "mode", "lift"), binding_of(q)}
+      {:ok, Map.put(canonical, "mode", mode), binding_of(q)}
     end
   end
 
@@ -62,12 +78,15 @@ defmodule GlacierRelay.Command.TransformBinding do
   preimage and nothing is to be submitted; drift, a dirty cache or a changed parent stop
   issuance with their own reasons. `ctx` as `lift/3`.
   """
-  def restore(ctx, restore_of, inspection_id, supplied)
+  def restore(ctx, restore_of, inspection_id, supplied, version \\ 1)
       when is_map(ctx) and is_binary(restore_of) and is_map(supplied) do
     with {:ok, plan} <-
            TransformRestore.plan_journal(ctx.journal, restore_of,
              record: Map.get(ctx.records, restore_of)
            ),
+         true <-
+           plan.version == version or
+             {:error, {:restore_version_mismatch, plan.version, version}},
          true <-
            plan.mission_generation == ctx.mission_generation or
              {:error, {:generation_mismatch, plan.mission_generation}},

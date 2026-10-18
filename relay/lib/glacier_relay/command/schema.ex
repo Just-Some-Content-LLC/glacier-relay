@@ -80,6 +80,14 @@ defmodule GlacierRelay.Command.Schema do
   `mission_generation` precondition). No location, direction, rotation, scale, distance, entity,
   pointer or function name is a parameter. One lift per authority process (`Command.Authority`);
   a restore is issuable only through the planner-bound facade (`Command.TransformRestore`).
+
+  M6-G1 adds `candidate.transform.set` v2 (`docs/design/M6G_VISIBLE_CONTROL.md` section 6): `mode`
+  `step_y` — the compiled +0.25 world-y displacement computed natively — or `restore` of an
+  eligible v2 step, with the same expectation groups and precondition. The capability identity is
+  the `{name, version}` pair throughout: v1 stays `lift` | `restore` (a v1 restore restores only a
+  v1 lift), v2 is `step_y` | `restore` (a v2 restore restores only a v2 step); neither version's
+  forward takes a target, axis or distance. One forward budget — a v1 lift or a v2 step — per
+  authority process.
   """
 
   @protocol_versions [1, 2]
@@ -201,6 +209,26 @@ defmodule GlacierRelay.Command.Schema do
         "a separate candidate.transform.set v1 in mode restore whose target_world is the lift's journaled preimage world group and whose expectation is a later exact inspection's words, planned from the verified journal (Command.TransformRestore), bound to the original lift and to the native operation record, issued only under fresh arming; an engine return to baseline needs no restoration and none is submitted",
       doc:
         "M6-F: the one bounded transform change of the compiled candidate — mode lift: the compiled +0.25 world-z displacement computed natively from the freshly validated snapshot (no target may be supplied); mode restore: the journaled preimage world group of one earlier lift, bound to it; both carry the exact expectation groups (12 and 7 binary32 words) and parent of a recent exact inspection and the mandatory mission_generation precondition; one SetObjectToWorldMatrixFromEditor call behind the applying-frame gate; one lift per process natively and per authority here; issuable only on a token-verified version-2 link under one-shot effectful arming; the setter's runtime semantics on a character are the experiment's question, never assumed"
+    },
+    {"candidate.transform.set", 2} => %{
+      name: "candidate.transform.set",
+      version: 2,
+      effect: :transform,
+      issuable: :effectful,
+      trust: :token_verified,
+      params: %{
+        "mode" => {:enum, ["step_y", "restore"]},
+        "expect_world" => :words12,
+        "expect_local" => :words7,
+        "expect_parent" => :parent_id,
+        "target_world" => {:optional, :words12},
+        "restore_of" => {:optional, :uuid}
+      },
+      preconditions: [:mission_generation],
+      reversal:
+        "a separate candidate.transform.set v2 in mode restore whose target_world is the step's journaled preimage world group and whose expectation is a later exact inspection's words, planned from the verified journal (Command.TransformRestore), bound to the original v2 step and to the native operation record, issued only under fresh arming; an engine return to baseline needs no restoration and none is submitted",
+      doc:
+        "M6-G1: the one bounded horizontal transform change of the compiled candidate — mode step_y: the compiled +0.25 world-y displacement computed natively from the freshly validated snapshot (every other world word copied; no target, axis or distance may be supplied; world y is not a model-relative direction); mode restore: the journaled preimage world group of one earlier v2 step, bound to it; both carry the exact expectation groups and parent of a recent exact inspection and the mandatory mission_generation precondition; one SetObjectToWorldMatrixFromEditor call behind the applying-frame gate; ONE forward per process natively and per authority here, shared with the v1 lift; issuable only on a token-verified version-2 link that advertised candidate.transform.set/2, under one-shot effectful arming"
     },
     {"player.outfit.set", 1} => %{
       name: "player.outfit.set",

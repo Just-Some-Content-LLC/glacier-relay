@@ -26,9 +26,17 @@ defmodule GlacierRelay.Command.TransformRestore do
   records that no explicit restoration call is needed and none is submitted; within-tolerance
   agreement, drift, a dirty cache, a changed parent or a candidate that no longer resolves stop
   effectful issuance with their own reasons.
+
+  M6-G1: the forward may also be a `candidate.transform.set` **v2** `step_y`. The plan carries the
+  forward's journaled `version` and `forward_mode` (a historical v1 record already carries its
+  version; nothing new is required of it): v1 plans only a v1 `lift`, v2 only a v2 `step_y`, and
+  the restoration is issued at the plan's version — never a default, never a caller's choice.
   """
 
   alias GlacierRelay.Command.{Journal, TransformReadback, TransformWords}
+
+  # M6-G1: the forward mode of each command version.
+  @forward_modes %{1 => "lift", 2 => "step_y"}
 
   @name "candidate.transform.set"
   @inspection "relay.inspect.candidate_transform"
@@ -53,12 +61,14 @@ defmodule GlacierRelay.Command.TransformRestore do
       when is_list(entries) and is_binary(command_id) do
     with {:ok, stages} <- locate(journal.entries, command_id),
          {:ok, accepted} <- check_accepted(stages.accepted),
-         {:ok, terminal} <- check_terminal(stages.terminal),
+         {:ok, terminal} <- check_terminal(stages.terminal, @forward_modes[accepted["version"]]),
          {:ok, adapter} <- adapter_identity(journal.entries, accepted["link_generation"]),
          :ok <- cross_check(opts[:record], accepted, terminal, adapter) do
       {:ok,
        %{
          restore_of: command_id,
+         version: accepted["version"],
+         forward_mode: accepted["params"]["mode"],
          journal_id: journal.journal_id,
          journal_seq: terminal.seq,
          adapter_instance_id: adapter,
@@ -234,11 +244,14 @@ defmodule GlacierRelay.Command.TransformRestore do
     generation = get_in(accepted, ["preconditions", "mission_generation"])
 
     cond do
-      accepted["name"] != @name or accepted["version"] != 1 ->
+      accepted["name"] != @name or not Map.has_key?(@forward_modes, accepted["version"]) ->
         {:error, :not_a_transform_command}
 
-      not is_map(params) or params["mode"] != "lift" ->
+      accepted["version"] == 1 and (not is_map(params) or params["mode"] != "lift") ->
         {:error, :not_a_lift}
+
+      accepted["version"] == 2 and (not is_map(params) or params["mode"] != "step_y") ->
+        {:error, :not_a_step}
 
       not match?({:ok, _}, TransformWords.decode_world(params["expect_world"] || "")) ->
         {:error, :expect_world_invalid}
@@ -254,13 +267,13 @@ defmodule GlacierRelay.Command.TransformRestore do
     end
   end
 
-  defp check_terminal(terminal) do
+  defp check_terminal(terminal, forward_mode) do
     observed = terminal["observed"]
 
     with "applied" <- terminal["status"] || {:error, :terminal_status_missing},
          true <- is_map(observed) or {:error, :terminal_unobserved},
          d = TransformReadback.decode_apply(observed),
-         :ok <- effect(d),
+         :ok <- effect(d, forward_mode),
          {:ok, pre_w} <- ok_or(d.preimage.world_words, :preimage_world_unobserved),
          {:ok, pre_l} <- ok_or(d.preimage.local_words, :preimage_local_unobserved),
          {:ok, pre_p} <- ok_or(d.preimage.parent, :preimage_parent_unobserved),
@@ -297,11 +310,13 @@ defmodule GlacierRelay.Command.TransformRestore do
   defp dirty({:ok, true}, reason), do: {:error, reason}
   defp dirty(other, _reason), do: other
 
-  # Only a verified changed lift with the target match, a clean post cache and an untouched
-  # control is restorable by an ordinary plan.
-  defp effect(d) do
+  # Only a verified changed forward (a v1 lift or a v2 step, its native result naming the same
+  # mode) with the target match, a clean post cache and an untouched control is restorable by an
+  # ordinary plan.
+  defp effect(d, forward_mode) do
     cond do
-      d.mode != {:ok, "lift"} -> {:error, :not_a_lift}
+      d.mode != {:ok, forward_mode} and forward_mode == "step_y" -> {:error, :not_a_step}
+      d.mode != {:ok, forward_mode} -> {:error, :not_a_lift}
       d.effect == {:ok, "unchanged"} -> {:error, :effect_unchanged}
       d.effect == {:ok, "uncertain"} -> {:error, :effect_uncertain}
       d.effect == {:ok, "none"} -> {:error, :effect_none}
