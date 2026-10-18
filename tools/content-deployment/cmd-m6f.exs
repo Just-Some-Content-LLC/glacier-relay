@@ -1,9 +1,11 @@
 # M6-F operator actions over RPC against the live relay node (the M6-F1b attended transform experiment under its own
 # authorization; exercised offline by the M6-F1a tooling dry run against the M6-F1a command probe). Only
 # GlacierRelay.Command's own public functions are called. The only effectful operations this script can issue are the
-# authorization's: ONE compiled lift of the compiled candidate (candidate.transform.set/1 mode lift — the native side computes
-# the +0.25 world-z target; no target, location, direction, rotation, scale, distance, entity, pointer or function name can be
-# supplied here) behind a local guard over the qualifying exact inspection, and its restoration only through
+# authorization's: ONE compiled forward of the compiled candidate — the lift (candidate.transform.set/1 mode lift: the native
+# side computes the +0.25 world-z target) or, M6-G1, the step (candidate.transform.set/2 mode step_y: the native side computes
+# the +0.25 world-y target); the two share one forward budget; no target, location, direction, axis, rotation, scale, distance,
+# entity, pointer or function name can be supplied here — behind a local guard over the qualifying exact inspection, and its
+# restoration (at the plan's version) only through
 # Command.restore_candidate/2 (the journal's plan bound to a later exact inspection; "already at baseline" means none is
 # submitted). M6-F1a binding correction: both pass the inspection's id; the issuing authority verifies that inspection from
 # its own journal and journals the binding with the accepted command ("inspection_binding", verified_by "authority"); the
