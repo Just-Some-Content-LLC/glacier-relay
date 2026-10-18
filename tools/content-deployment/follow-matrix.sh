@@ -349,7 +349,7 @@ restore_phase() {   # <name> <transform-later> <held|returned|drifted> [aged]
   fi
   if [ "$kind" != held ]; then
     # the wrapper's eligibility refuses before arming; a direct call then meets the authority-side evidence
-    OPX note "MATRIX: simulated operator restoration go-ahead (separate approval)" > /dev/null
+    OPX note 'restoration go-ahead (verbatim): "MATRIX: a simulated operator approval, separate from the lift'"'"'s"' > /dev/null
     M6F1B_MODE=dry-run M6F1B_OWNER=$IMG M6F1B_GUARD_ROOT=$E M6F1B_RUN_DIR=$run bash "$run/seq-restore.sh" "$PD" "$S" r6 r4-lift "$LS" r4-ct r3-players r3-entity > "$(evg_out "$PD/seq-restore.console")" 2>&1; rc=$?
     say "$name: seq-restore rc $rc: $(grep -E 'NOT ELIGIBLE|eligibility' "$PD/r6-sequence.txt" | sed -E 's/^[^ ]+ //' | cut -c1-240)"
     okc "$name: the wrapper refuses before any identity check or arming (exit 10: the last sample is not held)" "[ $rc = 10 ] && grep -q 'NOT ELIGIBLE: .*not held' '$PD/r6-sequence.txt' && [ ! -e '$PD/op-r6-arm.out' ] && [ ! -e '$PD/id-r6-id.out' ]"
@@ -362,7 +362,11 @@ restore_phase() {   # <name> <transform-later> <held|returned|drifted> [aged]
     say "$name: direct: $(grep -oE 'restore (NOT submitted|refused locally)[^(]*' "$PD/direct-x-direct.out" | head -1 | cut -c1-200)"
     nres=0; arm=1; cons=1
   else
-    OPX note "MATRIX: simulated operator restoration go-ahead (separate approval, after the follow result)" > /dev/null
+    # a line that mentions a restoration but is NOT an approval in the exact form: the eligibility refuses (exit 10, nothing armed)
+    OPX note "MATRIX: no restoration yet (a line mentioning a restoration that is not an approval)" > /dev/null
+    M6F1B_MODE=dry-run M6F1B_OWNER=$IMG M6F1B_GUARD_ROOT=$E M6F1B_RUN_DIR=$run bash "$run/seq-restore.sh" "$PD" "$S" r6x r4-lift "$LS" r4-ct r3-players r3-entity > "$(evg_out "$PD/seq-restore-x.console")" 2>&1; rc=$?
+    okc "$name: a line mentioning a restoration that is not an approval in the exact form is refused (exit 10, nothing armed)" "[ $rc = 10 ] && grep -q 'NOT ELIGIBLE: .*no operator restoration approval' '$PD/r6x-sequence.txt' && [ ! -e '$PD/op-r6x-arm.out' ]"
+    OPX note 'restoration go-ahead (verbatim): "MATRIX: a simulated operator approval, separate from the lift'"'"'s, after the follow result"' > /dev/null
     M6F1B_MODE=dry-run M6F1B_OWNER=$IMG M6F1B_GUARD_ROOT=$E M6F1B_RUN_DIR=$run bash "$run/seq-restore.sh" "$PD" "$S" r6 r4-lift "$LS" r4-ct r3-players r3-entity > "$(evg_out "$PD/seq-restore.console")" 2>&1; rc=$?
     sed -E 's/^[^ ]+ r6: //' "$PD/r6-sequence.txt" | grep -E 'eligibility|sample .* old|plan:|restoration issued|after the restoration|later class|R6 done|HARD|NOT' | cut -c1-300 | while IFS= read -r x; do say "  $x"; done
     okc "$name: seq-restore completed (R6 done, rc $rc): eligibility, ONE restoration, its later read-back" "[ $rc = 0 ] && grep -q 'R6 done' '$PD/r6-sequence.txt' && grep -q 'eligibility: the last of 6 samples' '$PD/r6-sequence.txt'"
