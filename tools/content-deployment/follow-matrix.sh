@@ -82,6 +82,11 @@ fail=0; PD=""; PD_OPEN=0; SD=""; OLD_OBS=""; KIT_OBS=""
 say() { echo "$(date -u +%H:%M:%S.%3NZ) $*" | tee -a "$out"; }
 bad() { say "FAIL: $*"; fail=$((fail + 1)); }
 okc() { if eval "$2"; then say "ok: $1"; else bad "$1"; fi; }
+# M6-G1: the per-sample xcheck's NOT lines other than the one the FAKE world itself makes inconsistent. The at-p world seeds the
+# candidate's and the local hero's exact transform words at M6-E3's r3 values, while the probe's entity inspection keeps its default
+# hero translation (-0.035, -3.832, -0.413): xcheck.transform-hero-words-vs-entity-translation is NOT in every at-p sample by
+# construction, and only that one line is tolerated (in the present world, the default, no NOT is tolerated).
+xc_unexpected_nots() { local allow=-; [ "$TMODE" = at-p ] && allow=transform-hero-words-vs-entity-translation; cat "$@" | grep -E 'EVIDENCE xcheck\.[^ ]+: NOT' | grep -vF "EVIDENCE xcheck.$allow: NOT" | wc -l; }
 ms() { date +%s%3N; }
 NODE=$PP_NODE
 
@@ -456,7 +461,7 @@ old_or_kit() {   # <old-path|kit-held>
     follow_checks $KL "d['stop'] is None" "d['requests'] == 6" held fast
     KIT_OBS="$(jget "$PD/$KL-follow-result.json" "d['slots'][0]['frames_after_lift']") $(jget "$PD/$KL-follow-result.json" "d['slots'][0]['native_ms_after_lift']")"
     say "kit-held: $(grep -E '^[^ ]+ r4:   deferred|the last sample' "$PD/r4-sequence.txt" | sed -E 's/^[^ ]+ r4: //' | cut -c1-200 | tr '\n' '|')"
-    okc "kit-held: the deferred per-sample xcheck ran for all six samples after the schedule, each 0 NOT and HELD" "[ \$(ls '$PD'/xc-$KL-s*-x.out 2>/dev/null | wc -l) = 6 ] && [ \$(grep -l 'xcheck: 0 NOT line' '$PD'/xc-$KL-s*-x.out | wc -l) = 6 ] && [ \$(grep -l 'transform-later-vs-$FK: ok .*: HELD' '$PD'/xc-$KL-s*-x.out | wc -l) = 6 ]"
+    okc "kit-held: the deferred per-sample xcheck ran for all six samples after the schedule, each HELD with no NOT line$([ "$TMODE" = at-p ] && echo " other than the at-p FAKE world's one known line (hero words vs the probe's default entity translation)")" "[ \$(ls '$PD'/xc-$KL-s*-x.out 2>/dev/null | wc -l) = 6 ] && [ \$(xc_unexpected_nots '$PD'/xc-$KL-s*-x.out) = 0 ] && [ \$(grep -l 'transform-later-vs-$FK: ok .*: HELD' '$PD'/xc-$KL-s*-x.out | wc -l) = 6 ]"
     OPX opf r7-${FK}2 $FA "$INS" "$GEN" > "$(evg_out "$PD/r7-opsh.txt")" 2>&1
     okc "kit-held: op.sh refuses a second $FA ($FA counts as the run's one forward)" "grep -q '$KIT_SECOND_REFUSAL' '$PD/r7-opsh.txt' && [ ! -e '$PD/op-r7-${FK}2.out' ]"
     OPX opf r7-${FK}3 $FK "$INS" "$GEN" > "$(evg_out "$PD/r7b-opsh.txt")" 2>&1
