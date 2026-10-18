@@ -904,3 +904,157 @@ This changes nothing in M6-E2 or the M6-E3 design. It is not evidence, and no in
 - M6 completion or a tag.
 
 The next decision is M6-E3, under its own authorization and a fresh operator Ready.
+
+## 12. M6-E2 accepted and M6-E3 run 1 — the attended visual-placement run: record (2026-10-18)
+
+**Status:** one attended, content-modifying run with the read-only adapter, done; the game restored byte-for-byte.
+- No native, BEAM application, protocol, dependency or committed-tooling change; no rebuild, no package regeneration.
+- No effectful command existed in the run; none was issued.
+- M6 is not complete; nothing is tagged.
+
+**Authorization:** "M6-E2 acceptance and M6-E3 conditional runtime authorization". It accepts M6-E2 for its offline scope (12.1) and authorizes the preparation and, only after a fresh operator Ready, ONE attended M6-E3 experiment with the frozen artefacts, plus one ordinary mouse-camera turn under a separate go-ahead.
+
+**Evidence:** `%TEMP%\glacier-m0\hitmen\m6e3-run1\` — 341 files; manifest `sha256.txt` **`5121856e1f86b9867c9fbfaa86bf4410b4e8fa5a08bad6cadec0203cbf384f4e`**, written last by the kit's `finalize-manifest.sh` after every writer stopped, and verified; the guard now refuses to attach to it. Claimed 2026-10-18T18:36:59Z; the private state root `~/.local/state/glacier-relay-m6e3-run1` (700, ext4) held the run token (removed by the cleanup), the recording and the journal (copied into the evidence). The verdicts are `verdicts.txt`; the operator's words are `operator-observations.txt` and `operator-confirmation.txt`.
+
+**Phase times (UTC):**
+- pre-checkpoint 18:37:47–18:40:42; the checkpoint presented 18:41:43; Ready 19:23:40;
+- record (b) refresh 19:23:50–19:27:28 (218 s); token 19:27:41; node 19:27:43; installation 19:28:22–19:28:29;
+- HITMAN started 19:29:11; welcomed 19:29:25; R2 (menu) 19:30:41–19:31:03;
+- Paris `mission.playing` 19:32:05.842 (frame 24347); r3 19:33:11–19:33:40; r4 19:34:05–19:34:29;
+- R5: the go-ahead recorded 19:38:56; F12 still 1 19:39:50; r5a 19:40:24–19:40:48; F12 still 2 19:42:15; the operator's words 19:43:52; r5b 19:43:52–19:44:16;
+- r6 19:44:49–19:45:15; mission stopped 19:45:55; link closed 19:46:09; HITMAN exited 19:46:11;
+- final capture 19:47:28; cleanup 19:47:51–about 19:51 (192 s); verify-after 19:51:28–about 19:54:30 (177 s); seal 19:57:07.
+- **Failures:** one pre-checkpoint check failed on itself (12.8). Nothing else failed; nothing was retried.
+
+### 12.1 M6-E2 accepted (bounded)
+
+M6-E2 is accepted for its documented OFFLINE scope: the one-property Agent48 source change, the isolated content build, the independent binary read-back, the unchanged companion artefacts, the scratch installation / rollback, the inert operator dry run and the pinned qualification record (section 11). The review's decisions on the remaining risks:
+- **Inert wiring:** native4 had not run in HITMAN with `effectful = false`; accepted as a FIRST-RUNTIME check at the main menu, with no effectful request as a negative test (12.3).
+- **Package metadata:** the framework's size-in-memory field (991 → 1,043) stays of unestablished engine significance — a compatibility risk of this one content load, not a proved formula; not patched.
+- **New placement:** floor height, clearance, NPC occupancy and reaction, camera behaviour and rendering at P unestablished; no retry or alternate placement.
+- **Credentials / reporting:** SDK crash reporting off with the reviewed INI; a new dump treated as sensitive (none appeared); token possession is not process identity; removal is not secure erasure.
+- **Existing evidence:** the sealed stray `.pyc` and every disclosed exception preserved unchanged; nothing written into the sealed M6-E2 root.
+
+### 12.2 Identities, preparation and installation
+
+- **Refs (resolved from Git):** glacier-relay `main` `0b4695361af71d563a1e4fda813e0e6e5d1689fa` (= origin, clean; the drift rule's 0 non-docs changes since record (a)); ZHMModSDK `relay/m2` `3b892cad3f718037bcde286d7061342ba3ba34e8` (= origin, clean).
+- **Pre-checkpoint (`precheckpoint.txt`, read only):**
+  - the M6-E2 seal `2ef6a0a8…` verified (1,805 files);
+  - record (a) `195aa278…` gate PASS (122 ok: 108 now, 13 reused, 1 cached);
+  - DLL `806de7a9…` (11,065,344 B), `chunk0patch300` `5ac64848…` (1,960 B), `chunk27patch300` `58e9a10f…`, `packagedefinition.txt` `9433888b…`, the matrix `cd90df8d…`, `mods.ini.run` `f4f44345…`;
+  - the game at its complete baseline (`content-verify.sh`), M0 26/26, `mods.ini` `b90b4c5e…`, `packagedefinition.txt` `6c88d12d…`, `thumbs.dat` `ea5a4549…`; no run file, process, port or token.
+- **The capture tool (asked before the Ready):** the operator: "I can use steam F12, or snipping tool."
+- **The Ready (verbatim):** "I can use steam F12, or snipping tool. Ready" (12.8 on how it was recorded).
+- **Record (b)** (`refresh-attempt1\record-b.json`): 126 ok (125 performed now, 1 reused — record (a) by its pin), pin **`4d63743d0e8efd9b9744c67440aa4e0357a9bfe0b460f1158f6c4ee4d267efc3`**; the pre-install captures (two copies each of `packagedefinition.txt` and the original `mods.ini`, their exact Windows times, the Retail listing and hashes, the crash-dump base: 18 files, the newest native log).
+- **The node:** started without `effectful` — the authority disabled, the token configured from the file.
+- **The installation** (`r1-install-attempt1`, gated on record (b) alone): gate PASS (age 265.5 s of 1,800, created after the confirmation); the record check PASS (38 required checks, record (a)'s 15 qualifications); every input re-hashed at the copy boundary; installed: the two packages, `packagedefinition.txt` (its plaintext diff = M6-C2's accepted diff), the DLL, the five-line `GlacierRelay.ini` (1 `effectful = false`, 0 `effectful = true`, the token from the file) and `mods.ini.run`; **DELTA VERIFIED: exactly the authorized set**; `thumbs.dat` unchanged.
+
+### 12.3 Main menu — the first runtime use of the inert configuration (R2)
+
+- **Native:** the module attached (the load / FreeLibrary / reload pattern as in M6-F2b); "command link: … effectful disabled"; "allowlist … relay.inspect.candidate_transform/1 (read-only), one command per frame, **no engine write ([command] effectful = false)**"; welcomed with **6 allowlisted entries**; 0 WARN / ERROR / FAULT.
+- **`linkcheck`:** v2, token-verified, generation 1; **the six inert entries advertised; no effectful entry advertised or claimed; the BEAM effectful authority disabled and disarmed**; token from the file; audit intact; 0 NOT lines.
+- **Reads:** the identity baseline; inert arming; players (slot 0 the local hero); entity: the candidate brick **absent on a complete scan (5/5)**, the local hero resolved; candidate transform absent; xcheck 0 NOT of 13; disarm; the menu capture.
+
+So the source-level inert wiring (GlacierRelay.cpp 134–138 and 152; CommandLink.cpp 328–332) behaved as designed at runtime. No effectful request was sent, even as a negative test.
+
+### 12.4 Paris — the sampled reads (R3, R4, R5a, R5b, R6)
+
+The same Paris mission and starting location as earlier runs (`_Scene_FashionShowHit_01`); Agent 47 stationary from R3 to R6. The inert arming happened once, in r3.
+
+| Set | Frame | Time (native) | Placement | vs previous |
+|---|---|---|---|---|
+| r3 | 32648 | 19:33:36.045Z (about 90 s after the rise) | **at_P_exact** | — |
+| r4 | 37326 | 19:34:25.732Z (49.7 s later) | **at_P_exact** | bit-equal |
+| r5a | 74670 | 19:40:44.645Z (before the turn) | **at_P_exact** | bit-equal |
+| r5b | 95526 | 19:44:12.494Z (after the declared turn) | **at_P_exact** | bit-equal |
+| r6 | 101272 | 19:45:10.807Z (final) | **at_P_exact** | bit-equal |
+
+- **The candidate's world words, all five:** `3f800000 00000000 00000000 | 00000000 3f800000 00000000 | 00000000 00000000 3f800000 | c2b2fae1 416d47ae bfc2d6ba` — identity rotation and (−89.49, 14.83, −1.5221779), equal **bit for bit** to the package's decoded matrix; the parent-relative translation bit-equal; the local quaternion `80000000 00000000 80000000 3f800000` = (−0, 0, −0, 1), identity by value; not dirty.
+- **Identity, every set:** brick `007c57a6ea581f8c` present on complete scans (24/24); Agent48 `feede715906f747f` count 3 / index 1 / in range, resolved, ZHitman5, authored character id `787c1ff2-467c-421d-98f4-6bbb92e5fc99`, flags 3 (activated clear, predeleted clear); **distinct from the local hero `69bdf7f855ea15e0` on the same frame**; spatially distinct; not in the registry (slots 1–3 empty).
+- **Controls, every set:** the identity check SAME; slot 0 unchanged; outfit `874c4c48…` unchanged; **Agent 47's translation and rotation words bit-equal across all five sets** (`3e2b7674 bf7c62bd 0 | 3f7c62bd 3e2b7674 0 | 0 0 3f800000 | c2a77ccf 416b27e8 bfc2d6ba`) — the camera turn did not rotate him; xcheck 0 NOT (16 in r3, 29 in each later set).
+- **Before M6-E2's change,** every read since M6-C3 found Agent48 at the template origin (0, 0, −1.5393555).
+
+### 12.5 The visual record (R5)
+
+- **The go-ahead (verbatim):** "You have my go ahead. I can see a second agent in front of me on the map". The message carried two **phone photographs** of the screen, taken before any turn (`operator-media\photo1-minimap.jpg` `365ad434…`, `photo2-screen.jpg` `74aeae9a…`).
+- **Amendment (disclosed before the turn; `amendment-r5-start-bearing.txt`):** the default view already looked down the avenue toward P (the minimap showed the second agent ahead), so the recording started at the default view instead of with the gate centred. The one full turn passes the closed gate about halfway and ends on P's bearing; the camera input stays one full turn.
+- **F12 still 1** (`f12-1-default-view-…`, `b884762a…`, 19:39:50Z): the default view. Agent 47's own body is on the line of sight to P; the minimap shows two hero-style markers, one ahead of the other.
+- **The turn and the hold:** recorded by the operator on a **phone** (not Snipping Tool) and **not saved** ("No need to save the recording"). The operator: "I did complete one full camera return before holding on the figure and it took about 22 to 23 seconds."
+- **F12 still 2** (`f12-2-hold-…`, `7a291cce…`, 19:42:15Z, between r5a and r5b): taken during the hold.
+- **The operator after the turn (verbatim):** "There appears to be another agent 47 directly in front of me wearing the exact same starting suit that I am currently wearing. As I am observing him, I can see his idle animation where he is breathing, and his suit jacket appears to be slowly flapping with the wind. He is facing west and I am facing north."
+- **Analysis (the tool-runner's, separate from the testimony):**
+  - F12 still 2 shows a second bald figure in a grey suit like the local hero's, standing on the red carpet about midway between the second and third planter pairs, facing screen-left, with Agent 47 in the foreground.
+  - That is where the bracketing reads place Agent48: 5.748 m from Agent 47 along the avenue.
+  - The rotation words give an **80.36°** heading difference between the two heroes (acos 0.16744). If both models face their local −Y, Agent48 faces the local hero's left — consistent with "facing west" / "facing north" and the still. The forward-axis assumption is not established.
+- **Media handling:** the photographs and stills are hashed and kept locally in the evidence (not in Git); nothing was uploaded by the tool-runner. Whether Steam's cloud syncs its screenshot folder is the operator's setting, not examined.
+
+### 12.6 The six separate verdicts
+
+1. **Installed / loaded — yes.** The package set installed exactly; the candidate brick present on complete scans in every Paris set; no WARN / ERROR / FAULT.
+2. **Candidate resolved and distinct — yes** (12.4).
+3. **Placement at the first read — at_P_exact** (r3, frame 32648): the requested placement observed at that sampled frame. It is not an observation of the initialization event, its timing or its writer.
+4. **Later sampled placement — agrees** at r4, r5a, r5b and r6, bit for bit, over about 11.6 minutes. That is agreement at the samples, not continuous persistence. No z adjustment was observed, so there is no floor-placement shift at these samples — but that is not a measured clearance.
+5. **Camera coverage — P's bearing covered by one still** (F12 still 2): an elevated, unobstructed view of the spot between the planter pairs at one instant between r5a and r5b. F12 still 1 does not cover it (Agent 47 in the way). The continuous recording is not in evidence, so its coverage is not assessed; the full turn rests on the operator's word.
+6. **Operator visual observation — a figure reported at P:** "another agent 47 directly in front of me wearing the exact same starting suit", with idle breathing and jacket motion, facing west (12.5).
+
+**Outcome (7.7 / the runbook's table):** at P, later samples agree, coverage of P, figure seen at P → **the content initialization is observed at the samples and a figure is reported at P** (testimony correlated with the reads). The figure is not a proven pixel-to-entity mapping. The correlation:
+- the reads bracketing the still place Agent48 there;
+- the registry holds no other hero;
+- the minimap shows a second marker;
+- nothing else at the spot was inspected.
+
+### 12.7 Health, journal, telemetry / replay and rollback (kept separate)
+
+- **Health — pass:** native INFO 106, WARN 0, ERROR 0, FAULT 0; no crash; no new crash-dump or report file; one adapter instance `6510df60-…`; link generation 1 throughout; native transform sets 0, outfit lines 0.
+- **Journal — pass:** 82 entries, one journal (`95384f85-…`), seq contiguous from 1, opened … closed. 18 commands (6 players, 6 entity, 6 candidate transform), each accepted / transmitted / received / terminal; two inert arm / disarm pairs; effectful: lifts 0, restorations 0, outfit 0, effectful armings 0; refusals 0, unknown 0, anomalies 0.
+- **Telemetry / replay — pass:**
+  - native published 5 = BEAM reconstructed 5 = recorder envelopes 5; sequences 1–5 in all three; 0 field mismatches; native drops 0;
+  - recorder 8 records, no gaps, CLOSED;
+  - `cap-final` taken after the game exit and the link close, before the BEAM stop;
+  - the fresh-node replay at r = 8 term- and byte-equal on instances, unidentified, summary, report, summary_text and report_text.
+- **Rollback — pass** (`cleanup-attempt1`, `verify-after-attempt1`; judged from the comparison outputs, not the exit status):
+  - the settings file (redacted copy kept) and the DLL removed;
+  - `mods.ini` `b90b4c5e…` (crash reporting true again) and `packagedefinition.txt` `6c88d12d…` restored with their exact 100-ns times;
+  - both patch300 packages removed;
+  - the complete baseline verified twice (253 files, sizes, mtimes, every hash, chunk0 / chunk27);
+  - the hitmen ids in 0 of 145 package indexes;
+  - `thumbs.dat` unchanged; M0 26/26; Retail identical to the pre-install capture;
+  - no HITMAN, BEAM or probe process; no port; 34 relied-on references unchanged.
+- **Token:** files containing the token VALUE — evidence 0, state root 0, native logs 0, game `mods/` and `mods.ini` 0; the token file removed (logical removal, not secure erasure). Separately, FILE NAMES containing "token": 24 under the hitmen tree (readiness outputs named `no-token-files.out` and M6-F1a's token-guard test files; one new in this run). The cleanup's "pre-run 13" is a stale constant from M6-F2b's time.
+
+### 12.8 Deviations and disclosures
+
+- **The pre-checkpoint's one failure:** the check for the superseded pin `de8b1986…` found only its own script. Excluding `scripts\`, 0 files name it (`precheckpoint-NOTE.txt`); no other result depends on it.
+- **The confirmation file:** the operator's one message was split per question so that the Ready line carries only "Ready" — the refresh's check requires the reply line to begin with it. The complete message is kept verbatim on the next line; no word changed.
+- **`start-beam.sh`'s exit status** was not captured (zsh has no `PIPESTATUS`); its success was established from its output and the listeners.
+- **r4** came 49.7 s after r3, not about 30 s.
+- **The R5 start bearing** (12.5).
+- **The capture means:** a phone recording instead of Snipping Tool (not saved); two phone photographs before the turn; two F12 stills.
+- **The replay account's** standard caveat "native-side drops unknown" — the native counters separately report 0 dropped.
+- **No stop condition was met;** no retry, second deployment, effectful command or after-stop read.
+
+### 12.9 Interpretation and what stays open
+
+- **Shown:** one supported content intervention — one `m_mTransform` on Agent48 in `hitmen.brick`, with the adapter read-only by configuration — and Agent48's stored transform reads at P, bit for bit, at five samples over about 11.6 minutes. On the same evidence, the operator saw a second Agent 47 there and the minimap showed a second marker. This answers M6-E1's question at the samples. M6-F's runtime lift returned to baseline within six frames; the content placement did not move at any sample.
+- **Not established:**
+  - simulation or AI state (the breathing and cloth motion are presentation testimony);
+  - collision, NPC perception, playability, external control;
+  - activation semantics (flags 3, activated clear);
+  - what wrote the transform, or when;
+  - whether the figure is the inspected entity by pixel.
+- **Not tested:** the M6-E2 SDK-teleport hypothesis (11.11), and why the runtime lift returned.
+- **Residuals:** the size-in-memory field's engine significance (the load succeeded once; that is not a proof of the formula); the identity rotation's facing (seen once, with an unestablished forward axis); floor and collision at P not measured.
+
+### 12.10 Commits and stop
+
+- **The commit:** documentation only (this section, HANDOFF, ROADMAP), pushed to `main`; a docs-only descendant of `0b469536`.
+- **No change:** no native, BEAM, protocol, dependency or committed-tooling change; the M6-E2 kit ran in place, read only, from its sealed root.
+- **Not in Git:** the packages, the run's captures, the photographs and stills. They stay in the guarded evidence root.
+
+**At the end:**
+- the game is at its complete baseline, M0 26/26;
+- no process, listener, token file or relay file;
+- both seals verify (M6-E2 `2ef6a0a8…`, M6-E3 run 1 `5121856e…`);
+- both repositories clean.
+
+**Stop for architectural review.** Not authorized by this record: a new content or source capability, an extra experiment, writer tracing, a retry or second deployment, activation, any effectful command, M6 completion or a tag.
