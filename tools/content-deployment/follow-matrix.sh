@@ -29,6 +29,24 @@
 #                     probe is stopped by the PID found by ancestry — far below its failsafe lifetime; nothing is issued
 #   lift-refused      the local guard passes but the AUTHORITY refuses the lift (its binding inspection is older than the
 #                     authority's 60 s inspection window, which the local guard does not judge): no follow-up read, the budget 1
+# M6-F2b preparation (authorization "M6-F2a Review and Conditional M6-F2b Authorization", items A and D):
+#   issue-timeout     the phase's own command Link process is SUSPENDED (sys:suspend, through the authority's state) before
+#                     lift-follow starts — none of its pre-lift RPCs touch the link — so the lift's issuance blocks inside the
+#                     authority's send beyond the tool's 3 s issuance bound; the tool must report the issuance UNCERTAIN (never
+#                     "nothing transmitted"), read nothing and retry nothing; the link is resumed (inside the authority's own 5 s
+#                     call bound) and the journal then shows the lift accepted, transmitted and applied: a timeout is not a refusal
+#   restore-held      the run kit end to end (op.sh, seq-lift.sh with lift-follow, seq-restore.sh): held at every slot; the
+#                     LAST lift-follow sample (r4-lift-s5, through the existing file / result convention) feeds the restoration
+#                     after a separate simulated operator approval and a fresh arming: eligibility, the planner and the
+#                     authority's binding (a just-in-time inspection iff the sample is over 35 s old), ONE restoration, its later
+#                     read-back and the separate restoration facts
+#   restore-aged      as restore-held, but the sample is first left to age past the authority's 60 s inspection window: a
+#                     DIRECT restoration bound to it (bypassing the wrapper) is refused before transmission (inspection_stale);
+#                     the wrapper then takes ONE just-in-time inspection, revalidates it (held, bit-equal) and restores bound to it
+#   restore-returned  the samples return to baseline: the wrapper refuses before arming (not held); a DIRECT restoration is not
+#                     submitted (already_at_baseline, the authority-side evidence); no restoration in the journal
+#   restore-drifted   the samples drift: the wrapper refuses before arming; a DIRECT restoration is refused before transmission
+#                     by the authority's own evidence check; no restoration in the journal
 # M6-F2b preparation (authorization "M6-F2a Review and Conditional M6-F2b Authorization", item C): tooling.tsv records, besides every
 # tool and kit file the phases run: the relay/lib and relay/config TREES at HEAD (the group refuses to start if either, mix.exs or
 # mix.lock has an uncommitted change — so the recorded trees are the code that ran), mix.exs and mix.lock, and the runtime files
@@ -127,11 +145,11 @@ prep() {   # <prefix> [sleep-before-attest-s]: inert arming, the binding inspect
   T2=$(ms)
 }
 
-journal_check() {   # <phase-dir> <lift label> <lifts> <armings> <consumed> [<inspections after the lift>, default: the follow-up requests]
+journal_check() {   # <phase-dir> <lift label> <lifts> <armings> <consumed> [<inspections after the lift>, default: the follow-up requests] [<restorations>]
   local r
-  r=$(python3 -I - "$1" "$2" "$3" "$4" "$5" "${6:-}" <<'PY'
+  r=$(python3 -I - "$1" "$2" "$3" "$4" "$5" "${6:-}" "${7:-0}" <<'PY'
 import json, sys, glob, os
-pd, label, w_lifts, w_arm, w_cons, w_ins = sys.argv[1:7]
+pd, label, w_lifts, w_arm, w_cons, w_ins, w_res = sys.argv[1:8]
 fr = os.path.join(pd, label + "-follow-result.json")
 req = int(w_ins) if w_ins else (json.load(open(fr))["requests"] if os.path.exists(fr) else 0)
 idf = os.path.join(pd, label + "-command-id.txt")
@@ -150,8 +168,9 @@ if lid:
 ins_after = [e for e in after if e.get("name") == "relay.inspect.candidate_transform"]
 arm = sum(1 for e in ents if e.get("event") == "authority.armed_effectful")
 cons = sum(1 for e in ents if e.get("event") == "authority.effectful_consumed")
-facts = "lifts=%d inspections_after=%d other_after=%d restores=%d outfit=%d effectful_armings=%d consumed=%d (expected inspections after the lift %d)" % (len(lifts), len(ins_after), len(after) - len(ins_after), len(restores), len(outfit), arm, cons, req)
-ok = len(lifts) == int(w_lifts) and not restores and not outfit and len(after) == len(ins_after) == req and arm == int(w_arm) and cons == int(w_cons)
+res_after = [e for e in after if e in restores]
+facts = "lifts=%d inspections_after=%d restores_after=%d other_after=%d restores=%d outfit=%d effectful_armings=%d consumed=%d (expected inspections after the lift %d, restorations %s)" % (len(lifts), len(ins_after), len(res_after), len(after) - len(ins_after) - len(res_after), len(restores), len(outfit), arm, cons, req, w_res)
+ok = len(lifts) == int(w_lifts) and len(restores) == len(res_after) == int(w_res) and not outfit and len(after) == len(ins_after) + len(res_after) and len(ins_after) == req and arm == int(w_arm) and cons == int(w_cons)
 print(("ok" if ok else "FAIL") + " " + facts)
 PY
 )
@@ -243,7 +262,7 @@ lift_refused_phase() {
     prep p 62
     tool "$PD" p-lift cmd-m6f.exs lift-follow "$INS" "$GEN"; rc=$?
     okc "lift-refused: the local guard passed and the AUTHORITY refused the lift (lift_candidate returned an error); no follow-up read" \
-      "! grep -q 'LOCAL GUARD REFUSED' '$PD/op-p-lift.out' && grep -q 'lift refused locally: {:error' '$PD/op-p-lift.out' && grep -q '\"stop\":\"lift_not_issued\"' '$PD/p-lift-follow.ndjson' && grep -q 'EVIDENCE follow.lift-not-issued-no-read: ok' '$PD/op-p-lift.out' && [ ! -e '$PD/p-lift-command-id.txt' ]"
+      "! grep -q 'LOCAL GUARD REFUSED' '$PD/op-p-lift.out' && grep -q 'lift refused locally: :inspection_stale (refused before transmission: nothing transmitted' '$PD/op-p-lift.out' && grep -q '\"stop\":\"lift_not_issued\"' '$PD/p-lift-follow.ndjson' && grep -q 'EVIDENCE follow.lift-not-issued-no-read: ok' '$PD/op-p-lift.out' && [ ! -e '$PD/p-lift-command-id.txt' ]"
     say "lift-refused: $(grep -o 'lift refused locally: .*' "$PD/op-p-lift.out" | cut -c1-220) (rc $rc)"
     bud=$(pp_rpc 's = :rpc.call(:"'"$NODE"'", GlacierRelay.Command, :status, []); IO.puts("#{s.effectful.transform_lift_budget} #{s.trust.effectful_armed}")')
     okc "lift-refused: the lift budget is still 1 (nothing issued; the arming is not consumed: '$bud')" "[ '${bud%% *}' = 1 ]"
@@ -251,6 +270,119 @@ lift_refused_phase() {
   phase_end
   journal_check "$PD" p-lift 0 1 0
   printf 'lift-refused\t%s\t%s\t%s\t-\t-\t-\t-\t-\t-\t(the authority refused the lift; no follow-up read)\t0\t-\tlift_not_issued\t-\t%s\n' "$FRAME_MS" "$((T1 - T0))" "$((T2 - T1))" "$ROW_TEARDOWN" >> "$tsv"
+}
+
+issue_timeout_phase() {
+  local hold hout rc lid st apid0
+  if phase_start issue-timeout "$FRAME_MS" ok held 240000; then
+    prep p
+    apid0=$(pp_rpc 'IO.puts(inspect(:rpc.call(:"'"$NODE"'", Process, :whereis, [GlacierRelay.Command.Authority])))')
+    # the hold: ONE VM that suspends the phase's own Link (found through the authority's state; this node and probe are the phase's
+    # own), reports it, waits (bounded 8 s) until lift-follow's output says the issuance is UNCERTAIN, then resumes the link
+    hout=$(evg_out "$PD/link-hold.txt") || exit 3
+    (cd "$RELAY" && elixir --sname "mx-hold-$RANDOM" -e '
+      [node, opout, ready] = System.argv() |> then(fn [n | r] -> [String.to_atom(n) | r] end)
+      true = :net_kernel.connect_node(node)
+      link = :rpc.call(node, :sys, :get_state, [GlacierRelay.Command.Authority]).link.pid
+      :ok = :rpc.call(node, :sys, :suspend, [link])
+      File.write!(ready, "suspended #{inspect(link)} #{DateTime.utc_now() |> DateTime.to_iso8601()}\n")
+      t0 = System.monotonic_time(:millisecond)
+      seen = Enum.find_value(Stream.repeatedly(fn -> Process.sleep(20); File.read(opout) end), fn
+        {:ok, t} -> if(String.contains?(t, "LIFT ISSUANCE UNCERTAIN"), do: :uncertain_seen, else: (System.monotonic_time(:millisecond) - t0 > 8_000) && :bound_reached)
+        _ -> (System.monotonic_time(:millisecond) - t0 > 8_000) && :bound_reached
+      end)
+      r = :rpc.call(node, :sys, :resume, [link])
+      IO.puts("resumed #{inspect(link)} -> #{inspect(r)} after #{System.monotonic_time(:millisecond) - t0} ms (#{seen})")
+    ' "$NODE" "$PD/op-p-lift.out" "$PD/link-hold.ready") > "$hout" 2>&1 & hold=$!
+    for _ in $(seq 1 300); do [ -s "$PD/link-hold.ready" ] && break; sleep 0.05; done
+    okc "issue-timeout: the phase's own Link process suspended before lift-follow started ($(cat "$PD/link-hold.ready" 2>/dev/null | cut -c1-80))" "[ -s '$PD/link-hold.ready' ]"
+    tool "$PD" p-lift cmd-m6f.exs lift-follow "$INS" "$GEN"; rc=$?
+    wait "$hold"
+    say "issue-timeout: $(grep -oE 'LIFT ISSUANCE UNCERTAIN.{0,200}' "$PD/op-p-lift.out" | head -1) | hold: $(tail -1 "$hout" | cut -c1-160)"
+    okc "issue-timeout: lift-follow reports the issuance UNCERTAIN after its 3 s bound ({:badrpc, :timeout}) — not a refusal, never 'nothing transmitted'" \
+      "grep -q 'LIFT ISSUANCE UNCERTAIN: .*returned {:badrpc, :timeout}' '$PD/op-p-lift.out' && ! grep -q 'nothing transmitted' '$PD/op-p-lift.out' && grep -q 'EVIDENCE follow.lift-issuance-determined: NOT' '$PD/op-p-lift.out' && grep -q 'EVIDENCE follow.no-read-after-uncertain-issuance: ok' '$PD/op-p-lift.out'"
+    okc "issue-timeout: the follow file holds the plan and the uncertain end, no issuance record and no slot; no command-id file" \
+      "grep -q '\"event\":\"follow.plan\"' '$PD/p-lift-follow.ndjson' && grep -q '\"stop\":\"lift_issuance_uncertain\"' '$PD/p-lift-follow.ndjson' && ! grep -qE '\"event\":\"follow.(issued|slot)\"' '$PD/p-lift-follow.ndjson' && [ ! -e '$PD/p-lift-command-id.txt' ]"
+    okc "issue-timeout: the link was resumed only after the uncertain report (inside the authority's own 5 s bound)" "grep -q 'resumed .*uncertain_seen' '$hout'"
+    # what the authority did meanwhile (read now, after the tool ended — never by the tool): the lift accepted, transmitted, applied
+    lid=$(python3 -I -c "import json,glob,sys; e=[json.loads(l) for f in glob.glob(sys.argv[1]+'/commands/commands-*.ndjson') for l in open(f) if l.strip()]; a=[x for x in e if x.get('event')=='command.accepted' and x.get('name')=='candidate.transform.set']; print(a[0]['command_id'] if len(a)==1 else 'none:%d' % len(a))" "$ST")
+    for _ in $(seq 1 100); do st=$(pp_rpc 'c = :rpc.call(:"'"$NODE"'", GlacierRelay.Command, :command, ["'"$lid"'"]); IO.puts(if is_map(c), do: c.status, else: inspect(c))'); case "$st" in applied|failed|unknown|expired|precondition_failed|unavailable) break;; esac; sleep 0.1; done
+    say "issue-timeout: the journal's one lift $lid: authority status $st"
+    okc "issue-timeout: the authority accepted, transmitted and APPLIED the lift after the tool's timeout (the timeout was not a refusal)" "[ '$st' = applied ]"
+    st=$(pp_rpc 'IO.puts(inspect(:rpc.call(:"'"$NODE"'", Process, :whereis, [GlacierRelay.Command.Authority])))')
+    okc "issue-timeout: the authority was not restarted by the hold (the same pid $apid0 before and after: its own 5 s call bound not reached)" "[ -n '$apid0' ] && [ '$st' = '$apid0' ]"
+  fi
+  phase_end
+  journal_check "$PD" p-lift 1 1 1 0
+  printf 'issue-timeout\t%s\t%s\t%s\t-\t-\t-\t-\t-\t-\t(the issuance RPC timed out: UNCERTAIN; no follow-up read; the lift applied meanwhile)\t0\t-\tlift_issuance_uncertain\t-\t%s\n' "$FRAME_MS" "$((T1 - T0))" "$((T2 - T1))" "$ROW_TEARDOWN" >> "$tsv"
+}
+
+direct() {   # <phase-dir> <label> <action> [args]: cmd-m6f.exs called DIRECTLY (bypassing op.sh and the wrapper); its output is NOT an op-*.out file (op.sh's per-run counts are untouched)
+  local pd=$1 l=$2 a=$3; shift 3
+  local o; o=$(evg_out "$pd/direct-$l.out") || return 2
+  echo "$(date -u +%FT%T.%3NZ) $l $a $* (direct, bypassing the wrapper)" > "$o"
+  (cd "$RELAY" && elixir --sname "mx-$l-$RANDOM" -S mix run --no-start "$T/cmd-m6f.exs" "$pd" "$l" "$a" "$@") >> "$o" 2>&1
+}
+
+restore_phase() {   # <name> <transform-later> <held|returned|drifted> [aged]
+  local name=$1 later=$2 kind=$3 aged=${4:-} run=$KIT rc LS LSID age jit ins_after nres arm cons
+  if ! phase_start "$name" "$FRAME_MS" ok "$later" 400000; then phase_end; return; fi
+  OPX() { M6F1B_MODE=dry-run M6F1B_OWNER=$IMG M6F1B_GUARD_ROOT=$E M6F1B_RUN_DIR=$run bash "$run/op.sh" "$PD" "$S" "$@"; }
+  OPX ident r2-id baseline >> "$out"
+  OPX op r3-arm arm > /dev/null; OPX op r3-players players 9000 recorded > /dev/null; OPX op r3-entity entity - - 9000 present > /dev/null
+  OPX op r3-ct ctransform 9000 present > /dev/null
+  OPX xcheck r3-x --players r3-players --entity r3-entity --transform r3-ct --candidate-expect present --slots-expect recorded > /dev/null
+  T2=$(ms)
+  OPX note "MATRIX: simulated operator go-ahead for the lift" > /dev/null
+  M6F1B_MODE=dry-run M6F1B_OWNER=$IMG M6F1B_GUARD_ROOT=$E M6F1B_RUN_DIR=$run bash "$run/seq-lift.sh" "$PD" "$S" r4 r3-players r3-entity r3-ct > "$(evg_out "$PD/seq-lift.console")" 2>&1; rc=$?
+  okc "$name: seq-lift completed (R4 done, rc $rc)" "[ $rc = 0 ] && grep -q 'R4 done' '$PD/r4-sequence.txt'"
+  follow_checks r4-lift "d['stop'] is None" "d['requests'] == 6" "$( [ "$kind" = held ] && echo held || ([ "$kind" = returned ] && echo returned_to_baseline || echo drifted))" fast
+  LS=$(python3 -I -c "import json,sys; d=json.load(open(sys.argv[1])); r=[s for s in d['slots'] if s['outcome']=='requested']; print('r4-lift-s%d' % r[-1]['slot'])" "$PD/r4-lift-follow-result.json")
+  LSID=$(tr -d '\n' < "$PD/$LS-command-id.txt" 2>/dev/null)
+  okc "$name: the last lift-follow sample $LS is returned through the existing file / result convention (command id, result, observed)" "[ -n '$LSID' ] && [ -s '$PD/$LS-result.json' ] && [ -s '$PD/$LS-observed.json' ]"
+  if [ "$aged" = aged ]; then
+    age=$(( $(date +%s) - $(stat -c %Y "$PD/r4-lift-follow-result.json") ))
+    say "$name: waiting $(( 62 - age > 0 ? 62 - age : 0 )) s more so that the last sample ($LS) is older than the authority's 60 s inspection window"
+    [ "$age" -lt 62 ] && sleep $(( 62 - age ))
+    direct "$PD" x-stale restore "$(tr -d '\n' < "$PD/r4-lift-command-id.txt")" "$LSID" "$(jget "$PD/$LS-result.json" "d['mission_generation']")"
+    okc "$name: a DIRECT restoration bound to the stale sample is refused before transmission (inspection_stale; nothing transmitted)" "grep -q 'restore refused locally: :inspection_stale (refused before transmission' '$PD/direct-x-stale.out' && ! grep -q 'restoration issued' '$PD/direct-x-stale.out'"
+  fi
+  if [ "$kind" != held ]; then
+    # the wrapper's eligibility refuses before arming; a direct call then meets the authority-side evidence
+    OPX note "MATRIX: simulated operator restoration go-ahead (separate approval)" > /dev/null
+    M6F1B_MODE=dry-run M6F1B_OWNER=$IMG M6F1B_GUARD_ROOT=$E M6F1B_RUN_DIR=$run bash "$run/seq-restore.sh" "$PD" "$S" r6 r4-lift "$LS" r4-ct r3-players r3-entity > "$(evg_out "$PD/seq-restore.console")" 2>&1; rc=$?
+    say "$name: seq-restore rc $rc: $(grep -E 'NOT ELIGIBLE|eligibility' "$PD/r6-sequence.txt" | sed -E 's/^[^ ]+ //' | cut -c1-240)"
+    okc "$name: the wrapper refuses before any identity check or arming (exit 10: the last sample is not held)" "[ $rc = 10 ] && grep -q 'NOT ELIGIBLE: .*not held' '$PD/r6-sequence.txt' && [ ! -e '$PD/op-r6-arm.out' ] && [ ! -e '$PD/id-r6-id.out' ]"
+    direct "$PD" x-direct restore "$(tr -d '\n' < "$PD/r4-lift-command-id.txt")" "$LSID" "$(jget "$PD/$LS-result.json" "d['mission_generation']")"
+    if [ "$kind" = returned ]; then
+      okc "$name: a DIRECT restoration is not submitted — the authority-side check finds the preimage (already_at_baseline)" "grep -q 'restore NOT submitted' '$PD/direct-x-direct.out' && ! grep -q 'restoration issued' '$PD/direct-x-direct.out'"
+    else
+      okc "$name: a DIRECT restoration is refused before transmission by the authority-side evidence check" "grep -q 'restore refused locally: .*(refused before transmission' '$PD/direct-x-direct.out' && ! grep -q 'restoration issued' '$PD/direct-x-direct.out'"
+    fi
+    say "$name: direct: $(grep -oE 'restore (NOT submitted|refused locally)[^(]*' "$PD/direct-x-direct.out" | head -1 | cut -c1-200)"
+    nres=0; arm=1; cons=1
+  else
+    OPX note "MATRIX: simulated operator restoration go-ahead (separate approval, after the follow result)" > /dev/null
+    M6F1B_MODE=dry-run M6F1B_OWNER=$IMG M6F1B_GUARD_ROOT=$E M6F1B_RUN_DIR=$run bash "$run/seq-restore.sh" "$PD" "$S" r6 r4-lift "$LS" r4-ct r3-players r3-entity > "$(evg_out "$PD/seq-restore.console")" 2>&1; rc=$?
+    sed -E 's/^[^ ]+ r6: //' "$PD/r6-sequence.txt" | grep -E 'eligibility|sample .* old|plan:|restoration issued|after the restoration|later class|R6 done|HARD|NOT' | cut -c1-300 | while IFS= read -r x; do say "  $x"; done
+    okc "$name: seq-restore completed (R6 done, rc $rc): eligibility, ONE restoration, its later read-back" "[ $rc = 0 ] && grep -q 'R6 done' '$PD/r6-sequence.txt' && grep -q 'eligibility: the last of 6 samples' '$PD/r6-sequence.txt'"
+    okc "$name: every restoration EVIDENCE line ok (19)" "[ \$(grep -c 'EVIDENCE restore' '$PD/op-r6-restore.out') = 19 ] && ! grep -q 'EVIDENCE restore[^:]*: NOT' '$PD/op-r6-restore.out'"
+    jit=0; [ -e "$PD/r6-jit-ct-command-id.txt" ] && jit=1
+    age=$(grep -oE 'sample .* is [0-9]+ s old' "$PD/r6-sequence.txt" | grep -oE '[0-9]+ s old' | grep -oE '[0-9]+')
+    okc "$name: a just-in-time inspection was taken iff the sample was over 35 s old (age ${age:-?} s, just-in-time $jit)" "[ -n '$age' ] && { { [ '$age' -gt 35 ] && [ $jit = 1 ]; } || { [ '$age' -le 35 ] && [ $jit = 0 ]; }; }"
+    if [ "$jit" = 1 ]; then okc "$name: the just-in-time inspection held and was bit-equal to the sample before the restoration was bound to it" "grep -q 'conclusion \"held\"' '$PD/op-r6-jit-later.out' && grep -q 'EVIDENCE xcheck.transform-candidate-words-vs-previous: ok .*candidate world words bit-equal' '$PD/xc-r6-jit-x.out' && grep -q \"restore .* bound to the later exact inspection \$(tr -d '\\n' < '$PD/r6-jit-ct-command-id.txt')\" '$PD/op-r6-restore.out'"; fi
+    [ "$aged" = aged ] && okc "$name: the aged sample took the just-in-time path" "[ $jit = 1 ]"
+    okc "$name: the restoration facts are reported separately (restore_facts; world / local / parent / dirty vs the pre-lift inspection)" "grep -q 'EVIDENCE restore.world-restored-exact-observed: ok' '$PD/op-r6-restore.out' && grep -q 'EVIDENCE restore.snapshot-facts-recorded: ok' '$PD/op-r6-restore.out' && grep -qE '^world' '$PD/r6-post-compare.txt'"
+    say "$name: after the restoration vs the pre-lift inspection: $(grep -E '^(world|local|parent|dirty|snapshot)' "$PD/r6-post-compare.txt" | cut -c1-70 | tr '\n' ';')"
+    M6F1B_MODE=dry-run M6F1B_OWNER=$IMG M6F1B_GUARD_ROOT=$E M6F1B_RUN_DIR=$run bash "$run/op.sh" "$PD" "$S" opf r7-restore2 restore x y z > "$(evg_out "$PD/r7-restore2.txt")" 2>&1
+    okc "$name: op.sh refuses a second restoration" "grep -q 'REFUSED' '$PD/r7-restore2.txt' && [ ! -e '$PD/op-r7-restore2.out' ]"
+    nres=1; arm=2; cons=2
+  fi
+  phase_end
+  ins_after=$(python3 -I -c "import json,sys; print(json.load(open(sys.argv[1]))['requests'])" "$PD/r4-lift-follow-result.json")
+  for f in r6-jit-ct r6-post-ct; do [ -e "$PD/$f-command-id.txt" ] && ins_after=$((ins_after + 1)); done
+  journal_check "$PD" r4-lift 1 "$arm" "$cons" "$ins_after" "$nres"
+  timing_row "$PD/r4-lift-follow-result.json"
 }
 
 old_or_kit() {   # <old-path|kit-held>
@@ -328,6 +460,11 @@ for ph in $PHASES; do
     operator-stop) direct_phase operator-stop ok held held "d['stop'] == 'operator_stop'" "d['requests'] == 2" fast hook_stop;;
     no-link) no_link_phase;;
     lift-refused) lift_refused_phase;;
+    issue-timeout) issue_timeout_phase;;
+    restore-held) restore_phase restore-held held held;;
+    restore-aged) restore_phase restore-aged held held aged;;
+    restore-returned) restore_phase restore-returned returned returned;;
+    restore-drifted) restore_phase restore-drifted drifted drifted;;
     *) bad "unknown phase $ph";;
   esac
   say "phase $ph done: $(tail -1 "$tsv" | cut -f1,12-18 | tr '\t' ' ')"
