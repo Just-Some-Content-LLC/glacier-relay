@@ -38,7 +38,7 @@
 #   restore-held      the run kit end to end (op.sh, seq-lift.sh with lift-follow, seq-restore.sh): held at every slot; the
 #                     LAST lift-follow sample (r4-lift-s5, through the existing file / result convention) feeds the restoration
 #                     after a separate simulated operator approval and a fresh arming: eligibility, the planner and the
-#                     authority's binding (a just-in-time inspection iff the sample is over 35 s old), ONE restoration, its later
+#                     authority's binding (a just-in-time inspection iff the sample is over 20 s old), ONE restoration, its later
 #                     read-back and the separate restoration facts
 #   restore-aged      as restore-held, but the sample is first left to age past the authority's 60 s inspection window: a
 #                     DIRECT restoration bound to it (bypassing the wrapper) is refused before transmission (inspection_stale);
@@ -373,7 +373,10 @@ restore_phase() {   # <name> <transform-later> <held|returned|drifted> [aged]
     okc "$name: every restoration EVIDENCE line ok (19)" "[ \$(grep -c 'EVIDENCE restore' '$PD/op-r6-restore.out') = 19 ] && ! grep -q 'EVIDENCE restore[^:]*: NOT' '$PD/op-r6-restore.out'"
     jit=0; [ -e "$PD/r6-jit-ct-command-id.txt" ] && jit=1
     age=$(grep -oE 'sample .* is [0-9]+ s old' "$PD/r6-sequence.txt" | grep -oE '[0-9]+ s old' | grep -oE '[0-9]+')
-    okc "$name: a just-in-time inspection was taken iff the sample was over 35 s old (age ${age:-?} s, just-in-time $jit)" "[ -n '$age' ] && { { [ '$age' -gt 35 ] && [ $jit = 1 ]; } || { [ '$age' -le 35 ] && [ $jit = 0 ]; }; }"
+    okc "$name: a just-in-time inspection was taken iff the sample was over 20 s old (age ${age:-?} s, just-in-time $jit)" "[ -n '$age' ] && { { [ '$age' -gt 20 ] && [ $jit = 1 ]; } || { [ '$age' -le 20 ] && [ $jit = 0 ]; }; }"
+    ab=$(python3 -I -c "import json,glob,sys; e=[json.loads(l) for f in glob.glob(sys.argv[1]+'/commands/commands-*.ndjson') for l in open(f) if l.strip()]; r=[x for x in e if x.get('event')=='command.accepted' and (x.get('params') or {}).get('mode')=='restore']; print(r[0]['inspection_binding']['age_ms'] if r else '')" "$ST")
+    say "$name: the authority bound the restoration to an inspection $ab ms old (its window 60000 ms; the wrapper's check saw ${age:-?} s)"
+    okc "$name: the authority's binding age leaves at least 15 s of its 60 s window" "[ -n '$ab' ] && [ '$ab' -le 45000 ]"
     if [ "$jit" = 1 ]; then okc "$name: the just-in-time inspection held and was bit-equal to the sample before the restoration was bound to it" "grep -q 'conclusion \"held\"' '$PD/op-r6-jit-later.out' && grep -q 'EVIDENCE xcheck.transform-candidate-words-vs-previous: ok .*candidate world words bit-equal' '$PD/xc-r6-jit-x.out' && grep -q \"restore .* bound to the later exact inspection \$(tr -d '\\n' < '$PD/r6-jit-ct-command-id.txt')\" '$PD/op-r6-restore.out'"; fi
     [ "$aged" = aged ] && okc "$name: the aged sample took the just-in-time path" "[ $jit = 1 ]"
     okc "$name: the restoration facts are reported separately (restore_facts; world / local / parent / dirty vs the pre-lift inspection)" "grep -q 'EVIDENCE restore.world-restored-exact-observed: ok' '$PD/op-r6-restore.out' && grep -q 'EVIDENCE restore.snapshot-facts-recorded: ok' '$PD/op-r6-restore.out' && grep -qE '^world' '$PD/r6-post-compare.txt'"
