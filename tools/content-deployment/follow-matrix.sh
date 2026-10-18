@@ -29,6 +29,10 @@
 #                     probe is stopped by the PID found by ancestry — far below its failsafe lifetime; nothing is issued
 #   lift-refused      the local guard passes but the AUTHORITY refuses the lift (its binding inspection is older than the
 #                     authority's 60 s inspection window, which the local guard does not judge): no follow-up read, the budget 1
+# M6-F2b preparation (authorization "M6-F2a Review and Conditional M6-F2b Authorization", item C): tooling.tsv records, besides every
+# tool and kit file the phases run: the relay/lib and relay/config TREES at HEAD (the group refuses to start if either, mix.exs or
+# mix.lock has an uncommitted change — so the recorded trees are the code that ran), mix.exs and mix.lock, and the runtime files
+# (OTP_VERSION, the erts beam.smp, Elixir's VERSION and elixir.app, the python3 binary); runtime.txt the versions as printed.
 set -u
 E=${1:?active evidence root}; S=${2:?state root}; G=${3:?group}; shift 3; PHASES="$*"
 T=/mnt/c/Users/steve/dev/glacier-relay/glacier-relay/tools/content-deployment
@@ -58,10 +62,19 @@ trap 'say "interrupted"; exit 130' INT TERM
 harness=$(evg_dir "$A/harness") || exit 3
 for f in follow-matrix.sh probe-phase.sh tests/follow_check.py; do cp "$T/$f" "$(evg_out "$harness/$(basename "$f")")"; done
 tt=$(evg_out "$A/tooling.tsv") || exit 3
+REPO=$(git -C "$RELAY" rev-parse --show-toplevel)
+dirty=$(git -C "$REPO" status --porcelain -- relay/lib relay/config relay/mix.exs relay/mix.lock | wc -l)
+[ "$dirty" = 0 ] || { echo "ABORT: relay/lib, relay/config, mix.exs or mix.lock has $dirty uncommitted change(s): the tree identities would not be the code that runs"; exit 1; }
+ERTS=$(erl -noshell -eval 'io:format("~s", [code:root_dir()]), halt().'); OTPREL=$(erl -noshell -eval 'io:format("~s", [erlang:system_info(otp_release)]), halt().')
+EXDIR=$(dirname "$(dirname "$(readlink -f "$(command -v elixir)")")")
 for f in "$T/cmd-m6f.exs" "$T/m6f_follow.exs" "$T/cmd_m6f_args.exs" "$T/cmd.exs" "$T/xcheck.py" "$T/probe-phase.sh" "$T/follow-matrix.sh" "$T/tests/follow_check.py" \
          "$T/run-probe-m6f.cmd" "$T/start-beam.sh" "$T/provision-secret.sh" "$T/evidence-guard.sh" "$KIT/op.sh" "$KIT/seq-lift.sh" "$KIT/ident.exs" \
-         "$OLD/op.sh" "$OLD/seq-lift.sh" "$OLD/seq-later.sh" "$PROBE"; do
+         "$KIT/seq-restore.sh" "$KIT/restore-eligibility.py" "$KIT/restore-compare.py" "$KIT/decode-transform.exs" \
+         "$OLD/op.sh" "$OLD/seq-lift.sh" "$OLD/seq-later.sh" "$PROBE" "$RELAY/mix.exs" "$RELAY/mix.lock" \
+         "$ERTS/releases/$OTPREL/OTP_VERSION" "$(ls "$ERTS"/erts-*/bin/beam.smp | head -1)" "$EXDIR/VERSION" "$EXDIR/lib/elixir/ebin/elixir.app" "$(readlink -f "$(command -v python3)")"; do
   printf '%s\t%s\t%s\n' "$f" "$(sha256sum "$f" | cut -c1-64)" "$(stat -c %s "$f")" >> "$tt"; done
+for d in relay/lib relay/config; do printf 'tree:%s\t%s\ttree\n' "$d" "$(git -C "$REPO" rev-parse "HEAD:$d")" >> "$tt"; done
+{ echo "glacier-relay HEAD $(git -C "$REPO" rev-parse HEAD) (uncommitted elsewhere: $(git -C "$REPO" status --porcelain | wc -l) path(s); relay/lib, relay/config, mix.exs, mix.lock: clean)"; elixir --version 2>&1 | grep -E 'Erlang|Elixir'; echo "OTP $(cat "$ERTS/releases/$OTPREL/OTP_VERSION")"; python3 --version; } > "$(evg_out "$A/runtime.txt")"
 say "M6-F2a follow-up matrix group $G (attempt $(basename "$A")): phases $PHASES; relay $(git -C "$RELAY" rev-parse --short HEAD) (+$(git -C "$RELAY" status --porcelain | wc -l) uncommitted paths); cmd-m6f.exs $(sha256sum "$T/cmd-m6f.exs" | cut -c1-16)… m6f_follow.exs $(sha256sum "$T/m6f_follow.exs" | cut -c1-16)… follow-matrix.sh $(sha256sum "$T/follow-matrix.sh" | cut -c1-16)… follow_check.py $(sha256sum "$T/tests/follow_check.py" | cut -c1-16)… probe-phase.sh $(sha256sum "$T/probe-phase.sh" | cut -c1-16)… kit seq-lift.sh $(sha256sum "$KIT/seq-lift.sh" | cut -c1-16)… (all in tooling.tsv; the harness copied to harness/); frame interval $FRAME_MS ms"
 [ "$(sha256sum "$PROBE" | cut -c1-64)" = 4cb8cc0e435f79e5af1e9a018f8e4218cf5bfc0ee094929e4b7754be063b5a3b ] || { bad "the probe is not the frozen native4 build"; exit 1; }
 (cd "$OLD" && sha256sum -c --quiet SOURCE.sha256) || { bad "kit-m6f1b is not byte-identical to the sealed m6f1b-run1 scripts"; exit 1; }
