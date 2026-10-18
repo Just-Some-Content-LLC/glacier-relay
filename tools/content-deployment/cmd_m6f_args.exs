@@ -1,5 +1,6 @@
-# M6-F2a: the argument parsing of cmd-m6f.exs's optional values (loaded by cmd-m6f.exs; tested on its own by
-# tests/cmd_m6f_args_test.exs). Operator tooling, not production code.
+# M6-F2a: the argument parsing of cmd-m6f.exs's optional values; M6-F2b preparation: also the other small decisions of cmd-m6f.exs
+# that must be testable on their own — the fail-closed stop-marker check (item A). Loaded by cmd-m6f.exs; tested on its own by
+# tests/cmd_m6f_args_test.exs (no node, no RPC). Operator tooling, not production code.
 #
 # The correction it carries (M6-F1b finding, section 13.7): `arm-effectful <owner>` — the documented owner-only form — raised
 # client-side before any RPC, because the old code padded the argument list with BOTH defaults and took the second element, which
@@ -79,4 +80,23 @@ defmodule CmdM6fArgs do
   defp exe(other), do: {:error, {:not_an_image_name, other}}
 
   defp nonempty(s, what), do: if(String.trim(s) != "" and s != "-", do: :ok, else: {:error, {:missing, what}})
+
+  @doc """
+  M6-F2b preparation (item A): the operator's stop marker `<dir>/stop.marker`, looked at fail-closed. `true` = it exists (any file
+  type); `false` ONLY when it is affirmatively absent (`:enoent`) AND `dir` itself is an existing directory; anything else — an
+  access or I/O error on the marker, a missing or non-directory `dir` — is `{:error, reason}`: NOT evidence that the operator has not
+  stopped. (`File.exists?/1` answers false on every error, so it cannot tell "no marker" from "could not look".)
+  """
+  def stop_marker(dir) when is_binary(dir) do
+    case File.lstat(Path.join(dir, "stop.marker")) do
+      {:ok, _} -> true
+      {:error, :enoent} ->
+        case File.lstat(dir) do
+          {:ok, %File.Stat{type: :directory}} -> false
+          {:ok, %File.Stat{type: t}} -> {:error, {:evidence_directory_not_a_directory, t}}
+          {:error, e} -> {:error, {:evidence_directory, e}}
+        end
+      {:error, e} -> {:error, {:stop_marker, e}}
+    end
+  end
 end

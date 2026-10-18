@@ -34,7 +34,9 @@
 #                                                                    ancestor holds sha256.txt) and a label that already holds any
 #                                                                    capture this action writes.
 #                                                                    Its RPCs are bounded (the request timeout); its stop marker is
-#                                                                    <evidence-dir>/stop.marker.
+#                                                                    <evidence-dir>/stop.marker, checked before EVERY read's dispatch
+#                                                                    (the immediate first read included) and fail-closed: a marker
+#                                                                    that cannot be looked at is a stop.
 #   plan-restore <command_id>                                        Command.plan_transform_restore (performs nothing)
 #   restore <command_id> <inspection_id> <expected_generation> [ttl_ms]   the planner-bound restoration (or already_at_baseline)
 #   observe-later <command_id> <inspection_id> <text...>             the later exact observation classified (held / returned / ...)
@@ -187,6 +189,10 @@ collect_ownership = fn expected_exe ->
 end
 
 ttl_of = fn more, default -> case more do [t | _] -> String.to_integer(t); _ -> default end end
+
+# M6-F2b preparation (item A): the operator's stop marker <evidence-dir>/stop.marker, checked fail-closed (CmdM6fArgs.stop_marker/1:
+# true / false / {:error, _}; lift-follow's guard refuses anything but false and M6fFollow treats anything but false as a stop)
+stop_marker = fn -> CmdM6fArgs.stop_marker(evid) end
 
 # The local guard over a qualifying exact inspection before a lift: the inspection must be this link's, applied, playing on
 # a stable mission, the candidate resolved / distinct / spatial-distinct / in no slot, the snapshot clean, the generation the
@@ -548,7 +554,7 @@ case action do
         [
           {"follow-plan-validated", true},
           {"follow-inert-armed-for-the-reads", s.trust.armed == true},
-          {"follow-no-stop-marker", not File.exists?(Path.join(evid, "stop.marker"))},
+          {"follow-no-stop-marker", stop_marker.() == false},
           {"follow-identity-baseline-captured", M6fFollow.identity_check(%{identity: fn -> ident0 end}, ident0) == :ok},
           {"follow-identity-equals-run-baseline-when-present", run_base == nil or run_changed == []}
         ]
@@ -579,7 +585,7 @@ case action do
       command: fn id -> call_t.(cmd, :command, [id], rt) end,
       identity: follow_ident,
       observe: fn orig, insp, t -> call_t.(cmd, :observe, [orig, "later_frame_read_back", t, [inspection_command_id: insp]], rt) end,
-      stop?: fn -> File.exists?(Path.join(evid, "stop.marker")) end,
+      stop?: stop_marker,
       emit: wjson
     }
 

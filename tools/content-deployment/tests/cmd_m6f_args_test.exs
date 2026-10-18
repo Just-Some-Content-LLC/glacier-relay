@@ -1,4 +1,5 @@
-# M6-F2a: the argument parser of cmd-m6f.exs (cmd_m6f_args.exs), tested on its own — no node, no RPC. The M6-F1b finding it
+# M6-F2a / M6-F2b preparation: the small decisions of cmd-m6f.exs (cmd_m6f_args.exs), tested on its own — no node, no RPC
+# (deterministic tool-level tests; the stop-marker case uses a scratch directory under the system temp directory, ext4). The M6-F1b finding it
 # covers: the documented owner-only form `arm-effectful <owner>` raised before its RPC; every documented form must now supply the
 # existing default TTL (30 000 ms) and an explicit TTL must stay validated (a plain millisecond count; the range is the
 # authority's and is not judged here). Also the `lift-follow` arguments.
@@ -56,6 +57,42 @@ defmodule CmdM6fArgsTest do
     assert {:error, {:not_a_schedule, "0,,250"}} = CmdM6fArgs.lift_follow(["i", "g", "-", "0,,250"])
     assert {:error, {:not_a_schedule, "0;250"}} = CmdM6fArgs.lift_follow(["i", "g", "-", "0;250"])
     assert {:error, {:too_many_arguments, 7}} = CmdM6fArgs.lift_follow(["i", "g", "-", "-", "-", "-", "x"])
+  end
+
+  test "item A: the stop marker is looked at fail-closed (true / false only when affirmatively absent / an error otherwise)" do
+    base = Path.join(System.tmp_dir!(), "m6f-stop-marker-test-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(base)
+    try do
+      assert CmdM6fArgs.stop_marker(base) == false
+      File.write!(Path.join(base, "stop.marker"), "HARD STOP: test\n")
+      assert CmdM6fArgs.stop_marker(base) == true
+      File.rm!(Path.join(base, "stop.marker"))
+      File.mkdir!(Path.join(base, "stop.marker"))
+      assert CmdM6fArgs.stop_marker(base) == true, "a directory named stop.marker is a marker too"
+      File.rmdir!(Path.join(base, "stop.marker"))
+      # a vanished evidence directory: the marker's absence is NOT established
+      assert {:error, {:evidence_directory, :enoent}} = CmdM6fArgs.stop_marker(Path.join(base, "gone"))
+      # a file where the evidence directory should be
+      File.write!(Path.join(base, "plain"), "x")
+      assert {:error, _} = CmdM6fArgs.stop_marker(Path.join(base, "plain"))
+      # an unreadable directory (ext4 test directory, mode 000): the marker cannot be looked at -> an error, never false
+      locked = Path.join(base, "locked")
+      File.mkdir!(locked)
+      File.chmod!(locked, 0o000)
+      r = CmdM6fArgs.stop_marker(Path.join(locked, "inner"))
+      File.chmod!(locked, 0o700)
+      if System.get_env("USER") != "root", do: assert({:error, _} = r)
+    after
+      File.rm_rf!(base)
+    end
+  end
+
+  test "item A: cmd-m6f.exs takes its stop marker from CmdM6fArgs.stop_marker/1 for the guard and the follow client" do
+    src = File.read!(Path.join(__DIR__, "../cmd-m6f.exs"))
+    refute src =~ ~r/File\.exists\?\(Path\.join\(evid, "stop\.marker"\)\)/
+    assert src =~ "stop_marker = fn -> CmdM6fArgs.stop_marker(evid) end"
+    assert src =~ ~s|{"follow-no-stop-marker", stop_marker.() == false}|
+    assert src =~ "stop?: stop_marker,"
   end
 
   test "cmd-m6f.exs dispatches arm-effectful through the parser (no list padding left)" do

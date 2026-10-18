@@ -71,6 +71,7 @@ defmodule FakeRelay do
       reads: Keyword.get(opts, :reads, List.duplicate(read(), 6)), issued: [], calls: [], emits: [], violations: [], hook_at: [],
       identity_change_at: Keyword.get(opts, :identity_change_at_ms) && Keyword.get(opts, :identity_change_at_ms) * 1000,
       identity_change: Keyword.get(opts, :identity_change, %{authority_pid: :authority_b}), stop_at: Keyword.get(opts, :stop_at_ms) && Keyword.get(opts, :stop_at_ms) * 1000,
+      stop_error_at: Keyword.get(opts, :stop_error_at_ms) && Keyword.get(opts, :stop_error_at_ms) * 1000, stop_error: Keyword.get(opts, :stop_error, {:error, :eio}),
       emit_fail: Keyword.get(opts, :emit_fail, false), disagree: Keyword.get(opts, :disagree, false)}
 
     {:ok, pid} = Agent.start_link(fn -> state end)
@@ -88,9 +89,18 @@ defmodule FakeRelay do
       command: fn id -> tick(pid, :command); Agent.get_and_update(pid, &blocked_record(&1, id)) end,
       identity: fn -> tick(pid, :identity); Agent.get(pid, &identity/1) end,
       observe: fn orig, insp, _t -> tick(pid, :observe); Agent.get(pid, &observe(&1, orig, insp)) end,
-      stop?: fn -> tick(pid, :stop?); Agent.get(pid, &(&1.stop_at != nil and &1.now >= &1.stop_at)) end,
+      stop?: fn -> tick(pid, :stop?); stop_answer(Agent.get(pid, & &1)) end,
       emit: fn m -> Agent.get_and_update(pid, fn s -> {if(s.emit_fail, do: {:error, :enospc}, else: :ok), %{s | emits: s.emits ++ [m]}} end) end
     }
+  end
+
+  # the stop marker as the caller's check reports it: true (present), false (affirmatively absent) or, from `stop_error_at`, the
+  # scripted failure (`stop_error`: an error tuple, :raise for an exception, or any other non-boolean answer)
+  defp stop_answer(s) do
+    cond do
+      s.stop_error_at != nil and s.now >= s.stop_error_at -> if s.stop_error == :raise, do: raise("scripted stop-check exception"), else: s.stop_error
+      true -> s.stop_at != nil and s.now >= s.stop_at
+    end
   end
 
   def hook(pid), do: fn -> Agent.update(pid, &%{&1 | hook_at: &1.hook_at ++ [&1.now]}) end
@@ -200,6 +210,10 @@ defmodule M6fFollowTest do
     s = FakeRelay.state(pid)
     assert s.violations == [], "the fake saw a request while another was in flight: #{inspect(s.violations)}"
     assert length(s.issued) <= 6
+    # the invariant of every sequence (item A): each read's dispatch is IMMEDIATELY preceded by an operator-stop check that said
+    # "no stop" — no other client call, no sleep, between them
+    order = s.calls |> Enum.reverse()
+    for {{:inspect, t}, k} <- Enum.with_index(order), do: assert(match?({:stop?, _}, Enum.at(order, k - 1)) and k > 0, "the dispatch at #{t} us was not immediately preceded by a stop check: #{inspect(Enum.slice(order, max(k - 3, 0), 4))}")
     {r, s}
   end
 
@@ -223,11 +237,12 @@ defmodule M6fFollowTest do
     assert classes(r) == List.duplicate("held", 6)
     assert Enum.all?(r.slots, &(&1.timing == "on_time" and &1.conclusion_agrees == true and &1.later_frame == true))
     [s0 | _] = r.slots
-    # on the virtual clock nothing at all happens between the observed terminal and the immediate first request
-    assert s0.request_ms == 0.0
+    # on the virtual clock exactly ONE call happens between the observed terminal and the immediate first request: the operator's
+    # stop check (one scripted RPC cost, 0.3 ms); no identity check, no sleep, no write
+    assert s0.request_ms == 0.3
     order = s.calls |> Enum.reverse() |> Enum.map(&elem(&1, 0))
     i = Enum.find_index(order, &(&1 == :inspect))
-    assert Enum.at(order, i - 1) == :command, "the call before the first request: #{inspect(Enum.slice(order, max(i - 3, 0), 4))}"
+    assert Enum.slice(order, i - 2, 3) == [:command, :stop?, :inspect], "the calls before the first request: #{inspect(Enum.slice(order, max(i - 3, 0), 4))}"
     assert Enum.map(r.slots, & &1.planned_ms) == [0, 250, 1000, 2000, 5000, 10000]
     # requests never before their deadline
     assert Enum.all?(r.slots, &(&1.lateness_ms >= 0))
@@ -378,11 +393,57 @@ defmodule M6fFollowTest do
     assert Enum.count(s.calls, &(elem(&1, 0) == :stop?)) >= 2
   end
 
-  test "the documented residual: a stop written within the last 250 ms of a short terminal wait lets the one immediate read out" do
-    # the marker is looked at when the wait begins and every 250 ms after the first 250 ms (never between the observed terminal and
-    # an immediate request): a stop at 30 ms with the terminal at 60 ms is seen before slot 1, after one read-only request
+  test "item A: a stop written during the final part of a SHORT terminal wait (after its only check) prevents the immediate read" do
+    # the wait's own checks run at its start and every 250 ms; a stop at 30 ms with the terminal at 60 ms is seen by none of them —
+    # the check immediately before the first dispatch sees it (M6-F2a's documented residual let this one read out)
     {r, s} = run_case(terminal_at_ms: 60, stop_at_ms: 30)
-    assert r.stop == :operator_stop and length(s.issued) == 1 and r.requests == 1
+    assert r.stop == :operator_stop and s.issued == [] and r.requests == 0 and r.original.status == "applied"
+    assert Enum.all?(r.slots, &(&1.outcome == "not_reached"))
+  end
+
+  test "item A: a stop written during the final part of a LONG terminal wait (after its last 250 ms check) prevents every read" do
+    # checks at 0, 250, 500 and 750 ms; the stop at 990 ms; the terminal observed at about 1000 ms
+    {r, s} = run_case(terminal_at_ms: 1000, stop_at_ms: 990)
+    assert r.stop == :operator_stop and s.issued == []
+  end
+
+  test "item A: a stop that becomes visible exactly at the terminal / first-request boundary prevents the immediate read" do
+    # the marker appears at the very instant the terminal is observed: no wait check can see it; the pre-dispatch check does
+    {r, s} = run_case(terminal_at_ms: 60, stop_at_ms: 60)
+    assert r.stop == :operator_stop and s.issued == []
+    order = s.calls |> Enum.reverse() |> Enum.map(&elem(&1, 0))
+    assert List.last(Enum.take_while(order, &(&1 != :emit))) != :inspect
+    assert Enum.count(order, &(&1 == :stop?)) >= 2, "the pre-dispatch check ran after the wait's start check"
+  end
+
+  test "item A: a stop before a later slot — also one visible only after that slot's last sleep — prevents that slot's read" do
+    # slot 2's deadline is 1000 ms after the observed terminal (about 60.6 ms); the marker appears 0.5 ms before that dispatch,
+    # after the slot's identity check and its last sleep chunk
+    {r, s} = run_case(stop_at_ms: 1060)
+    assert r.stop == :operator_stop and length(s.issued) == 2
+    assert outcomes(r) == ~w(requested requested not_reached not_reached not_reached not_reached)
+  end
+
+  test "item A: a stop while a read is in flight: that read's result is still awaited, recorded and journaled; nothing follows" do
+    # slot 1 is dispatched at about 310 ms (250 ms after the terminal) and answered 50 ms later; the stop appears at 320 ms
+    {r, s} = run_case(stop_at_ms: 320)
+    assert r.stop == :operator_stop and length(s.issued) == 2
+    s1 = Enum.at(r.slots, 1)
+    assert s1.outcome == "requested" and s1.class == "held" and s1.conclusion_agrees == true
+    assert Enum.count(s.calls, &(elem(&1, 0) == :observe)) == 2
+    assert Enum.drop(outcomes(r), 2) |> Enum.all?(&(&1 == "not_reached"))
+  end
+
+  test "item A: a FAILED stop check is a stop, never 'no stop' — at the wait's start, at the boundary and before a later slot" do
+    # an error tuple at the very start: nothing is read, the reason is kept
+    {r, s} = run_case(stop_error_at_ms: 0)
+    assert match?({:stop_check_failed, _}, r.stop) and s.issued == []
+    # an exception from the check, first seen at the terminal / first-request boundary
+    {r, s} = run_case(terminal_at_ms: 60, stop_error_at_ms: 60, stop_error: :raise)
+    assert match?({:stop_check_failed, _}, r.stop) and s.issued == []
+    # a non-boolean answer (nil: no evidence either way) before slot 2
+    {r, s} = run_case(stop_error_at_ms: 1060, stop_error: nil)
+    assert match?({:stop_check_failed, _}, r.stop) and length(s.issued) == 2
   end
 
   test "a later first slot (no immediate read) makes the identity and stop checks before its request" do

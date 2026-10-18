@@ -12,11 +12,18 @@
 #     near_target, near_baseline, drifted, indeterminate, unavailable; a read on the lift's own or an earlier frame is
 #     "not_a_later_frame", never relabelled) and journaled through Command.observe/4 ("later_frame_read_back"); one line per
 #     sample is appended to the caller's evidence file as soon as the sample is complete;
-#   - it stops at the first hard condition: an operator stop (also one written during a long terminal wait: no read then), a
-#     changed identity (node, authority, journal, link generation, adapter), a degraded audit, a refused / withheld / not-applied
-#     / reduced / malformed read, a result received after its bound (recorded, then result_late), a changed link / adapter /
-#     generation context, an invalid identity, an aliased candidate, a qualification the read could not observe, a read not on
-#     one frame, an RPC failure, or the overall deadline.
+#   - it stops at the first hard condition: an operator stop, a changed identity (node, authority, journal, link generation,
+#     adapter), a degraded audit, a refused / withheld / not-applied / reduced / malformed read, a result received after its bound
+#     (recorded, then result_late), a changed link / adapter / generation context, an invalid identity, an aliased candidate, a
+#     qualification the read could not observe, a read not on one frame, an RPC failure, or the overall deadline;
+#   - the operator's stop (M6-F2b preparation, item A) is checked immediately before EVERY read's dispatch — the immediate first
+#     read after the observed terminal included, and after every sleep and every other check — as well as when the terminal wait
+#     begins and every 250 ms while it lasts; once a stop is observed no further read is dispatched. A stop check that fails (an
+#     error, an exception, any answer other than an affirmative "no marker") is a stop of its own ({:stop_check_failed, _}), never
+#     evidence that the operator has not stopped. A read already dispatched cannot be recalled: its result is still awaited within
+#     its bound, recorded, classified and journaled, and nothing is dispatched after it. The marker is written by another process;
+#     no atomic cancellation is promised against it (a marker written after the last check before a dispatch is seen before the
+#     next one).
 #
 # What it never does: it holds no function that arms, lifts, restores, sets an outfit or reverses anything — the client map it
 # is given contains exactly the keys below, and nothing here names an effectful API. A result (held, returned, drifted, ...) is an
@@ -31,7 +38,8 @@
 #   command.(id)              Command.command(id)                                  -> record | nil | other
 #   identity.()               a cheap identity snapshot (a map with @identity_keys and the state keys)
 #   observe.(orig, insp, txt) Command.observe(orig, "later_frame_read_back", txt, inspection_command_id: insp)
-#   stop?.()                  true when the operator's stop marker exists
+#   stop?.()                  true when the operator's stop marker exists, false only when it is affirmatively absent; anything
+#                             else (an error) is treated as a stop
 #   emit.(map)                append one JSON line to the follow evidence file (best effort; its failure is recorded)
 defmodule M6fFollow do
   @moduledoc false
@@ -122,15 +130,16 @@ defmodule M6fFollow do
     if missing != [], do: raise(ArgumentError, "follow client lacks #{inspect(missing)}")
     Process.delete(:m6f_follow_emit_errors)
     t0 = c.now_us.()
-    # the operator's stop marker is checked when the wait for the terminal begins (one file check costs milliseconds on the
-    # Windows filesystem), every 250 ms while that wait lasts longer than 250 ms, and before every later slot — never between
-    # the observed terminal and an immediate (0 ms) first request
-    stopped_before = stop_check(c) != :ok
+    # the operator's stop is looked at when the wait for the terminal begins (one file check costs milliseconds on the Windows
+    # filesystem) and every 250 ms while that wait lasts longer than 250 ms — a stop seen there is kept, the terminal is still
+    # awaited (the lift's own record), and no read follows; the binding check is the one immediately before every dispatch
+    # (prepare_slot/7), the immediate first read included
+    stopped_before = stop_reason(c)
 
-    case wait_terminal(c, plan, ctx.original_id, t0) do
-      {:ok, orig, t_term, polls, stopped_during} when stopped_before or stopped_during ->
+    case wait_terminal(c, plan, ctx.original_id, t0, stopped_before) do
+      {:ok, orig, t_term, polls, stop} when stop != nil ->
         ctx = Map.put(ctx, :first_fun, fn -> if is_function(ctx[:after_first_request], 0), do: safe(ctx.after_first_request) end)
-        finish(c, ctx, plan, %{t0_us: t0, terminal_observed_us: t_term, terminal_polls: polls, terminal_wait_ms: ms(t_term - t0), original: summary(orig), slots: not_reached(indexed(plan)), stop: :operator_stop})
+        finish(c, ctx, plan, %{t0_us: t0, terminal_observed_us: t_term, terminal_polls: polls, terminal_wait_ms: ms(t_term - t0), original: summary(orig), slots: not_reached(indexed(plan)), stop: stop})
 
       {:ok, orig, t_term, polls, _} ->
         base = %{t0_us: t0, terminal_observed_us: t_term, terminal_polls: polls, terminal_wait_ms: ms(t_term - t0), original: summary(orig)}
@@ -180,13 +189,13 @@ defmodule M6fFollow do
 
   # ---- the lift's terminal -------------------------------------------------------------------------------------------------
 
-  defp wait_terminal(c, plan, id, t0) do
+  defp wait_terminal(c, plan, id, t0, stopped) do
     deadline = t0 + plan.terminal_timeout_ms * 1000
-    poll_terminal(c, plan, id, deadline, 0, nil, t0, t0 + 250_000, false)
+    poll_terminal(c, plan, id, deadline, 0, nil, t0, t0 + 250_000, stopped)
   end
 
-  # `next_stop` is when the stop marker is next looked at (first after 250 ms of waiting, then every 250 ms): a stop seen during
-  # the wait is kept, the terminal is still awaited (the lift's own record), and no read follows
+  # `next_stop` is when the stop marker is next looked at (first after 250 ms of waiting, then every 250 ms); `stopped` is nil or
+  # the first stop reason seen (kept: the terminal is still awaited, the lift's own record, and no read follows)
   defp poll_terminal(c, plan, id, deadline, polls, last, t0, next_stop, stopped) do
     r = c.command.(id)
     now = c.now_us.()
@@ -195,7 +204,7 @@ defmodule M6fFollow do
       is_map(r) and Map.get(r, :status) not in @pending -> {:ok, r, now, polls + 1, stopped}
       is_map(r) or r == nil ->
         last = if(is_map(r), do: r, else: last)
-        {stopped, next_stop} = if now >= next_stop, do: {stopped or stop_check(c) != :ok, now + 250_000}, else: {stopped, next_stop}
+        {stopped, next_stop} = if now >= next_stop, do: {stopped || stop_reason(c), now + 250_000}, else: {stopped, next_stop}
 
         if now > deadline,
           do: {:stop, :original_terminal_timeout, %{polls: polls + 1, last: last}},
@@ -254,12 +263,15 @@ defmodule M6fFollow do
     cond do
       c.now_us.() - target > w * 1000 -> {:missed, c.now_us.() - target}
       true ->
-        # only an immediate (0 ms) first request skips the checks; every other slot, a later first slot included, makes them
+        # every slot, the immediate (0 ms) first one included, has the operator's stop checked LAST — immediately before its
+        # dispatch, after every sleep and every other check. Only the immediate first slot omits the identity check (a few RPCs):
+        # the lift's own terminal, observed just before, carried the link, adapter and generation context checked by followable/2,
+        # and the read's own result is checked again by evaluate/5; every later slot (a later first slot included) makes it.
         immediate = i == 0 and target == t_term
         with :ok <- wait_until(c, p, target - p.identity_lead_ms * 1000, t_term),
-             :ok <- (if immediate, do: :ok, else: stop_check(c)),
              :ok <- (if immediate, do: :ok, else: identity_check(c, ctx.baseline_identity)),
-             :ok <- wait_until(c, p, target, t_term) do
+             :ok <- wait_until(c, p, target, t_term),
+             :ok <- stop_check(c) do
           now = c.now_us.()
           cond do
             now - target > w * 1000 -> {:missed, now - target}
@@ -284,7 +296,17 @@ defmodule M6fFollow do
     end
   end
 
-  defp stop_check(c), do: if(safe(c.stop?) == true, do: {:stop, :operator_stop}, else: :ok)
+  # only an affirmative "no marker" (false) lets a read out; true is the operator's stop; anything else — an error, an exception,
+  # a non-boolean answer — is not evidence that the operator has not stopped, and stops too
+  defp stop_check(c) do
+    case safe(c.stop?) do
+      false -> :ok
+      true -> {:stop, :operator_stop}
+      other -> {:stop, {:stop_check_failed, short(other)}}
+    end
+  end
+
+  defp stop_reason(c), do: (case stop_check(c) do :ok -> nil; {:stop, r} -> r end)
 
   @doc "The identity comparison (public for the tests): :ok or {:stop, reason}."
   def identity_check(c, baseline) do
