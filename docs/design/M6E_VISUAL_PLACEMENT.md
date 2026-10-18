@@ -1058,3 +1058,54 @@ The same Paris mission and starting location as earlier runs (`_Scene_FashionSho
 - both repositories clean.
 
 **Stop for architectural review.** Not authorized by this record: a new content or source capability, an extra experiment, writer tracing, a retry or second deployment, activation, any effectful command, M6 completion or a tag.
+
+## 13. M6-E3 accepted — acceptance addendum (2026-10-18; documentation only)
+
+**Authorization:** "M6-E3 Acceptance and Bounded Visible-Control Design".
+
+**Scope:** M6-E3 run 1 (section 12) is accepted for the observed content placement and visual presence, on the documented build and route. Section 12 and the operator's words are unchanged; this section states the accepted reading. M6 remains open; no milestone-completion or runtime-release tag.
+
+**Checks:**
+- **Performed now** (read only; `m6g-design\checks.txt`; that root sealed, manifest `cd1e7856…`): both repository heads (`18deb0f7` / `3b892cad`, clean, equal to origin); the M6-E3 seal `5121856e…` (341 entries) and the M6-E2 seal `2ef6a0a8…`, verified; the DLL `806de7a9…` and the three package files `5ac64848…` / `58e9a10f…` / `9433888b…`.
+- **Referenced, not re-performed:** the complete baseline, M0, the rollback and the token scans (`m6e3-run1\cleanup-attempt1`, `verify-after-attempt1`); the qualification of native4 and the M6-F tooling.
+
+### 13.1 The accepted result
+
+- **Identity:** on the documented Paris run, the candidate was independently resolved by owning brick (`007c57a6ea581f8c`) and authored entity identity (`feede715906f747f`, character id `787c1ff2-…`). It was distinct from the local hero on the same frame and absent from the four inspected player-registry slots.
+- **Placement:** all five exact-transform samples matched the M6-E2 package's intended position words `c2b2fae1 416d47ae bfc2d6ba`.
+  - World rotation was identity.
+  - The parent-relative quaternion was identity by value, with its signed-zero words retained (`80000000 00000000 80000000 3f800000`).
+  - The sampled interval was about 11.6 minutes (r3 frame 32648 to r6 frame 101272).
+  - This is agreement at the samples. It is not proof of uninterrupted persistence, and not a directly observed initialization event.
+- **Visual presence:** the operator reported a second suited figure at the intended location. The preserved stills — chiefly F12 still 2, between the at-P reads r5a and r5b — are visual evidence consistent with that report and with the bracketing candidate inspections.
+- **Idle presentation:** the operator reported breathing and jacket motion; this is preserved as operator-observed idle presentation.
+  - The stills and photographs do not independently establish motion, and the continuous video was not retained.
+  - This record does not say that no motion was observed.
+  - Nor does it treat the testimony as proof of a particular animation, cloth-physics or controller mechanism.
+- **The minimap:** the two similar minimap markers are a visual observation. They do not establish a second player-registry entry, an input owner, a multiplayer connection or a known marker-generation mechanism.
+- **Controls:** the local hero's recorded transform words, outfit and slot remained unchanged across the sampled reads. The camera turn was separately authorized operator input.
+- **The inert configuration:** its first live use in this DLL produced the intended startup and allowlist evidence, with the BEAM effectful authority disabled and no effectful request.
+  - The DLL retains its setter code: the single `SetObjectToWorldMatrixFromEditor` call site, `TransformApplier.cpp:72`.
+  - "No effectful command existed in the run" (section 12, status) means none was constructed, advertised, accepted or issued under `effectful = false`. It does not mean the binary lacks the code.
+- **Associated evidence:** health (0 WARN / ERROR / FAULT, no crash or new dump); 18 inert commands in a contiguous 82-entry journal; the five-envelope three-way reconciliation; the exact-boundary r = 8 replay; the complete rollback (sections 12.6–12.7).
+
+### 13.2 Coverage limitations (recorded, not repaired)
+
+- The continuous recording was made on the operator's phone and not retained. Its coverage is the operator's account; no footage is inferred or reconstructed.
+- The recording's start bearing was amended to the default view (`amendment-r5-start-bearing.txt`). The default-view still does not cover P (Agent 47 is on the line of sight).
+- Neither limitation blocks acceptance. A pixel-to-entity mapping project, another visual-only replication or recovery of the unsaved video is not required.
+
+### 13.3 Not claimed
+
+- playability;
+- sustained external control;
+- general animation or physics correctness;
+- collision;
+- NPC perception;
+- spawn or activation semantics;
+- compatibility across builds or routes;
+- M6 completion.
+
+### 13.4 Next
+
+The next question — one bounded, observable external action on the visible candidate — is designed in `docs/design/M6G_VISIBLE_CONTROL.md` (design only). Nothing in it is authorized by this addendum.
