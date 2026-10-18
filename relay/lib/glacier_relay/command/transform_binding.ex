@@ -76,10 +76,11 @@ defmodule GlacierRelay.Command.TransformBinding do
   equal to the plan's, then one later qualifying inspection on the plan's adapter whose words
   hold the lift's postimage. `{:error, :already_at_baseline}` means the engine already shows the
   preimage and nothing is to be submitted; drift, a dirty cache or a changed parent stop
-  issuance with their own reasons. `ctx` as `lift/3`.
+  issuance with their own reasons. `ctx` as `lift/3`. `version` is the restoration's own entry
+  version, required (no default): it must equal the journal plan's, the original forward's.
   """
-  def restore(ctx, restore_of, inspection_id, supplied, version \\ 1)
-      when is_map(ctx) and is_binary(restore_of) and is_map(supplied) do
+  def restore(ctx, restore_of, inspection_id, supplied, version)
+      when is_map(ctx) and is_binary(restore_of) and is_map(supplied) and is_integer(version) do
     with {:ok, plan} <-
            TransformRestore.plan_journal(ctx.journal, restore_of,
              record: Map.get(ctx.records, restore_of)

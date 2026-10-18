@@ -152,12 +152,13 @@ defmodule GlacierRelay.Command do
   end
 
   @doc """
-  M6-F: issues the planned restoration of the lift `command_id` — `candidate.transform.set` v1 in
-  mode `restore`, whose `target_world` is the lift's journaled preimage world group and whose
+  M6-F / M6-G1: issues the planned restoration of the forward `command_id` (a v1 lift or a v2 step)
+  — `candidate.transform.set` at the plan's version in mode `restore`, whose `target_world` is the
+  forward's journaled preimage world group and whose
   expectation is the later exact inspection's words. `opts` must carry `:inspection_command_id`
   (a completed `relay.inspect.candidate_transform/1` that `TransformRestore.verify_inspection/4`
   accepts: the current adapter and link, the plan's generation, a clean cache, words equal to the
-  lift's postimage, later than the lift, within `reversal_inspection_max_age_ms`) and
+  forward's postimage, later than the forward, within `reversal_inspection_max_age_ms`) and
   `:expected_generation` (the live attempt's; it must equal the plan's). `{:error,
   :already_at_baseline}` means the engine already shows the preimage: no restoration call is
   needed and none is submitted. These checks here give the operator an early answer; the issuing

@@ -19,6 +19,7 @@ defmodule GlacierRelay.Command.TransformStepV2Test do
     Journal,
     Listener,
     Schema,
+    TransformBinding,
     TransformRestore,
     TransformWords
   }
@@ -260,6 +261,29 @@ defmodule GlacierRelay.Command.TransformStepV2Test do
       "target_world" => @pre,
       "restore_of" => original
     }
+
+  # The authority's own binding context, rebuilt from its journal and state exactly as its
+  # `binding_context/2` builds it, so that `TransformBinding.restore/5` can be called directly:
+  # through the authority, its record check refuses a substituted version before the binding's
+  # own journal-plan check is reached.
+  defp binding_ctx do
+    js = Journal.status()
+    {:ok, read} = Journal.read(js.path)
+    st = :sys.get_state(Authority)
+
+    %{
+      journal: read,
+      now_mono_ms: js.elapsed_ms,
+      max_age_ms: st.config[:reversal_inspection_max_age_ms],
+      link: %{
+        generation: st.link.generation,
+        adapter_instance_id: st.link.adapter_instance_id,
+        token_verified: st.link.token_verified
+      },
+      mission_generation: @gen,
+      records: st.commands
+    }
+  end
 
   defp direct_restore(version, original, post, opts),
     do:
@@ -607,9 +631,17 @@ defmodule GlacierRelay.Command.TransformStepV2Test do
                )
              end)
 
-    # the journal plan itself refuses a substituted version too (the binding's own check)
+    # the journal plan carries the step's version, and the binding's own check refuses a
+    # substituted version against it (reached directly; the version is a required argument)
     {:ok, read} = Journal.read(Journal.status().path)
     assert {:ok, %{version: 2}} = TransformRestore.plan_journal(read, step_id)
+    supplied = restore_params(step_id, @step)
+
+    assert {:error, {:restore_version_mismatch, 2, 1}} =
+             TransformBinding.restore(binding_ctx(), step_id, later, supplied, 1)
+
+    assert {:ok, %{"mode" => "restore", "restore_of" => ^step_id}, %{"later_class" => "held"}} =
+             TransformBinding.restore(binding_ctx(), step_id, later, supplied, 2)
 
     assert Command.status().trust.effectful_armed
     FakeNative.close(socket)
@@ -627,6 +659,16 @@ defmodule GlacierRelay.Command.TransformStepV2Test do
              attempt(socket, fn ->
                direct_restore(2, lift_id, @lifted, inspection_command_id: later)
              end)
+
+    # the binding's own journal-plan check, reached directly
+    assert {:error, {:restore_version_mismatch, 1, 2}} =
+             TransformBinding.restore(
+               binding_ctx(),
+               lift_id,
+               later,
+               restore_params(lift_id, @lifted),
+               2
+             )
 
     FakeNative.close(socket)
   end
