@@ -113,10 +113,14 @@ defmodule CmdM6fArgsTest do
 
   test "item A: cmd-m6f.exs bounds and classifies every issuance; 'nothing transmitted' only in a refused branch" do
     src = File.read!(Path.join(__DIR__, "../cmd-m6f.exs"))
-    assert length(Regex.scan(~r/call_t\.\(cmd, :lift_candidate, .*CmdM6fArgs\.issue_timeout_ms\(\)\)/, src)) == 2
+    # M6-G1: the forward issuance (the v1 lift or the v2 step, chosen by the fwd descriptor) is bounded at both of its sites
+    assert length(Regex.scan(~r/call_t\.\(cmd, fwd\.fun, .*CmdM6fArgs\.issue_timeout_ms\(\)\)/, src)) == 2
+    assert src =~ "fun: :step_candidate," and src =~ "fun: :lift_candidate,"
+    refute src =~ ~r/call\.\(cmd, fwd\.fun/
+    refute src =~ ~r/call(_t)?\.\(cmd, :(lift_candidate|step_candidate),/
     assert length(Regex.scan(~r/call_t\.\(cmd, :restore_candidate, .*CmdM6fArgs\.issue_timeout_ms\(\)\)/, src)) == 1
     assert length(Regex.scan(~r/call_t\.\(cmd, :inspect_candidate_transform, .*CmdM6fArgs\.issue_timeout_ms\(\)\)/, src)) == 1
-    refute src =~ ~r/[^_]call\.\(cmd, :(lift_candidate|restore_candidate|inspect_candidate_transform)/
+    refute src =~ ~r/[^_]call\.\(cmd, :(lift_candidate|step_candidate|restore_candidate|inspect_candidate_transform)/
     assert length(Regex.scan(~r/CmdM6fArgs\.issuance\(/, src)) == 4
     # every "nothing transmitted" line sits directly in a {:refused, _} branch; every uncertain branch says the operation MAY have been sent
     lines = String.split(src, "\n")
@@ -125,8 +129,8 @@ defmodule CmdM6fArgsTest do
     end
     assert length(Regex.scan(~r/\{:uncertain, why\} ->/, src)) == 4
     assert length(Regex.scan(~r/MAY have been (accepted and )?transmitted/, src)) >= 4
-    # the lift-follow path's own RPCs are bounded
-    assert src =~ ~s|rpc_ms = if action == "lift-follow", do: CmdM6fArgs.rpc_timeout_ms(), else: :infinity|
+    # the lift-follow path's own RPCs are bounded; M6-G1: and the step-follow path's
+    assert src =~ ~s|rpc_ms = if action in ["lift-follow", "step-follow"], do: CmdM6fArgs.rpc_timeout_ms(), else: :infinity|
   end
 
   test "cmd-m6f.exs dispatches arm-effectful through the parser (no list padding left)" do

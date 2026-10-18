@@ -205,8 +205,12 @@ case action do
     names = advertised_names.(s)
     ev.("link.identified-v2-token-verified", s.link != nil and s.trust.peer == :identified and s.link.protocol_version == 2 and s.trust.token_verified == true, "peer #{inspect(s.trust.peer)} protocol_version #{inspect(s.link && s.link.protocol_version)} token_verified #{inspect(s.trust.token_verified)} generation #{inspect(s.link && s.link.generation)} adapter #{inspect(s.link && s.link.adapter_instance_id)}")
     six = ["relay.inspect.candidate/1", "relay.inspect.candidate_transform/1", "relay.inspect.entity/1", "relay.inspect.outfit/1", "relay.inspect.players/1", "relay.probe/1"]
-    ev.("link.six-inert-entries-advertised", Enum.all?(six, &(&1 in names)) and Enum.all?(names -- six, &(&1 in ["player.outfit.set/2", "candidate.transform.set/1"])), inspect(names) <> " (M6-F: relay.inspect.candidate_transform/1 joins the five M6-D1b entries; under the effectful authority the two effectful entries may appear beside them — the next line judges that)")
-    ev.("link.effectful-entries-absent", "player.outfit.set/2" not in names and "candidate.transform.set/1" not in names and "player.outfit.set/2" not in ((s.link && s.link.capabilities) || []) and "candidate.transform.set/1" not in ((s.link && s.link.capabilities) || []), "advertised #{inspect(names)} peer capabilities #{inspect(s.link && s.link.capabilities)}")
+    ev.("link.six-inert-entries-advertised", Enum.all?(six, &(&1 in names)) and Enum.all?(names -- six, &(&1 in ["player.outfit.set/2", "candidate.transform.set/1", "candidate.transform.set/2"])), inspect(names) <> " (M6-F: relay.inspect.candidate_transform/1 joins the five M6-D1b entries; under the effectful authority the effectful entries — M6-G1: candidate.transform.set/1 and /2 — may appear beside them; the next line judges that)")
+    # M6-G1: every version of the transform entry (candidate.transform.set/1, /2, any other) and the outfit entry, both in what the
+    # authority advertised and in what the peer claimed: an inert check that knew only /1 could miss a /2 advertisement
+    effectful_name? = fn n -> n == "player.outfit.set/2" or String.starts_with?(n, "candidate.transform.set/") end
+    caps = (s.link && s.link.capabilities) || []
+    ev.("link.effectful-entries-absent", not Enum.any?(names, effectful_name?) and not Enum.any?(caps, effectful_name?), "advertised #{inspect(names)} peer capabilities #{inspect(s.link && s.link.capabilities)}")
     ev.("link.effectful-authority-disabled", s.effectful.enabled == false and s.trust.effectful_armed == false and s.effectful.armed == nil, inspect(s.effectful))
     ev.("link.never-authenticated", s.trust.authenticated == false, inspect(s.trust))
     ev.("link.token-from-file", s.effectful.token_source == :file and s.effectful.token_configured == true, "token_source #{inspect(s.effectful.token_source)} token_configured #{inspect(s.effectful.token_configured)}")

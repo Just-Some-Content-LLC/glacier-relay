@@ -40,6 +40,14 @@
 #                                                                    <evidence-dir>/stop.marker, checked before EVERY read's dispatch
 #                                                                    (the immediate first read included) and fail-closed: a marker
 #                                                                    that cannot be looked at is a stop.
+#   step <inspection_id> <expected_generation> [ttl_ms]              M6-G1: the ONE compiled v2 step (candidate.transform.set/2 mode
+#                                                                    step_y: the native side computes the +0.25 world-y target; no
+#                                                                    target, axis or distance can be supplied) behind the same local
+#                                                                    guard; ONE forward budget shared with the v1 lift
+#   step-follow <inspection_id> <expected_generation> [step_ttl_ms|-] [schedule_ms|-] [request_timeout_ms|-] [inspection_ttl_ms|-]
+#                                                                    M6-G1: the same ONE step with lift-follow's bounded READ-ONLY
+#                                                                    follow-up — the same bounded RPCs, stop checks, uncertain
+#                                                                    issuance, sealed-root and label refusals and deferred reports
 #   plan-restore <command_id>                                        Command.plan_transform_restore (performs nothing)
 #   restore <command_id> <inspection_id> <expected_generation> [ttl_ms]   the planner-bound restoration (or already_at_baseline)
 #   observe-later <command_id> <inspection_id> <text...>             the later exact observation classified (held / returned / ...)
@@ -54,10 +62,21 @@ alias GlacierRelay.Command.TransformWords
 Code.require_file("cmd_m6f_args.exs", __DIR__)
 Code.require_file("m6f_follow.exs", __DIR__)
 
+# M6-G1: the forward an action issues — the v1 lift (its texts and EVIDENCE names unchanged) or the v2 step_y (its own "step"
+# texts and names and the entry candidate.transform.set/2); both run the same guarded path below
+fwd =
+  if action in ["step", "step-follow"],
+    do: %{kind: "step", version: 2, mode: "step_y", fun: :step_candidate, target: &TransformWords.step_y_target/1,
+          desc: "the compiled +0.25 world-y displacement", entry: "candidate.transform.set/2 mode step_y", what: "y + 0.25",
+          budget_check: "step-budget-available-shared-with-lift"},
+    else: %{kind: "lift", version: 1, mode: "lift", fun: :lift_candidate, target: &TransformWords.lift_target/1,
+          desc: "the compiled +0.25 world-z displacement", entry: "candidate.transform.set/1 mode lift", what: "z + 0.25",
+          budget_check: "lift-budget-available"}
+
 # M6-F2b preparation (item A): every RPC of lift-follow — before the lift, the issuance, the follow-up, the deferred report — is
 # bounded, so a blocked authority cannot hold the tool indefinitely; the other actions keep the unbounded call they were qualified
 # with, except their issuances (lift, restore, ctransform: bounded, and classified by CmdM6fArgs.issuance/1)
-rpc_ms = if action == "lift-follow", do: CmdM6fArgs.rpc_timeout_ms(), else: :infinity
+rpc_ms = if action in ["lift-follow", "step-follow"], do: CmdM6fArgs.rpc_timeout_ms(), else: :infinity  # M6-G1: step-follow too
 call = fn m, f, a -> :rpc.call(node, m, f, a, rpc_ms) end
 # M6-F2a: a bounded RPC with an explicit bound (the follow-up's calls; the issuances)
 call_t = fn m, f, a, t -> :rpc.call(node, m, f, a, t) end
@@ -225,7 +244,7 @@ lift_guard = fn ins, gen, s ->
     {"reads-on-frame", ov.(ins, "reads_on_frame") == true},
     {"link-token-verified", s.trust.token_verified == true},
     {"effectful-armed", s.trust.effectful_armed == true},
-    {"lift-budget-available", s.effectful.transform_lift_budget == 1},
+    {fwd.budget_check, s.effectful.transform_lift_budget == 1},
     {"nothing-in-flight", s.in_flight == nil},
     {"audit-intact", s.audit == :intact}
   ]
@@ -246,22 +265,23 @@ apply_evidence = fn prefix, c, gen ->
   ev.("#{prefix}.no-reduction", obs.(c)["observed_reduced"] == nil, "observed_reduced #{inspect(obs.(c)["observed_reduced"])} fields #{map_size(obs.(c))}")
 end
 
-# The lift's local guard and parameters (shared by "lift" and "lift-follow"; `extra` adds the caller's own refusals): halts with 2
+# The forward's local guard and parameters (shared by "lift", "lift-follow", "step" and "step-follow"; `extra` adds the caller's own
+# refusals; the keys lift_ttl_ms / lift_call_ms of the follow file name the forward's TTL and call time for both): halts with 2
 # when the guard refuses, before anything is issued.
 lift_prepare = fn insp, gen, ttl, extra ->
   s = call.(cmd, :status, [])
   ins = call.(cmd, :command, [insp])
 
   if not is_map(s) or not (is_map(ins) or ins == nil) do
-    log.("LOCAL GUARD REFUSED: an RPC before the lift failed (status #{inspect(s)}; inspection #{inspect(ins)}); nothing issued")
+    log.("LOCAL GUARD REFUSED: an RPC before the #{fwd.kind} failed (status #{inspect(s)}; inspection #{inspect(ins)}); nothing issued")
     finish.()
     System.halt(2)
   end
 
-  log.("lift: the compiled +0.25 world-z displacement of the compiled candidate (the native side computes the target; nothing supplied); expectation = inspection #{insp}'s exact words; expected_generation #{gen} ttl #{ttl} ms; the inspection: #{if ins, do: describe.(ins), else: "NOT FOUND"}")
+  log.("#{fwd.kind}: #{fwd.desc} of the compiled candidate (the native side computes the target; nothing supplied); expectation = inspection #{insp}'s exact words; expected_generation #{gen} ttl #{ttl} ms; the inspection: #{if ins, do: describe.(ins), else: "NOT FOUND"}")
   guard = lift_guard.(ins, gen, s) ++ extra.(s)
   failed = for {name, ok} <- guard, !ok, do: name
-  for {name, ok} <- guard, do: log.("lift guard #{name}: #{if ok, do: "ok", else: "FAILED"}")
+  for {name, ok} <- guard, do: log.("#{fwd.kind} guard #{name}: #{if ok, do: "ok", else: "FAILED"}")
 
   if failed != [] do
     log.("LOCAL GUARD REFUSED: #{inspect(failed)}; nothing issued")
@@ -270,21 +290,24 @@ lift_prepare = fn insp, gen, ttl, extra ->
   end
 
   params = %{"expect_world" => ov.(ins, "cand_world_words"), "expect_local" => ov.(ins, "cand_local_words"), "expect_parent" => ov.(ins, "cand_parent")}
-  log.("lift expectation (bit for bit, from the inspection, never from its seven-digit text): #{inspect(params)}; the expected native target (replicated for the cross-check only): #{TransformWords.encode(TransformWords.lift_target(elem(TransformWords.decode_world(params["expect_world"]), 1)))}")
+  log.("#{fwd.kind} expectation (bit for bit, from the inspection, never from its seven-digit text): #{inspect(params)}; the expected native target (replicated for the cross-check only): #{TransformWords.encode(fwd.target.(elem(TransformWords.decode_world(params["expect_world"]), 1)))}")
   {s, ins, params}
 end
 
-# The lift's record and its EVIDENCE lines after its terminal (shared by "lift" and "lift-follow"); returns the journal entries
+# The forward's record and its EVIDENCE lines after its terminal (shared by the lift and the step actions); returns the journal entries
 # read for the binding (nil when the read failed).
 lift_report = fn id, c, insp, gen, params ->
   dump_record.(c)
-  apply_evidence.("lift", c, gen)
-  ev.("lift.preimage-equals-expectation-bits", ov.(c, "preimage_world_words") == params["expect_world"] and ov.(c, "preimage_local_words") == params["expect_local"] and ov.(c, "preimage_parent") == params["expect_parent"] and ov.(c, "preimage_dirty") == false, "preimage #{wtext.(words.(c, "preimage_world_words", :world))} dirty #{fld.(c, "preimage_dirty")} parent #{fld.(c, "preimage_parent")}")
-  expected_target = words.(c, "preimage_world_words", :world) && TransformWords.lift_target(words.(c, "preimage_world_words", :world))
-  ev.("lift.requested-is-compiled-lift-of-preimage", expected_target != nil and words.(c, "requested_world_words", :world) == expected_target, "requested #{wtext.(words.(c, "requested_world_words", :world))} vs preimage z + 0.25 in binary32 #{wtext.(expected_target)} (every other word copied)")
+  apply_evidence.(fwd.kind, c, gen)
+  if fwd.kind == "step",
+    do: ev.("step.entry-is-v2-step_y", c.name == "candidate.transform.set" and c.version == 2 and c.params["mode"] == "step_y" and ov.(c, "mode") == "step_y",
+          "command #{c.name}/#{c.version} mode #{inspect(c.params["mode"])}; native result mode #{fld.(c, "mode")} (a v2 step, never a v1 lift)")
+  ev.("#{fwd.kind}.preimage-equals-expectation-bits", ov.(c, "preimage_world_words") == params["expect_world"] and ov.(c, "preimage_local_words") == params["expect_local"] and ov.(c, "preimage_parent") == params["expect_parent"] and ov.(c, "preimage_dirty") == false, "preimage #{wtext.(words.(c, "preimage_world_words", :world))} dirty #{fld.(c, "preimage_dirty")} parent #{fld.(c, "preimage_parent")}")
+  expected_target = words.(c, "preimage_world_words", :world) && fwd.target.(words.(c, "preimage_world_words", :world))
+  ev.("#{fwd.kind}.requested-is-compiled-#{fwd.kind}-of-preimage", expected_target != nil and words.(c, "requested_world_words", :world) == expected_target, "requested #{wtext.(words.(c, "requested_world_words", :world))} vs preimage #{fwd.what} in binary32 #{wtext.(expected_target)} (every other word copied)")
   st = call.(cmd, :status, [])
   bud = if is_map(st), do: st.effectful.transform_lift_budget, else: {:status_rpc_failed, st}
-  ev.("lift.budget-consumed", ov.(c, "budget_remaining") == 0 and bud == 0, "native budget_remaining #{fld.(c, "budget_remaining")}; BEAM lift budget #{inspect(bud)}")
+  ev.("#{fwd.kind}.budget-consumed", ov.(c, "budget_remaining") == 0 and bud == 0, "native budget_remaining #{fld.(c, "budget_remaining")}; BEAM lift budget #{inspect(bud)}")
   j = call.(GlacierRelay.Command.Journal, :status, [])
 
   entries =
@@ -295,9 +318,9 @@ lift_report = fn id, c, insp, gen, params ->
 
   accepted = entries && Enum.find(entries, &(&1["event"] == "command.accepted" and &1["command_id"] == id))
   b = (accepted && accepted["inspection_binding"]) || %{}
-  ev.("lift.binding-verified-by-authority", b["verified_by"] == "authority" and b["inspection_command_id"] == insp and b["expect_world"] == params["expect_world"] and b["expect_local"] == params["expect_local"] and b["expect_parent"] == params["expect_parent"] and is_integer(b["age_ms"]) and b["age_ms"] <= b["max_age_ms"], inspect(Map.drop(b, ["label"])))
-  ev.("lift.journaled-params-equal-transmitted", accepted != nil and accepted["params"] == c.params, inspect(accepted && accepted["params"]))
-  log.("lift consequences: #{inspect(c.consequences)} (a changed stored matrix is not collision-proven safety, not a rendered position and not a visual-presence result; the later exact observations decide held / returned / drifted)")
+  ev.("#{fwd.kind}.binding-verified-by-authority", b["verified_by"] == "authority" and b["inspection_command_id"] == insp and b["expect_world"] == params["expect_world"] and b["expect_local"] == params["expect_local"] and b["expect_parent"] == params["expect_parent"] and is_integer(b["age_ms"]) and b["age_ms"] <= b["max_age_ms"], inspect(Map.drop(b, ["label"])))
+  ev.("#{fwd.kind}.journaled-params-equal-transmitted", accepted != nil and accepted["params"] == c.params, inspect(accepted && accepted["params"]))
+  log.("#{fwd.kind} consequences: #{inspect(c.consequences)} (a changed stored matrix is not collision-proven safety, not a rendered position and not a visual-presence result; the later exact observations decide held / returned / drifted)")
   entries
 end
 
@@ -333,6 +356,7 @@ follow_report = fn id, r, entries, lift_call_ms, marks ->
   s0 = List.first(slots)
   p = r.plan
   classes = M6fFollow.classes() ++ ["not_a_later_frame"]
+  log.("follow: the forward #{id} is #{fwd.entry} (M6-G1: the follow-up below is the same for a v1 lift and a v2 step; its EVIDENCE names keep the M6-F2a wording)")
   log.("follow: schedule #{inspect(p.schedule_ms)} ms after this process observed the lift's terminal (windows #{inspect(p.windows_ms)} ms; on time <= #{p.on_time_ms} ms late; overall deadline #{p.overall_deadline_ms} ms; inspection ttl #{p.inspection_ttl_ms} ms; request timeout #{p.request_timeout_ms} ms); lift_candidate returned after #{lift_call_ms} ms; the terminal observed #{r.terminal_wait_ms} ms after the wait began (#{r.terminal_polls} polls); the lift's native frame #{inspect(r.original && r.original.frame)} at #{inspect(r.original && r.original.native_at)} (native clock); the authority's ladder #{inspect(r.original && r.original.authority_stages)} (ms since issue, the authority's clock)")
 
   for sl <- slots do
@@ -387,7 +411,7 @@ follow_report = fn id, r, entries, lift_call_ms, marks ->
   end
 
   File.write!(Path.join(evid, "#{label}-follow-result.json"), JSON.encode!(%{
-    "original_id" => id, "stop" => M6fFollow.text(r.stop), "requests" => r.requests, "missed" => r.missed,
+    "original_id" => id, "forward_entry" => fwd.entry, "forward_version" => fwd.version, "stop" => M6fFollow.text(r.stop), "requests" => r.requests, "missed" => r.missed,
     "terminal_wait_ms" => r.terminal_wait_ms, "terminal_polls" => r.terminal_polls, "lift_call_ms" => lift_call_ms,
     "clock" => %{"basis" => "this operator process's monotonic clock, microseconds (never compared with another process's clock)",
       "vm_age_ms_at_plan" => marks.vm_age_ms, "t_plan_us" => marks.t_plan_us, "t_send_us" => marks.t_send_us, "t_ret_us" => marks.t_ret_us,
@@ -482,30 +506,30 @@ case action do
 
     finish.()
 
-  "lift" ->
+  a when a in ["lift", "step"] ->
     [insp, gen | more] = rest
     ttl = ttl_of.(more, 5_000)
     {_s, _ins, params} = lift_prepare.(insp, gen, ttl, fn _ -> [] end)
-    r = call_t.(cmd, :lift_candidate, [params, [inspection_command_id: insp, expected_generation: gen, ttl_ms: ttl]], CmdM6fArgs.issue_timeout_ms())
+    r = call_t.(cmd, fwd.fun, [params, [inspection_command_id: insp, expected_generation: gen, ttl_ms: ttl]], CmdM6fArgs.issue_timeout_ms())
 
     case CmdM6fArgs.issuance(r) do
       {:issued, id} ->
-        log.("lift issued #{id} (candidate.transform.set/1 mode lift; generation #{gen}; ttl #{ttl} ms)")
+        log.("#{fwd.kind} issued #{id} (#{fwd.entry}; generation #{gen}; ttl #{ttl} ms)")
         File.write!(Path.join(evid, "#{label}-command-id.txt"), id <> "\n")
         c = wait_terminal.(id, 20_000)
         lift_report.(id, c, insp, gen, params)
 
       {:refused, reason} ->
-        log.("lift refused locally: #{inspect(reason)} (refused before transmission: nothing transmitted)")
+        log.("#{fwd.kind} refused locally: #{inspect(reason)} (refused before transmission: nothing transmitted)")
 
       {:uncertain, why} ->
-        log.("LIFT ISSUANCE UNCERTAIN: lift_candidate's bounded RPC (#{CmdM6fArgs.issue_timeout_ms()} ms) returned #{inspect(why)} — the lift MAY have been accepted and transmitted; no retry, no second lift; the journal is the record")
-        ev.("lift.issuance-determined", false, "uncertain: #{inspect(why)} (HARD STOP for the run's effectful issuance)")
+        log.("#{String.upcase(fwd.kind)} ISSUANCE UNCERTAIN: #{fwd.fun}'s bounded RPC (#{CmdM6fArgs.issue_timeout_ms()} ms) returned #{inspect(why)} — the #{fwd.kind} MAY have been accepted and transmitted; no retry, no second #{fwd.kind}; the journal is the record")
+        ev.("#{fwd.kind}.issuance-determined", false, "uncertain: #{inspect(why)} (HARD STOP for the run's effectful issuance)")
     end
 
     finish.()
 
-  "lift-follow" ->
+  a when a in ["lift-follow", "step-follow"] ->
     # 1 everything that can be refused is refused before the lift: the arguments and the follow plan, the destination, the
     #   follow file (created exclusively), the warm-up of the code the timed sequence uses, the identity baseline, the guard
     # a sealed destination — the directory or any ancestor holding sha256.txt (a sealed root keeps its manifest at its top) — is
@@ -516,7 +540,7 @@ case action do
       |> Enum.reduce_while(nil, fn d, _ -> if File.exists?(Path.join(d, "sha256.txt")), do: {:halt, d}, else: if(d == Path.dirname(d), do: {:halt, nil}, else: {:cont, nil}) end)
 
     if sealed do
-      IO.puts("#{now.()} #{label} lift-follow REFUSED: #{sealed} holds sha256.txt (a sealed evidence root is never written, nor any directory under it); nothing issued, nothing written")
+      IO.puts("#{now.()} #{label} #{action} REFUSED: #{sealed} holds sha256.txt (a sealed evidence root is never written, nor any directory under it); nothing issued, nothing written")
       System.halt(2)
     end
 
@@ -528,7 +552,7 @@ case action do
         Path.wildcard(Path.join(evid, "#{label}-s[0-9]-*"))
 
     if existing != [] do
-      IO.puts("#{now.()} #{label} lift-follow REFUSED: label '#{label}' already has #{length(existing)} capture(s) this action writes, in #{evid} (e.g. #{Path.basename(hd(existing))}); choose a new label; nothing issued, nothing written")
+      IO.puts("#{now.()} #{label} #{action} REFUSED: label '#{label}' already has #{length(existing)} capture(s) this action writes, in #{evid} (e.g. #{Path.basename(hd(existing))}); choose a new label; nothing issued, nothing written")
       System.halt(2)
     end
 
@@ -537,7 +561,7 @@ case action do
         {a, plan}
       else
         e ->
-          log.("lift-follow refused locally before anything was issued: #{inspect(e)}")
+          log.("#{action} refused locally before anything was issued: #{inspect(e)}")
           System.halt(2)
       end
 
@@ -548,7 +572,7 @@ case action do
       case File.open(ffile, [:write, :exclusive, :binary]) do
         {:ok, fd} -> fd
         {:error, e} ->
-          log.("lift-follow REFUSED: the follow file #{ffile} cannot be created exclusively (#{inspect(e)}); nothing issued")
+          log.("#{action} REFUSED: the follow file #{ffile} cannot be created exclusively (#{inspect(e)}); nothing issued")
           System.halt(2)
       end
 
@@ -572,7 +596,7 @@ case action do
       end
 
     run_changed = if run_base, do: for(k <- M6fFollow.identity_keys(), Map.get(run_base, k) != Map.get(ident0, k), do: k), else: []
-    log.("lift-follow: the run's identity baseline (ident-baseline.bin) #{if run_base, do: "compared: changed #{inspect(run_changed)}", else: "NOT present in #{evid}: not compared (the cheap follow-up baseline is taken now)"}")
+    log.("#{action}: the run's identity baseline (ident-baseline.bin) #{if run_base, do: "compared: changed #{inspect(run_changed)}", else: "NOT present in #{evid}: not compared (the cheap follow-up baseline is taken now)"}")
 
     {s, ins, params} =
       lift_prepare.(a.inspection, a.generation, a.lift_ttl_ms, fn s ->
@@ -589,7 +613,7 @@ case action do
     t_plan_us = us.()
 
     plan_written =
-      wjson.(%{"event" => "follow.plan", "label" => label, "utc" => now.(), "t_plan_us" => t_plan_us, "vm_age_ms" => vm_age_ms, "inspection_binding" => a.inspection,
+      wjson.(%{"event" => "follow.plan", "label" => label, "forward_entry" => fwd.entry, "utc" => now.(), "t_plan_us" => t_plan_us, "vm_age_ms" => vm_age_ms, "inspection_binding" => a.inspection,
       "expected_generation" => a.generation, "lift_ttl_ms" => a.lift_ttl_ms, "link_generation" => s.link.generation, "adapter_instance_id" => s.link.adapter_instance_id,
       "plan" => Map.new(Map.drop(plan, [:first_request_target_ms, :first_observation_target_ms]), fn {k, v} -> {to_string(k), v} end),
       "targets" => %{"first_request_ms" => plan.first_request_target_ms, "first_observation_native_ms" => plan.first_observation_target_ms},
@@ -597,7 +621,7 @@ case action do
       "baseline_identity" => Map.new(ident0, fn {k, v} -> {to_string(k), inspect(v)} end)})
 
     if plan_written != :ok do
-      log.("lift-follow REFUSED: the follow.plan line was not written (#{inspect(plan_written)}); nothing issued")
+      log.("#{action} REFUSED: the follow.plan line was not written (#{inspect(plan_written)}); nothing issued")
       System.halt(2)
     end
 
@@ -616,16 +640,16 @@ case action do
 
     # 2 the ONE lift; 3 the schedule, started by the observed terminal; 4 the deferred reports
     t_send = us.()
-    r = call_t.(cmd, :lift_candidate, [params, [inspection_command_id: a.inspection, expected_generation: a.generation, ttl_ms: a.lift_ttl_ms]], CmdM6fArgs.issue_timeout_ms())
+    r = call_t.(cmd, fwd.fun, [params, [inspection_command_id: a.inspection, expected_generation: a.generation, ttl_ms: a.lift_ttl_ms]], CmdM6fArgs.issue_timeout_ms())
     t_ret = us.()
 
     case CmdM6fArgs.issuance(r) do
       {:issued, id} ->
         # the issuance is recorded at once, while the lift is in flight (before its terminal is observed — never between the
         # terminal and the first follow-up request): a crash during the terminal wait cannot leave an issued lift unrecorded
-        issued = wjson.(%{"event" => "follow.issued", "original_id" => id, "t_send_us" => t_send, "t_ret_us" => t_ret, "utc" => now.()})
+        issued = wjson.(%{"event" => "follow.issued", "original_id" => id, "forward_entry" => fwd.entry, "t_send_us" => t_send, "t_ret_us" => t_ret, "utc" => now.()})
         idw = File.write(Path.join(evid, "#{label}-command-id.txt"), id <> "\n")
-        log.("lift issued #{id} (candidate.transform.set/1 mode lift; generation #{a.generation}; ttl #{a.lift_ttl_ms} ms); the follow-up schedule #{inspect(plan.schedule_ms)} ms was armed before it#{if issued == :ok and idw == :ok, do: "", else: "; WARNING: issuance record writes #{inspect({issued, idw})}"}")
+        log.("#{fwd.kind} issued #{id} (#{fwd.entry}; generation #{a.generation}; ttl #{a.lift_ttl_ms} ms); the follow-up schedule #{inspect(plan.schedule_ms)} ms was armed before it#{if issued == :ok and idw == :ok, do: "", else: "; WARNING: issuance record writes #{inspect({issued, idw})}"}")
 
         ctx = %{
           original_id: id, expected_generation: a.generation, link_generation: s.link.generation, adapter_instance_id: s.link.adapter_instance_id,
@@ -655,16 +679,16 @@ case action do
         follow_report.(id, result, entries, msd.(t_ret - t_send), %{plan_written: plan_written, t_plan_us: t_plan_us, t_send_us: t_send, t_ret_us: t_ret, vm_age_ms: vm_age_ms})
 
       {:refused, reason} ->
-        log.("lift refused locally: #{inspect(reason)} (refused before transmission: nothing transmitted; no follow-up read)")
-        wjson.(%{"event" => "follow.end", "stop" => "lift_not_issued", "detail" => inspect(r), "requests" => 0, "t_send_us" => t_send, "t_ret_us" => t_ret})
-        ev.("follow.lift-not-issued-no-read", true, "lift_candidate returned #{inspect(r)}: a refusal decided before transmission; no follow-up request was or will be issued; no retry")
+        log.("#{fwd.kind} refused locally: #{inspect(reason)} (refused before transmission: nothing transmitted; no follow-up read)")
+        wjson.(%{"event" => "follow.end", "stop" => "#{fwd.kind}_not_issued", "detail" => inspect(r), "requests" => 0, "t_send_us" => t_send, "t_ret_us" => t_ret})
+        ev.("follow.#{fwd.kind}-not-issued-no-read", true, "#{fwd.fun} returned #{inspect(r)}: a refusal decided before transmission; no follow-up request was or will be issued; no retry")
 
       {:uncertain, why} ->
         # a timeout, a lost reply or a send failure is NOT a refusal: the lift may be in the engine; nothing here follows it, retries
         # it or issues anything else — the run wrapper makes it a HARD STOP and the journal is the record of what happened
-        log.("LIFT ISSUANCE UNCERTAIN: lift_candidate's bounded RPC (#{CmdM6fArgs.issue_timeout_ms()} ms) returned #{inspect(why)} after #{msd.(t_ret - t_send)} ms — the lift MAY have been accepted and transmitted; no follow-up read, no retry, no second lift")
-        wjson.(%{"event" => "follow.end", "stop" => "lift_issuance_uncertain", "detail" => inspect(why), "requests" => 0, "t_send_us" => t_send, "t_ret_us" => t_ret})
-        ev.("follow.lift-issuance-determined", false, "UNCERTAIN: #{inspect(why)} (HARD STOP for the run's effectful issuance; the journal is the record)")
+        log.("#{String.upcase(fwd.kind)} ISSUANCE UNCERTAIN: #{fwd.fun}'s bounded RPC (#{CmdM6fArgs.issue_timeout_ms()} ms) returned #{inspect(why)} after #{msd.(t_ret - t_send)} ms — the #{fwd.kind} MAY have been accepted and transmitted; no follow-up read, no retry, no second #{fwd.kind}")
+        wjson.(%{"event" => "follow.end", "stop" => "#{fwd.kind}_issuance_uncertain", "detail" => inspect(why), "requests" => 0, "t_send_us" => t_send, "t_ret_us" => t_ret})
+        ev.("follow.#{fwd.kind}-issuance-determined", false, "UNCERTAIN: #{inspect(why)} (HARD STOP for the run's effectful issuance; the journal is the record)")
         ev.("follow.no-read-after-uncertain-issuance", true, "no follow-up request was or will be issued; no retry")
     end
 
@@ -695,6 +719,7 @@ case action do
         ev.("restore.separate-command-id", rid != orig, rid)
         apply_evidence.("restore", c, gen)
         {:ok, plan} = p
+        ev.("restore.version-is-the-original's", c.version == Map.get(plan, :version) and c.name == "candidate.transform.set", "restoration #{c.name}/#{c.version} vs the plan's original version #{inspect(Map.get(plan, :version))} (#{inspect(Map.get(plan, :forward_mode))}): v1 restores a v1 lift, v2 a v2 step")
         ev.("restore.requested-is-journaled-preimage", ov.(c, "requested_world_words") == plan.target_world, "requested #{wtext.(words.(c, "requested_world_words", :world))} vs the plan's preimage #{plan.target_world}")
         facts = TransformReadback.restore_facts(obs.(c)["restore_facts"])
         ev.("restore.world-restored-exact-observed", match?({:ok, %{world: true}}, facts), "restore_facts #{fld.(c, "restore_facts")} (world / local / parent / dirty / snapshot / within_tol are separate observed facts; only what the post read showed is claimed)")
@@ -714,7 +739,7 @@ case action do
         log.("restore consequences: #{inspect(c.consequences)} (restoring observed transform values is not a rollback of physics, perception, script, animation or other gameplay consequences)")
 
       {:refused, :already_at_baseline} ->
-        log.("restore NOT submitted: the later exact inspection #{insp} already shows the lift's preimage words (an engine return to baseline — a distinct outcome from a commanded restoration; recorded, nothing written)")
+        log.("restore NOT submitted: the later exact inspection #{insp} already shows the forward's preimage words (an engine return to baseline — a distinct outcome from a commanded restoration; recorded, nothing written)")
         ev.("restore.already-at-baseline-recorded", true, "no restoration call needed; none submitted to obtain a refusal")
 
       {:refused, reason} ->

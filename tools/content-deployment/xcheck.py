@@ -5,7 +5,7 @@ operator-actions.log under the given label and writes <label>-xcheck.txt.
 
   xcheck.py <evidence-dir> <label> --players P --entity E [--outfit O] [--prev-players PP] [--prev-entity PE]
             [--expected-gen GEN] [--session-expect same|different] [--identity-expect same]
-            [--transform T] [--prev-transform PT] [--lift L]   (M6-F: the relay.inspect.candidate_transform result beside the others:
+            [--transform T] [--prev-transform PT] [--lift L] [--step S]   (M6-F: the relay.inspect.candidate_transform result beside the others:
             the same adapter and link, frames in order, the exact word groups well formed, the hero's words against the entity
             inspection's rendering, the candidate qualified for a lift (resolved, distinct, spatial-distinct, in no slot, clean);
             against an earlier exact inspection: the candidate's and the hero's words bit-equal / within tolerance / different;
@@ -36,7 +36,7 @@ ap.add_argument("--session-expect", choices=["same", "different"]); ap.add_argum
 ap.add_argument("--candidate-expect", choices=["present", "absent"], default="absent"); ap.add_argument("--slots-expect", choices=["empty", "recorded"], default="recorded")
 ap.add_argument("--candidate"); ap.add_argument("--prev-candidate")
 # M6-F: the exact-transform inspection beside the others, and its later classification against a lift result
-ap.add_argument("--transform"); ap.add_argument("--prev-transform"); ap.add_argument("--lift")
+ap.add_argument("--transform"); ap.add_argument("--prev-transform"); ap.add_argument("--lift"); ap.add_argument("--step")  # M6-G1: --step <label> of a v2 step_y
 a = ap.parse_args()
 
 out_lines = []
@@ -271,6 +271,21 @@ if a.transform:
         ev("xcheck.transform-lift-requested-is-compiled", pre is not None and req is not None and req[:11] == pre[:11] and req[11] == struct.unpack("<I", struct.pack("<f", struct.unpack("<f", struct.pack("<I", pre[11]))[0] + 0.25))[0], f"requested z word {req[11]:08x} vs preimage z {pre[11]:08x} + 0.25 in binary32 (every other word copied)" if pre and req else "preimage or requested words unavailable")
         lhw = words(L, "hero_world_words", 12)
         ev("xcheck.transform-hero-control-vs-lift", True, f"lift hero_control {fld(L, 'hero_control')}; the later inspection's hero words vs the lift frame's: {'not comparable' if lhw is None or hw is None else ('bit-equal' if lhw == hw else ('within tolerance' if within(lhw, hw) else 'DIFFERENT'))} (recorded)")
+
+    if a.step:
+        # M6-G1: the v2 step's own checks (the lift's above are unchanged): the later class against the step's own preimage /
+        # requested words, the frame order, the compiled step target (word 10 = y + 0.25 in binary32, every other word copied),
+        # the entry (candidate.transform.set/2, mode step_y) and the hero control
+        L, LR = load(a.step)
+        pre, req, post = words(L, "preimage_world_words", 12), words(L, "requested_world_words", 12), words(L, "postimage_world_words", 12)
+        later = classify_later(cw, v(T, "cand_dirty"), pre, req) if pre is not None and req is not None else "unavailable"
+        ev("xcheck.transform-later-vs-step", later in ("held", "returned_to_baseline", "near_target", "near_baseline", "drifted", "indeterminate", "unavailable"), f"the later exact inspection {a.transform} (frame {TR.get('frame')}) against the step {a.step} (frame {LR.get('frame')}, effect {fld(L, 'effect')}, world_match {fld(L, 'world_match')}): {later.upper()} — bit equality decides held / returned_to_baseline; {TOL} per word decides near_*; a dirty cache is indeterminate; a sampled state, not continuous behaviour, not a cause")
+        ev("xcheck.transform-later-frame-after-step", isinstance(TR.get("frame"), int) and isinstance(LR.get("frame"), int) and TR["frame"] > LR["frame"] and TR.get("mission_generation") == LR.get("mission_generation"), f"frames step {LR.get('frame')} -> inspection {TR.get('frame')}; generations {LR.get('mission_generation')!r} / {TR.get('mission_generation')!r}")
+        ok_step = pre is not None and req is not None and req[:10] == pre[:10] and req[11] == pre[11] and req[10] == struct.unpack("<I", struct.pack("<f", struct.unpack("<f", struct.pack("<I", pre[10]))[0] + 0.25))[0]
+        ev("xcheck.transform-step-requested-is-compiled", ok_step, f"requested y word {req[10]:08x} vs preimage y {pre[10]:08x} + 0.25 in binary32 (every other word copied, z {req[11]:08x} = {pre[11]:08x})" if pre and req else "preimage or requested words unavailable")
+        ev("xcheck.transform-step-entry-is-v2", LR.get("name") == "candidate.transform.set" and LR.get("version") == 2 and v(L, "mode") == "step_y", f"the step's record {LR.get('name')}/{LR.get('version')} native mode {fld(L, 'mode')} (a v2 step_y, never a v1 lift)")
+        lhw = words(L, "hero_world_words", 12)
+        ev("xcheck.transform-hero-control-vs-step", True, f"step hero_control {fld(L, 'hero_control')}; the later inspection's hero words vs the step frame's: {'not comparable' if lhw is None or hw is None else ('bit-equal' if lhw == hw else ('within tolerance' if within(lhw, hw) else 'DIFFERENT'))} (recorded)")
 
 with open(os.path.join(a.evid, f"{a.label}-xcheck.txt"), "w", encoding="utf-8") as f: f.write("\n".join(out_lines) + "\n")
 print(f"xcheck: {sum(1 for l in out_lines if ': NOT ' in l)} NOT line(s) of {sum(1 for l in out_lines if 'EVIDENCE' in l)}")
