@@ -88,7 +88,7 @@ EXDIR=$(dirname "$(dirname "$(readlink -f "$(command -v elixir)")")")
 for f in "$T/cmd-m6f.exs" "$T/m6f_follow.exs" "$T/cmd_m6f_args.exs" "$T/cmd.exs" "$T/xcheck.py" "$T/probe-phase.sh" "$T/follow-matrix.sh" "$T/tests/follow_check.py" \
          "$T/run-probe-m6f.cmd" "$T/start-beam.sh" "$T/provision-secret.sh" "$T/evidence-guard.sh" "$KIT/op.sh" "$KIT/seq-lift.sh" "$KIT/ident.exs" \
          "$KIT/seq-restore.sh" "$KIT/restore-eligibility.py" "$KIT/restore-compare.py" "$KIT/decode-transform.exs" \
-         "$OLD/op.sh" "$OLD/seq-lift.sh" "$OLD/seq-later.sh" "$PROBE" "$RELAY/mix.exs" "$RELAY/mix.lock" \
+         "$OLD/op.sh" "$OLD/seq-lift.sh" "$OLD/seq-later.sh" "$OLD/ident.exs" "$OLD/decode-transform.exs" "$OLD/restore-compare.py" "$PROBE" "$RELAY/mix.exs" "$RELAY/mix.lock" \
          "$ERTS/releases/$OTPREL/OTP_VERSION" "$(ls "$ERTS"/erts-*/bin/beam.smp | head -1)" "$EXDIR/VERSION" "$EXDIR/lib/elixir/ebin/elixir.app" "$(readlink -f "$(command -v python3)")"; do
   printf '%s\t%s\t%s\n' "$f" "$(sha256sum "$f" | cut -c1-64)" "$(stat -c %s "$f")" >> "$tt"; done
 for d in relay/lib relay/config; do printf 'tree:%s\t%s\ttree\n' "$d" "$(git -C "$REPO" rev-parse "HEAD:$d")" >> "$tt"; done
