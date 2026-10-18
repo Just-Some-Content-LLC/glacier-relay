@@ -30,6 +30,8 @@ true = :net_kernel.connect_node(node)
 alias GlacierRelay.Command.TransformReadback
 alias GlacierRelay.Command.TransformWords
 
+Code.require_file("cmd_m6f_args.exs", __DIR__)
+
 call = fn m, f, a -> :rpc.call(node, m, f, a) end
 cmd = GlacierRelay.Command
 now = fn -> DateTime.utc_now() |> DateTime.to_iso8601() end
@@ -275,10 +277,20 @@ case action do
     finish.()
 
   "arm-effectful" ->
-    [exe, ttl_arg | _] = rest ++ ["HITMAN3.exe", "30000"]
-    o = collect_ownership.(exe)
-    r = call.(cmd, :arm_effectful, [[ownership: o, ttl_ms: String.to_integer(ttl_arg)]])
-    log.("arm_effectful (ttl #{ttl_arg} ms) -> #{inspect(r)}")
+    # M6-F2a: the documented owner-only form supplies the existing default TTL (it raised before its RPC); an explicit TTL must
+    # be a plain millisecond count; the range is the authority's (CmdM6fArgs)
+    case CmdM6fArgs.arm_effectful(rest) do
+      {:ok, exe, ttl} ->
+        o = collect_ownership.(exe)
+        r = call.(cmd, :arm_effectful, [[ownership: o, ttl_ms: ttl]])
+        log.("arm_effectful (ttl #{ttl} ms) -> #{inspect(r)}")
+
+      {:error, e} ->
+        log.("arm-effectful refused locally: #{inspect(e)} (nothing collected, nothing sent)")
+        finish.()
+        System.halt(2)
+    end
+
     finish.()
 
   "lift" ->

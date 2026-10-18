@@ -1,0 +1,38 @@
+# M6-F2a: the argument parsing of cmd-m6f.exs's optional values (loaded by cmd-m6f.exs; tested on its own by
+# tests/cmd_m6f_args_test.exs). Operator tooling, not production code.
+#
+# The correction it carries (M6-F1b finding, section 13.7): `arm-effectful <owner>` — the documented owner-only form — raised
+# client-side before any RPC, because the old code padded the argument list with BOTH defaults and took the second element, which
+# for a one-element list was the owner default, not a TTL. Here every documented form supplies the existing default TTL
+# (30 000 ms, the same value the empty form always passed — the authority's own effectful_ttl_default_ms) and an explicit TTL
+# must be a plain decimal millisecond count. The RANGE stays the authority's to judge (Command.Authority: 1 000..120 000 ms for
+# an effectful arming, 100..10 000 ms for a command); nothing here changes or duplicates that policy.
+defmodule CmdM6fArgs do
+  @moduledoc false
+
+  @owner "HITMAN3.exe"
+  @effectful_ttl_ms 30_000
+
+  def default_owner, do: @owner
+  def default_effectful_ttl_ms, do: @effectful_ttl_ms
+
+  @doc "`arm-effectful [expected_exe] [ttl_ms]` -> {:ok, exe, ttl_ms} | {:error, reason}"
+  def arm_effectful([]), do: {:ok, @owner, @effectful_ttl_ms}
+  def arm_effectful([exe]), do: with(:ok <- exe(exe), do: {:ok, exe, @effectful_ttl_ms})
+  def arm_effectful([exe, ttl]), do: with(:ok <- exe(exe), {:ok, t} <- ms(ttl), do: {:ok, exe, t})
+  def arm_effectful(more) when is_list(more), do: {:error, {:too_many_arguments, length(more), "arm-effectful [expected_exe] [ttl_ms]"}}
+
+  @doc "A plain decimal millisecond count (1-9 digits, no sign, no unit, no spaces)."
+  def ms(s) when is_binary(s) do
+    if Regex.match?(~r/\A[0-9]{1,9}\z/, s), do: {:ok, String.to_integer(s)}, else: {:error, {:not_a_millisecond_count, s}}
+  end
+
+  def ms(other), do: {:error, {:not_a_millisecond_count, other}}
+
+  # an expected socket owner is an image name (the tool compares it with tasklist's image of the connection's owner)
+  defp exe(s) when is_binary(s) do
+    if Regex.match?(~r/\A[A-Za-z0-9._-]{1,60}\.exe\z/i, s), do: :ok, else: {:error, {:not_an_image_name, s}}
+  end
+
+  defp exe(other), do: {:error, {:not_an_image_name, other}}
+end
