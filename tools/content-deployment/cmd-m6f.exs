@@ -31,7 +31,8 @@
 #                                                                    the plan, then the issuance at once, one line per sample as it
 #                                                                    completes, the end) and <label>-s<N>-* afterwards. Refuses, before
 #                                                                    anything is written, a directory under a sealed root (it or an
-#                                                                    ancestor holds sha256.txt) and a label with any existing capture.
+#                                                                    ancestor holds sha256.txt) and a label that already holds any
+#                                                                    capture this action writes.
 #                                                                    Its RPCs are bounded (the request timeout); its stop marker is
 #                                                                    <evidence-dir>/stop.marker.
 #   plan-restore <command_id>                                        Command.plan_transform_restore (performs nothing)
@@ -488,11 +489,15 @@ case action do
       System.halt(2)
     end
 
-    # a reused label: ANY existing <label>-* capture is refused (the evidence guard's rule), before anything is written
-    existing = Path.wildcard(Path.join(evid, "#{label}-*"))
+    # a reused label: any capture THIS action would write under the label already existing is refused, before anything is
+    # written (the run wrapper's own captures under longer labels — op.sh's identity gate <label>-pre-* — are not this action's)
+    existing =
+      (for n <- ~w(follow.ndjson follow-result.json command-id.txt command-record.txt command-record.bin observed.json result.json command-status.txt command-status.bin),
+          File.exists?(Path.join(evid, "#{label}-#{n}")), do: Path.join(evid, "#{label}-#{n}")) ++
+        Path.wildcard(Path.join(evid, "#{label}-s[0-9]-*"))
 
     if existing != [] do
-      IO.puts("#{now.()} #{label} lift-follow REFUSED: label '#{label}' already has #{length(existing)} capture(s) in #{evid} (e.g. #{Path.basename(hd(existing))}); choose a new label; nothing issued, nothing written")
+      IO.puts("#{now.()} #{label} lift-follow REFUSED: label '#{label}' already has #{length(existing)} capture(s) this action writes, in #{evid} (e.g. #{Path.basename(hd(existing))}); choose a new label; nothing issued, nothing written")
       System.halt(2)
     end
 
