@@ -31,15 +31,12 @@ The request preserves `Trans.x`, `Trans.z` and the nine rotation words. That is 
 - **The line of sight runs along x.** Agent 47 stands at (−83.744, 14.697). With the camera moved by the mouse only, the line of sight from his position to P runs almost exactly along world x.
 - **A +x step is mostly depth:** about 3–4% apparent size, and 0.25 m closer to him.
 - **A +y step is lateral:** about 2.5° as seen from his position. That is about 1.7° from a camera roughly 2.5 m behind him — an estimate, since the camera's position and field of view are not measured.
-- **+y moves Agent48 away from the line through Agent 47** (it already stands +0.133 m in y from him), so it does not move behind his silhouette in the E3 framing, and its distance to him does not change.
+- **+y moves Agent48 away from the line through Agent 47** (it already stands +0.133 m in y from him), so it does not move behind his silhouette in the E3 framing; its distance to him stays approximately the same (5.748 → 5.759 m; section 6, item 2).
 - **It goes 0.25 m toward the +y planter row.** The planters' and trees' extents, the floor at P + 0.25 y and NPC occupancy are not measured. The table gives centre distances, not clearance.
 
 **Compared with the existing vertical lift at P** (no code cost, already qualified):
 - **What the lift adds:** whether the z return recurs at the content-defined location, and whether a transient of six frames or fewer is visible. That is near the limit of an operator's eye or a 30–60 fps phone recording, so a negative result would be ambiguous.
-- **What the y step adds** is the first horizontal component:
-  - if y holds where M6-F's z did not, the return is not a whole-transform restore;
-  - if y returns too, a whole-transform mechanism is more likely;
-  - if it holds, it gives a sustained, visible lateral shift.
+- **What the y step adds** is the first horizontal component, at the visible location: what this intervention does at its sampled frames, and, if it holds, a sustained lateral shift that may be visible. It is not a controlled axis-only comparison with M6-F's z trials (other origin, initialization and run): neither a held nor a returned y step identifies or excludes a return mechanism (section 6, item 3).
 - **The decision:** the y step, at the cost in section 3. Neither result identifies the writer, and neither precommits another run. A +x step would cost the same but measures visually only as depth.
 
 ## 2. The control contract (existing mechanisms; references, not copies)
@@ -66,7 +63,7 @@ The request preserves `Trans.x`, `Trans.z` and the nine rotation words. That is 
   - No parent-relative writes, no automatic inverse, no repeated call against a return.
   - At baseline, nothing is sent.
 - **Stops:** drift, an uncertain effect, a dirty or unqualified state, an identity or control change, an authority restart or an audit failure ends effectful issuance.
-- **Sampling:** the existing finite sampler (`m6f_follow.exs`: +0, +250 ms, +1, +2, +5 and +10 s). Its classes come from the apply result's own preimage and requested words. Its measured first sample — about six frames / 58 ms after the call (M6-F record 16.4) — carries over.
+- **Sampling:** the existing finite sampler (`m6f_follow.exs`: +0, +250 ms, +1, +2, +5 and +10 s). Its classes come from the apply result's own preimage and requested words. M6-F2b's first sample — about six frames / 58 ms after the call (M6-F record 16.4) — is a reference from the earlier DLL and run, not a guarantee; the new build's offline timing and any later game's actual timing are measured (section 6, item 5).
 
 ## 3. Change-impact map (verified by one independent read-only check; `checker-report.txt`)
 
@@ -156,3 +153,41 @@ Implement `candidate.transform.set` v2 `step_y` per section 3 — native on `rel
 Not included: installation, launch, real token or camera action. The attended run (M6-G2) needs its own authorization, the capture commitment and a fresh Ready.
 
 M6 stays open; no tag.
+
+## 6. The M6-G1 reviewed contract (reconciliations recorded before code)
+
+**Authorization:** "M6-G1 offline visible-step implementation authorization". It accepts this design as the basis for M6-G1, offline implementation and validation only. These items are binding clarifications; sections 1, 2 and 4 were corrected in place where marked.
+
+1. **The target:** `StepYTarget(preimage)` copies all twelve world words and replaces only word 10 with binary32 `y + 0.25f`. For E3's snapshot that is `416d47ae` → `417147ae`, an exact delta of 0.25. The request keeps z and rotation unchanged; that is not a promise about the engine's post-state.
+2. **The axis:** world y is not model-relative sideways motion. The geometric choice is plausible for the recorded view, but the camera origin, projection and clearance are not established. The distance to Agent 47 stays approximately the same (5.748 → 5.759 m), not exactly.
+3. **No categorical inference:** a held y step does not disprove a whole-transform return mechanism, and a returned one does not identify one. M6-F's z trials used the old origin; this trial uses the content-placed candidate at P. Axis, location, initialization and run context differ, so this is not a controlled axis-only comparison. Each result describes this intervention at its sampled frames.
+4. **Held means sampled:** held samples are agreement at the samples, not continuous persistence or guaranteed visible motion. A recording may add visual evidence; by itself it does not identify an engine writer.
+5. **Timing:** the 58 ms first read belongs to the earlier DLL and run. It is kept as a reference; the new build's offline timing and any later game's actual timing are measured, not inherited.
+6. **The caller-level RPC bounds:** `cmd-m6f.exs` currently applies its bounded RPC behaviour (`rpc_ms`) only when `action == "lift-follow"`. `step-follow` inherits the same bounds, stop checks, uncertain-issuance handling, sealed-root and label protections and deferred reporting. The sampling engine itself does not change.
+
+**The versioned capability contract.** This uses the existing command-link protocol. Command entry version 2 is not a transport-protocol version: no protocol-3 handshake, socket, service or alternate transport.
+
+| Command entry | Forward mode | Restoration |
+|---|---|---|
+| `candidate.transform.set/1` | `lift` | a v1 restore of an eligible v1 lift only |
+| `candidate.transform.set/2` | `step_y` | a v2 restore of an eligible v2 step only |
+
+- **Refused:** v1 `step_y`; v2 `lift`; unknown versions; any axis, distance or target on a forward; cross-version restoration. There is no downgrade, and no retry through another version when a capability is absent.
+- **Capability identity is (name, version)** — in lookup, advertisements, validation, stored command records and audit.
+  - A peer advertising only v1 does not enable v2.
+  - Effectful-disabled paths omit and refuse both versions.
+  - A transport-v1 peer stays inert-only.
+- **Carrying the version through:**
+  - The accepted forward's version and mode go into the native ledger and the journal-derived BEAM restoration plan.
+  - `restore_candidate/2` issues the plan's verified original version — never a default literal or a caller-selected override.
+  - The authority's issuance decision compares the requested restore version with the journaled original, including calls that bypass the convenience facade.
+  - The native gate enforces the match independently, before its setter.
+  - Historical v1 journal entries already carry their version. v1 plans are derived from that evidence without rewriting journals or requiring new fields in old records.
+- **One shared forward budget** across v1 lifts and v2 steps on each side; no per-mode budget.
+  - The documented difference stays: native consumes at invocation, BEAM accounts conservatively for accepted, in-flight and uncertain effects.
+  - A new mode, id, arming, reconnect or restoration never resets it.
+  - An authority restart stays an operational hard stop for an attended run, never a recovery technique.
+  - Existing status field names (`transform_lift_budget`, `transform_lift_consumer`) stay for compatibility, documented as shared by both forwards. New evidence distinguishes a v1 lift from a v2 step.
+- **Binding:** the v2 step needs the same specific, recent, completed exact inspection, verified by the issuing authority against its own journal and current context. Canonical expectation values come from that evidence: no caller-asserted binding map, no implicit latest-inspection shortcut.
+- **Native revalidation on the applying frame** stays complete: identity, distinctness, registry absence, generation, parent, the clean exact expectation, a finite and non-no-op target, the budget, the capacity, the link and the checked pre-call line. Unsupported internal entry / mode combinations are refused, never fallen through into another operation. There is no extra setter, direct field write, physics write, input, activation or registry operation.
+- **Restoration is never an automatic inverse.** It needs the original preimage, a later exact inspection and journal / ledger eligibility, and is refused for uncertain, dirty, drifted, already-returned, ambiguous or otherwise ineligible evidence. It cannot refill the forward budget. World, parent-relative, parent, dirty-state and whole-snapshot facts stay separate.
