@@ -1,6 +1,6 @@
 # M7-B1 — offline implementation record (BEAM, fake native endpoints, owned loopback peers)
 
-**Status:** DONE offline (2026-10-19), awaiting architectural review.
+**Status:** DONE offline (2026-10-19); **corrected** the same day (section 11: deadlines at event and send boundaries, and the restoration result), awaiting architectural review.
 - M7 is **not** complete, and nothing here has run against HITMAN.
 - Every native answer in this stage came from a test fake (`Test.FakeMotionNative`). That makes it fake-native evidence, never evidence of what the DLL does.
 - A synthetic course is not walking, a numeric box is not a cleared route, and a headless peer is not a second game instance.
@@ -217,3 +217,172 @@ Its proof would be a native6 build of record (not installed) with:
 - the FAKE matrix: probe ⇄ host node ⇄ headless peer on one machine.
 
 B2 is not a game run. M7-C (attended), M7-L (the MacBook) and M7-D (two real instances) each need their own authorization and fresh readiness.
+
+## 11. Correction: deadlines at event and send boundaries, and the restoration result (2026-10-19)
+
+**Authorization:** "Glacier Relay — M7-B1 focused deadline and restoration correction" — one BEAM / test-only correction pass for two review findings, with their regression tests and concise contract and record amendments. The demonstrated B1 progress is accepted. Its timing and restoration-release rules were not frozen as B2's contract until this pass. The normative result is design **section 17**. No native, content, game, LAN, Mac or real credential was involved. **Evidence:** `%TEMP%\glacier-m0\hitmen\m7b1-correction\` (guarded; sealed after this record).
+
+### 11.1 Basis
+
+`checkpoint-checks.txt` (PASS, read only):
+- glacier-relay `ce3c0ced` = origin, clean; its parent is `0f22a05`, the B1 gate's checkpoint (relay tree `ba0810ee`, unchanged by the docs commit);
+- the M6 tags on both repositories unchanged; ZHMModSDK `relay/m2` `76c407f3` = origin;
+- native5 `f271d129…` and the content `5ac64848…` / `58e9a10f…` / `9433888b…`, by identity only;
+- the M6 closure `b3966444…`, the M7-A seal `cc73bfb4…`, and the B1 seal `ae6ab0e5…`, which re-verified 36 / 36;
+- M0 26 / 26; no game process; no project port bound; epmd observed (pid 45286) and not changed.
+
+Nothing native, no content rehearsal and no historical archive audit was repeated.
+
+### 11.2 Before the fix: the review's counterexamples, executed
+
+The review had inspected the source but not run its counterexamples. They were run first, against the unchanged production code (`before-fix-attempt1\`). The working-tree delta, which contained only test files and test support, and the hashes of the files as run are recorded; byte copies are in `files-as-run\`. The reproducers assert the required behaviour, so every failure message shows the actual one.
+
+**Result: 31 reproducers, 28 failed, 3 passed** (the controls). The 127 existing motion and peer tests passed with the extended fake. Both findings were **confirmed**; no part was refuted (`diagnosis.txt`).
+
+**Finding A.** Only `tick/2` checked deadlines:
+- `Destination.sample/3` forwarded the first in-area sample at t = 300 with a stall of 250, and at the inclusive bound t = 250, without a tick. It forwarded again at the duration bound.
+- `Destination.applied/3`:
+  - released a pending target at the duration bound;
+  - for a target sent at 50, an exact acknowledgement at 251 released the pending target and was counted applied (the elapsed timeout was never recorded);
+  - a 260 ms answer while closing was counted applied.
+- `Destination.native_closed/3` confirmed a close at its 1,000 ms deadline. After the tick had declared a close unknown, it **overwrote** it to confirmed and emitted a second close summary. (That second case was pure-level only: through the hub the unknown close drops the link and ends the session, so no later `ghost.closed` reaches it.)
+- `Source.hero_sample/3` relayed at t = 1,001 and t = 1,000 after a 1,000 ms share. `Source.native_closed/3` had both late-confirmation defects.
+
+Through the hub (socket evidence: the fake's log of every `ghost.target` line it read, and the headless sink's reconciliation):
+- **H-A1:** a sample queued before the stall timer (mailbox order checked) and processed after the deadline was written: targets `[1, 2]`. The session then ran on.
+- **H-A3:** an exact acknowledgement queued before its 200 ms timer and processed after it released the pending target: targets `[1, 2, 3]`.
+- **H-A4:** hero sample 20, queued before the share's duration timer and processed after it, reached the headless peer.
+- **H-A5:** a forward decided before the duration bound had its required trace write held across the bound by an injected trace stand-in. It was written afterwards: targets `[1, 2]`.
+
+**Finding B.** `MotionControl.on_terminal/3` released a restore on `applied` plus target-equal world words. Each of eleven one-fact variations was released, and the next real M6 forward (`step_candidate`) was accepted. The variations were:
+- a dirty post cache;
+- the dirty state absent;
+- another parent;
+- another entity;
+- another generation;
+- control changed;
+- control unavailable;
+- the effect uncertain;
+- the invocation not reported;
+- the requested words absent;
+- the parent-relative words absent.
+
+All eleven shapes are admitted by the production result decoder (`observed` is any bounded map of field objects), so they are reachable wire conditions. A `precondition_failed` result carrying a reported invocation and a changed effect returned the session to `closed_clean`, and `confirm_baseline` then released it.
+
+### 11.3 The correction
+
+| Commit | Content |
+|---|---|
+| `fbec9b8` | test support only: the fake's restoration-result fields and one-fact faults, its target-line log, held motion output and share overrun; `Test.TraceProxy`. The 127 existing motion and peer tests were unchanged by it |
+| `1066016` | **A:** `Destination` / `Source` `expire/2` before every event and `before_send/3` at the send boundary; `Hub` calls both after the trace write; `Peer.Connection` `not_after`; late answers and late confirmations as evidence; the `withdrawn` count fixed (below). Tests: the A reproducers as run, `deadline_send_test`, a connection case, and two existing tests adjusted (below) |
+| `d4720b6` | **B:** `MotionControl.judge_restore/2`; the authority journals `motion.session.restore_judged` before the judgement takes effect. Tests: the B reproducers as run (byte-identical), `motion_restore_judge_test` (internal inputs labelled), `restore_journal_test`, and the displaced-restore test now also asserts its judgement |
+| `905d22e`, `c7a3490` | the verifier's findings applied (11.4), and their tests (including the hub-level share tests of its gap T1) |
+| `6d33f1d` | test-only: H-A5 made independent of the fake's own duration close (gate attempt 1, 11.5) |
+
+**After the fix** (`after-fix-attempt1\`, the same command and seed on `c7a3490`): **31 reproducers, 0 failures**, and 48 new tests, 0 failures. `deadline_hub_test` changed once more after that run, test-only (`6d33f1d`), and the gate of record covers it.
+
+**Final rules:** design 17.1 (time) and 17.2 (the restoration result).
+
+**Also found while correcting:**
+- **`withdrawn/2`:** its increment was discarded, because a record update read the old counts. B1's `withdrawn` count (a target the trace refused) could never rise. The bump now comes first. The new cancellation path had the same pattern in its first draft, which a hub test caught.
+- **Three existing destination tests were adjusted:**
+  - the lag-growth test now acknowledges each target in time; it had relied on the sample path ignoring a 200 ms deadline;
+  - the native-initiated close's input moved from t = 1,000, past the stall, to t = 200, and the after-deadline case is a new test;
+  - a third, the closing `next_deadline` assertion, changed later with F7 (11.4): 250 (the acknowledgement), then 1,060.
+- **The reproducers as committed:**
+  - `restore_result_test` is byte-identical to the file as run;
+  - `deadline_order_test` lost one unused default argument (a compile warning in the before-fix run);
+  - `deadline_hub_test`'s H-A5 gained a fake session overrun and an open-session assertion (`6d33f1d`).
+
+  Each difference is recorded (`after-fix.txt`, the commit messages).
+- **One draft assertion was wrong:** an unsynced journal entry is not absent from the file. It is the authority that counts it as not persisted. The assertion was corrected before commit.
+
+### 11.4 The verifier
+
+One independent, read-only verifier reviewed the immutable draft `d4720b6`. It was limited to the two corrected boundaries, with no forks and no lens sweep (`verifier-basis.txt`). Its report is `verifier-report.txt`, verbatim.
+
+**Result: no blocker and no major.** It found no path that produces a target or relayed sample after its deadline, no way a late answer resolves an unknown outcome or a late confirmation confirms an unknown close, no release without every listed fact, no crash from decoded inputs, and no M5 / M6 change.
+
+**Dispositions** (`verifier-disposition.txt`):
+- **F1 (minor):** `stream.end` named a sample cancelled at the send boundary. A share now reports only what the peer connection accepted (`handed`). `sent` means handed to the connection; a later drop by the connection is a gap at the sink.
+- **F2 (minor):** the judgement ignored the result's own identity and comparison. It now also requires `mode` `restore`, `restore_of` (this restore's session open) and `world_match` `target`, as M6's accepted qualification does. Other fields are journaled with the terminal and not judged, and the doc says so.
+- **F3 (minor):** the journaled closed summary was computed before the same event's late evidence. It is now computed after the whole event.
+- **F4 (note):** the timed-out target is kept apart from an earlier mismatch marker.
+- **F5 (note):** a link loss applies an already-passed acknowledgement deadline. A failed write keeps the class "attempted, outcome unknown", which is what it is.
+- **F6 (note), not changed:** a native close processed after a BEAM deadline is recorded as BEAM's deadline close, confirmed, with the native's reason beside it (design 17.1). The resulting `ghost.close` to a closed native session is in the B2 delta.
+- **F7 (note):** while closing, the acknowledgement deadline is scheduled.
+- **T1 (test gap):** `deadline_share_hub_test` covers the share's send boundary through the hub and the connection's `not_after` end to end (30 / 30 repeated runs).
+- **T2 (tests):** the in-time-answer-while-closing control was added and the `not_after` test was made margin-free. The hub suspensions (about 50–80 ms against 200 / 500 ms call deadlines) were kept.
+
+While writing the T1 tests, two test-only mistakes were fixed before commit: a 40 ms window that could miss the 50 ms cadence, and an assertion that assumed one queued sample where two can be queued.
+
+### 11.5 Gate and trace scenario
+
+**Gate of record: `beam-gate-attempt2\` on `6d33f1d` (relay tree `da39d5e4`), PASS.** The commands and exit statuses are in `gate.txt` and each file.
+
+| Step | Result |
+|---|---|
+| `mix compile --warnings-as-errors --force` (dev, 72 files); `MIX_ENV=test mix compile --warnings-as-errors --force` (84 files) | exit 0 / 0 |
+| scoped `mix format --check-formatted` (B1's globs: the motion, peer, headless and command lib and tests, the test support, `config/*.exs`) | exit 0 |
+| whole-tree format check (informational) | exit 1, on the same 12 M2-era files as B1's list; none of this stage's |
+| areas: motion and peer; command; headless and boundary (each `MIX_ENV=test mix test --warnings-as-errors`) | 177 / 0, 207 / 0, 21 / 0; exit 0 each |
+| five full suites, `MIX_ENV=test mix test --warnings-as-errors --seed S` (seeds 761930, 257607, 135268, 587268, 970298) | **831 tests, 0 failures, exit 0** each; no compile warning; no warning exception inherited |
+| after the gate | no BEAM process, no project port |
+
+**Counts:** 831 = B1's 750 + 81 new.
+- reproducers 31: deadline order 13, deadline hub 4, restoration result 14;
+- send boundary and the verifier's cases 13;
+- share send boundary through the hub 2;
+- restoration judgement 31;
+- restoration journal 2;
+- one TLS case;
+- one destination case.
+
+The existing tests' changes are listed in 11.3 and 11.4.
+
+**Attempt 1 failed** (`beam-gate-attempt1\`, kept, with `beam-gate-attempt1-NOTE.txt`). On `c7a3490`, everything passed except full run 2 (seed 671013, 831 tests, **1 failure**, exit 2): H-A5's crossing step held no forward decision. The most likely cause — consistent with the evidence, not proven — is that the fake opens its session before BEAM activates it and closes it on its own clock at its open + 1,000 ms, so under full-suite load the session was closed natively before the sample injected at BEAM's bound − 60 ms. The fix was test-only (`6d33f1d`): a fake session overrun, and an assertion that the session is still open before the crossing. The gate script's summary column was blank for that run, because its regex expected "failures" while ExUnit printed "1 failure". The exit status was counted all the same. The regex now matches both forms, and the script as run is kept as `scripts/beam-gate-as-run-attempt1.sh`. The whole gate was rerun as attempt 2, because test inputs had changed.
+
+**The retained trace scenario** (`trace-examples-attempt1\`, `scripts/trace-examples.exs`, on `6d33f1d`; fake native, owned loopback, `nonode@nohost`, not distributed; the journal and both traces copied whole after a check for the token and key material):
+- **Topology:** command `38885`, motion `33157`, headless `35999`, all `127.0.0.1`.
+- **A finite share:** closed `duration`, confirmed; 19 native samples, 19 relayed, 19 handed, 0 cancelled. At the sink: 19 received, last 19, 0 gaps, complete.
+- **A clean session**, on a course ending 0.2 m from P: closed `stream_end:course_complete`, confirmed. 24 forwarded = 8 applied + 16 `skipped_identical`; 0 uncertain, 0 cancelled, 0 late; restorable. It was then **restored**: `motion.session.restore_judged` recorded `restored`, releases `true`, no reasons; its facts include mode `restore`, world_match `target`, dirty `false`, the same entity, control `unchanged`, invocation `reported`, effect `changed`. Exclusivity `:ok` afterwards.
+- **An inexact session:** closed `postimage_mismatch` at the first inexact apply, confirmed. 12 forwarded = 5 applied + 6 skipped + 1 uncertain; 1 pending dropped on close; unresolved 15; not restorable (`closed_unclean`).
+- **Sizes:** journal 55 records; host trace 153 (36 forwards and 36 acknowledgements, 38 samples, 19 relayed, 6 reports, 3 RTTs); headless trace 73. No deadline fired in this nominal scenario (no `ack_timeout`, `send_cancelled` or `ack_late` record). The deadline paths are evidenced by the reproducers, not by this example.
+
+### 11.6 Performed, reused, untested
+
+| Evidence | Status |
+|---|---|
+| Before-fix reproducers on the unchanged checkpoint; after-fix on the final code | **performed** (`before-fix-attempt1\`, `after-fix-attempt1\`) |
+| Pure deadline, send-boundary and judgement rules; hub ordering with mailbox order checked; socket-level target and sample evidence; restoration end to end with the next M6 forward and new session as proof of exclusion | **performed**, fake native, owned loopback |
+| Gate of record (compiles, scoped format, areas, 5 × 831 / 0) | **performed** (attempt 2; attempt 1 failed and is kept) |
+| The retained trace scenario | **performed** |
+| One focused verifier | **performed** (`d4720b6`) |
+| The checkpoint identities (native5, content, M6 tags, B1, M7-A and M6 seals), M0, epmd | **reused** by identity, read only; the B1 seal re-verified |
+| B1's TLS probes, the two-process harness, and B1's evidence | **reused**, not repeated (the two-process tests ran in every full suite) |
+| Native qualification, content rehearsal, historical archive audit, game run, LAN, Mac | **not performed** (not authorized) |
+| The failed socket hand-over cleanup (`:ssl.controlling_process` error) | **untested**: no existing seam; no injection framework was built |
+| The motion link's 200 ms send deadline under a filled socket | **untested** (configured; never filled) |
+| Real native enforcement of 17.1 / 17.2, real engine writes, moving-hero sampling, frame cost, F2, collision and coupling, two real game instances | **untested** (B2 and later)
+
+### 11.7 The B2 handoff delta
+
+What B2's native must enforce **independently** (design 17.4), beyond section 15.5:
+- **Time on its own clock.** Every target is judged on its applying frame against the session's duration and target silence before the call, never after a queued timer. There is one pending slot and an acknowledgement for every target.
+- **The restoration result** of 17.2, on the call frame:
+  - `mode` and `restore_of`;
+  - `requested_world_words`;
+  - `postimage_world_words` and `world_match`;
+  - `postimage_local_words`;
+  - `postimage_parent`;
+  - `postimage_dirty`;
+  - `post_same_entity`;
+  - `generation_post`;
+  - `hero_control`;
+  - `setter_called` and `effect`.
+
+  These are the M6 transform result's names. A non-application status must not report an invocation or a change.
+- **Close tolerance.** A `ghost.close` for a session it has already closed is ignored.
+- **Unchanged from 15.5:** the pre-call checks, the untouched-word rule, the uncertain post-call close, and the autonomous closes.
+
+The BEAM side does not depend on any of this for its own guarantees. It will judge the native's answers by these rules.

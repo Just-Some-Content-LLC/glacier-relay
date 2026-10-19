@@ -523,7 +523,7 @@ The B1 fake models these timers in a separate process, so they keep running whil
 | Frames | lines of at most 1,024 bytes on the peer link and the motion link, with at most 1,024 buffered partial bytes |
 | Parsing | strict: an unknown kind or field is a violation and closes the connection |
 | Receive | one read at a time (`active: :once`); each sample is handed to the destination by a call with a 200 ms deadline |
-| Peer sender | samples: at most 8 queued and one per 45 ms per stream, the oldest dropped and counted; control: at most 16 queued, and an overflow closes the connection, so stop stays possible |
+| Peer sender | samples: at most 8 queued per connection, the **newest** refused at its producer and counted there; a sample older than 100 ms at its turn, or a share sample at its share's bound, dropped and counted; one per 45 ms per stream, enforced by the producers (17.3); control: at most 16 queued, and an overflow closes the connection, so stop stays possible. *(Amended by the M7-B1 correction, 17.3; it read "the oldest dropped and counted".)* |
 | Send deadlines | 500 ms (peer) and 200 ms (motion link), closing on timeout. Measured: OTP 28 `ssl` with `send_timeout` returned `{:error, :timeout}` after about 209 KB had been buffered (`m7b1-offline\tls-probe\`) |
 | Liveness | `ping` each second; three seconds without input closes the connection. RTT is recorded on the sender's clock only |
 
@@ -538,7 +538,7 @@ Delayed traffic can sit in kernel, TLS and application buffers well beyond the v
 - **TLS 1.3 only, mutual.** Each side has a per-experiment private CA (ECDSA P-256, SHA-256) and a leaf certificate. Each side trusts exactly the other side's CA, `fail_if_no_peer_cert` is set, and the other side's **leaf SHA-256 is pinned**.
 - The verification callback only narrows: it accepts `valid_peer` on an exact pin and never overrides a `bad_cert`. The pin is checked again after the handshake.
 - There is no trust on first use, no session resumption and no early data. The hostname check is off, because the pin is the identity.
-- OTP 28 refuses a self-signed leaf even when that leaf is in `cacerts` (`selfsigned_peer`; `tls-probe\t1`). That is why the CA-and-leaf form is used, rather than an accepting callback.
+- In the probed configuration — OTP 28.4.2 / ssl 11.5.4, TLS 1.3, `verify: :verify_peer`, the peer's self-signed certificate as the only `cacerts` entry, with and without a `verify_fun` — the handshake was refused (`selfsigned_peer`; `tls-probe\t1`). That is an observation of that configuration, not a statement that OTP can never accept any self-signed arrangement *(scoped by the M7-B1 correction)*. It is why the CA-and-leaf form is used, rather than an accepting callback.
 
 **One allowlisted peer and one connection.** A second connection is refused.
 
@@ -619,7 +619,85 @@ M7-B1 implemented section 15 offline: BEAM and test tooling, against a fake nati
 - a share has the same four close states as a session;
 - an open whose outcome is unknown, or whose opening snapshot differs, is ended on the motion link and is never restorable;
 - with motion on, an authority restart latches the motion and transform entries until the node restarts;
-- the peer sender refuses the newest sample above its bound and drops stale ones, rather than dropping "the oldest" (15.6).
+- the peer sender refuses the newest sample above its bound and drops stale ones, rather than dropping "the oldest" (15.6; accepted and amended by the M7-B1 correction, 17.3).
+
+The M7-B1 correction (section 17) then made the deadlines hold at every event and send boundary and defined the restoration result.
+
+## 17. M7-B1 correction: time at event and effect boundaries, and the restoration result (normative; 2026-10-19)
+
+**Status:** recorded under the authorization "Glacier Relay — M7-B1 focused deadline and restoration correction", after the review of M7-B1 (`ce3c0ced`). It clarifies sections 15.3, 15.4 and 15.6 and **governs where they are silent or conflict**. It applies to the BEAM in B1, and B2's native must enforce the same rules independently (17.4). Record: `M7B1_OFFLINE_RECORD.md` section 11. Evidence: `m7b1-correction\`.
+
+### 17.1 Time at event and effect boundaries
+
+**Deadlines** (receiver BEAM clock; every one expires **at** its instant, `≥`):
+
+| Deadline | From | At expiry |
+|---|---|---|
+| Acknowledgement, 200 ms | the target's **actual write** | its outcome is **unknown** (uncertain, unacknowledged, unresolved); while open, the session closes `ack_timeout` |
+| Duration | the session's activation | no new target; the session closes `duration` |
+| Stall, `stall_ms` | the previous target's actual write (the activation before the first) | the session closes `stall` |
+| Close confirmation, 1,000 ms | the close request | the close is `unknown`; the motion link is dropped |
+| Share duration | the share's activation | no sample is relayed or handed to the peer connection; the share closes `duration` |
+| Share close confirmation, 1,000 ms | the close request | `unknown`; the motion link is dropped |
+
+(Lag growth stays `>` its bound, judged at each sample.)
+
+**Rules:**
+1. **A timer is a wakeup, not the deadline.** Every event — a peer sample, a native acknowledgement, report or close, a native hero sample, a timer — is judged at its **processing time**, after first applying every deadline that has passed by then, in a fixed order: acknowledgement, duration, stall (while closing: acknowledgement, confirmation). This expiry step never forwards anything. An event that is processed after a deadline creates no effect that the deadline forbids, whichever message reached the process first. The processing time is used even when the message arrived earlier: an answer delayed inside the node counts as late (fail closed). A native close processed after a BEAM deadline is therefore recorded as BEAM's deadline close (`by: beam`), confirmed, with the native's own reason beside it: `by` names the rule that ended application at that time, not who closed first. A link loss applies an acknowledgement deadline that had already passed.
+2. **The send boundary is checked again.** After any potentially blocking work between a decision and its bytes — the required trace write — eligibility is re-checked immediately before the write: for a target, the duration and the stall from the previous write; for a share sample, the share's bound before the hand-over to the peer connection, which checks the same bound (`not_after`) again before its TLS write. A target or sample that is no longer eligible is **cancelled before any byte is written**: counted `cancelled_before_send`, never uncertain. A target that is written starts its acknowledgement deadline, its pacing and the stall at that write.
+3. **A late acknowledgement is evidence only.** An answer processed after its target's deadline (or after the session closed) is counted (`late_acks`) and kept with the timed-out target (`timed_out`, apart from any earlier mismatch). It never resolves the unknown outcome, never moves the reference, is never counted applied or skipped, never releases a pending target and never reopens or extends a session.
+4. **A late confirmation is evidence only.** A `ghost.closed` or `share.closed` processed after the confirmation deadline leaves the close `unknown` and is kept as qualified evidence (`late_native_close`: "received after the close was declared unknown; not a confirmation"). An `unknown` close is never overwritten and is never restorable. The closed summary an event journals is computed after the whole event, so it carries that event's late evidence; a message arriving after the session is done reaches only the trace.
+5. **Kept distinct and counted:** a target cancelled before any byte (`cancelled_before_send`; the trace-refused `withdrawn`); an attempted write whose outcome is unknown (`uncertain` / `unacknowledged`, with `unresolved`); a late answer (`late_acks`); a session still eligible to apply (`open`).
+6. **Not claimed:** the BEAM is not a hard-real-time system. A clock check does not make a later system call atomic. A line already written is not recalled; bytes already in TLS or kernel buffers are not withdrawn. Close and cancellation need no arming and work with a degraded trace or audit.
+
+### 17.2 The restoration result (the motion restore's terminal)
+
+A `candidate.motion.session/1` `restore` releases the candidate (`restored`, which ends the exclusivity of 15.4) only when its result has status `applied` and **every** fact below is observed, decoded strictly (`TransformReadback.decode_apply/1`, the M6 transform result's field names) and as required. The facts are kept apart and journaled (`motion.session.restore_judged`) **before** the judgement takes effect.
+
+| Fact | Field | Required |
+|---|---|---|
+| the result names this restore | `mode`, `restore_of` | `restore`, and the session open this restore restores |
+| the world matrix requested for the restoration | `requested_world_words` | equal to the restore's target (the session's journaled opening preimage) |
+| the observed world matrix | `postimage_world_words`, `world_match` | equal to the requested words, bit for bit, and the native's own comparison `target` |
+| the observed parent-relative values | `postimage_local_words` | present; recorded, **not** required equal (the world setter does not promise them; no direct field write is made to obtain them) |
+| parent identity | `postimage_parent` | equal to the restore's expected parent |
+| dirty state | `postimage_dirty` | `false` |
+| candidate continuity | `post_same_entity` | `true` |
+| generation continuity | `generation_post` | the session's mission generation |
+| local-player control | `hero_control` | `unchanged` (the accepted M6 policy; `within_tolerance` does not pass) |
+| invocation and possible effect | `setter_called`, `effect` (the authority's classification) | an invocation reported and the effect `changed` |
+
+**Outcomes:**
+- `applied` with every fact: `restored`.
+- `applied` with observed world words that differ: `restore_not_exact`.
+- `applied` with any other listed fact missing, unobserved or not as required: `restore_unqualified`. Fields outside the table (`precondition_ok`, `apply_log`, the invocation text, `restore_facts`) are journaled with the command's terminal and are not judged.
+- A non-application status: `closed_clean` (eligible again) only if no invocation and no changed or uncertain effect is reported; otherwise `restore_unqualified`. Critical uncertainty never coexists with renewed eligibility.
+- Any other status: `restore_unknown`.
+- A judgement the journal cannot take: the session stays `restoring`.
+
+Every non-releasing outcome holds the exclusion: no M6 forward or restore, no new session, no second restore, no baseline release and no automatic retry. Nothing here is a new restoration mechanism, and no closed M5 path or accepted M6 v1 / v2 semantics changes.
+
+### 17.3 The peer sender's queue (15.6 amended)
+
+For the first bounded headless-peer scope, the implemented policy is accepted in place of "the oldest dropped" (15.6's row is amended):
+- at most 8 samples wait per connection; above that the **newest** is refused at its producer and counted there (the share relay's `send_dropped`; the headless driver's `dropped`);
+- a sample older than 100 ms when its turn comes is dropped (`samples_stale`), and a share sample at or past its share's bound is dropped (`samples_expired`);
+- the one-sample-per-45 ms rate per stream is enforced by the **producers**, not the sender: the share relay relays at most one sample per 90 % of its interval (an interval of at least 50 ms), and the headless driver spaces each stream's samples at least 45 ms apart.
+
+A share's `stream.end` reports the samples the connection **accepted** (`sent`, `last_seq`), never one cancelled or refused before it; a sample the connection drops afterwards shows at the sink as a gap. `sent` therefore means handed to the connection, not written to TLS.
+
+This proves neither the absolute freshness of a source nor the absence of bytes already buffered in TLS or kernel layers. Those stay governed by the session limits, lag growth and stall, and by 17.1.
+
+### 17.4 What B2's native must enforce independently
+
+The fake models these; B2 must implement them in the DLL, on its own clock, without relying on the BEAM:
+- every target judged on its applying frame against the session's deadlines (duration, target silence) **before** the call, never after a queued timer;
+- an acknowledgement for every target, and at most one target pending;
+- the restoration result's fields of 17.2 on the same frame as the call (the same names as the M6 transform result);
+- a `ghost.close` for a session it has already closed ignored (17.1 rule 1 can send one after a native close it has not yet processed);
+- a restore's result naming itself (`mode`, `restore_of`) and its own world comparison (`world_match`).
+
+Unchanged from 15.5 and still B2's: the per-frame pre-call checks, the autonomous closes, the untouched-word rule and the uncertain post-call close.
 
 ## 13. Sources
 

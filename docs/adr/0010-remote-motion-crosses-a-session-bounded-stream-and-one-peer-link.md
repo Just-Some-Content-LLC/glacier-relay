@@ -1,6 +1,6 @@
 # ADR 0010 — Remote motion crosses a session-bounded stream; inter-host exchange is BEAM-to-BEAM over one explicit peer link
 
-**Status:** **Accepted (2026-10-19), as amended below, for the amended boundary and the M7-B1 scope** (offline, BEAM and tooling, fake native endpoints and owned loopback peers). Proposed earlier the same day with the M7-A design `docs/design/M7_NETWORK_GHOST.md`; the reviewed contract is that design's section 15. Acceptance is **not** evidence of native or runtime enforcement: the DLL implements none of this until M7-B2, and nothing has run against the game. Scope: **M7 — Network ghost only.** Nothing here authorizes a native change, a game run, a LAN socket, a network, firewall or WSL change, or a second machine.
+**Status:** **Accepted (2026-10-19), as amended below, for the amended boundary and the M7-B1 scope; clarified the same day by the M7-B1 correction (amendments 10–13; design section 17)** (offline, BEAM and tooling, fake native endpoints and owned loopback peers). Proposed earlier the same day with the M7-A design `docs/design/M7_NETWORK_GHOST.md`; the reviewed contract is that design's section 15. Acceptance is **not** evidence of native or runtime enforcement: the DLL implements none of this until M7-B2, and nothing has run against the game. Scope: **M7 — Network ghost only.** Nothing here authorizes a native change, a game run, a LAN socket, a network, firewall or WSL change, or a second machine.
 
 The Context and Decision sections below are the proposal as reviewed. They are kept as written; the **Amendments on acceptance** section changes them and governs where they conflict.
 
@@ -65,3 +65,10 @@ These are amendments. The proposal above did not contain them.
 7. **Freshness claims are limited** to order, receipt silence and bounded delay growth (receiver interval minus source interval). Every queue, frame, deadline and control capacity is bounded; control overflow closes the connection.
 8. **Evidence.** There is a separate, bounded motion trace with explicit incompleteness. Per-apply postimages travel in `ghost.applied`. F2 (engine frames +1 … +4) is unmeasured unless B2 adds the bounded instrument. RTT / 2 is not a latency.
 9. **Corrections.** The epmd "harmless under NAT" and "would be exposed" claims are retracted (wildcard listener observed; reachability and firewall not established). "No collision" means collision is unvalidated.
+
+## Amendments of the M7-B1 correction (2026-10-19; design section 17)
+
+10. **Deadlines hold at event and effect boundaries.** A timer is a wakeup, not a deadline. Every event is judged at its processing time, after the deadlines that have passed by then. Eligibility is checked again immediately before the bytes, after any blocking pre-send work. A target cancelled there is never uncertain, and a late acknowledgement or a late confirmation is evidence only: it never resolves, confirms, releases or reopens anything. B2's native enforces the same on its own clock.
+11. **A restoration result proves the restoration.** A motion restore releases the candidate only with the whole restoration-result contract (design 17.2), journaled before it takes effect. Anything less is non-releasing and terminal for the session. This changes no M5 path and no accepted M6 operation semantics.
+12. **The peer sender's queue** is the implemented one, accepted for the first bounded headless-peer scope: drop-newest at 8, with stale (100 ms) and share-bound drops, the per-stream rate enforced by the producers (design 17.3). It is not a proof of absolute freshness.
+13. **The TLS observation is scoped** to the tested OTP 28 / ssl 11.5.4 configuration (design 15.7). No TLS redesign follows from it.
