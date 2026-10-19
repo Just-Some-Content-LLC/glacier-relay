@@ -27,6 +27,23 @@ defmodule GlacierRelayWeb.BoundaryTest do
     GlacierRelay.Command.Supervisor,
     GlacierRelay.Command.Reversal,
     GlacierRelay.Command.Correlation,
+    GlacierRelay.Command.MotionControl,
+    # M7-B1: the motion and peer paths and the headless peer
+    GlacierRelay.Motion,
+    GlacierRelay.Motion.Hub,
+    GlacierRelay.Motion.Link,
+    GlacierRelay.Motion.Listener,
+    GlacierRelay.Motion.Supervisor,
+    GlacierRelay.Motion.Destination,
+    GlacierRelay.Motion.Source,
+    GlacierRelay.Motion.Trace,
+    GlacierRelay.Motion.Codec,
+    GlacierRelay.Peer.Endpoint,
+    GlacierRelay.Peer.Connection,
+    GlacierRelay.Peer.Codec,
+    GlacierRelay.Peer.TLS,
+    GlacierRelay.HeadlessPeer,
+    GlacierRelay.HeadlessPeer.Driver,
     :gen_tcp,
     :socket,
     :inet,
@@ -178,6 +195,109 @@ defmodule GlacierRelayWeb.BoundaryTest do
               "lib/glacier_relay/statistics.ex"
             ] do
       refute File.read!(path) =~ "Command.", "#{path} mentions the command path"
+    end
+  end
+
+  # M7-B1 (ADR 0010 as amended, decision 6): the observer path never references the motion or peer
+  # paths, which never deliver evidence; the peer link and the headless peer never reach the
+  # command path or the engine-writing path; the hub only journals through the authority.
+  @motion_prefixes ~w(Elixir.GlacierRelay.Motion Elixir.GlacierRelay.Peer Elixir.GlacierRelay.HeadlessPeer)
+
+  defp prefixed(module, prefixes),
+    do: Enum.any?(prefixes, &String.starts_with?(Atom.to_string(module), &1))
+
+  test "no observer, web, recording, replay, fixture or test-support module calls the motion or peer path" do
+    {:ok, modules} = :application.get_key(:glacier_relay, :modules)
+    observers = Enum.filter(modules, &prefixed(&1, @observer_prefixes))
+
+    for module <- observers, {m, f, a} <- remote_calls(module) do
+      refute prefixed(m, @motion_prefixes), "#{inspect(module)} calls #{inspect(m)}.#{f}/#{a}"
+    end
+
+    for path <-
+          Path.wildcard("lib/glacier_relay/{wire,session,recording,dashboard}/**/*.ex") ++
+            Path.wildcard("lib/glacier_relay_web/**/*.ex") ++
+            [
+              "lib/glacier_relay/mission_session.ex",
+              "lib/glacier_relay/lifecycle.ex",
+              "lib/glacier_relay/statistics.ex",
+              "lib/glacier_relay/application.ex"
+            ],
+        token <- ["Motion.", "Peer.", "HeadlessPeer", "4750", "4760"] do
+      refute File.read!(path) =~ token, "#{path} mentions #{inspect(token)}"
+    end
+  end
+
+  test "the motion and peer paths never deliver evidence, fold, record or touch the telemetry wire" do
+    {:ok, modules} = :application.get_key(:glacier_relay, :modules)
+    motion = Enum.filter(modules, &prefixed(&1, @motion_prefixes))
+    assert GlacierRelay.Motion.Hub in motion and GlacierRelay.HeadlessPeer.Driver in motion
+
+    for module <- motion, {m, f, a} <- remote_calls(module) do
+      refute m in [
+               GlacierRelay.MissionSession,
+               GlacierRelay.Lifecycle,
+               GlacierRelay.Session.Fold,
+               GlacierRelay.Recording.Recorder,
+               GlacierRelay.Recording.Writer,
+               GlacierRelay.Wire.Listener,
+               GlacierRelay.Wire.Connection,
+               GlacierRelay.Wire.Envelope,
+               GlacierRelay.Events
+             ],
+             "#{inspect(module)} calls #{inspect(m)}.#{f}/#{a}"
+    end
+  end
+
+  test "the peer link and the headless peer reach neither the command path nor the engine-writing path" do
+    {:ok, modules} = :application.get_key(:glacier_relay, :modules)
+
+    peer_or_headless =
+      Enum.filter(
+        modules,
+        &prefixed(&1, ~w(Elixir.GlacierRelay.Peer Elixir.GlacierRelay.HeadlessPeer))
+      )
+
+    assert GlacierRelay.Peer.Connection in peer_or_headless
+
+    for module <- peer_or_headless, {m, f, a} <- remote_calls(module) do
+      refute String.starts_with?(Atom.to_string(m), "Elixir.GlacierRelay.Command") and
+               m not in [GlacierRelay.Command.Schema, GlacierRelay.Command.TransformWords],
+             "#{inspect(module)} calls #{inspect(m)}.#{f}/#{a}"
+
+      refute m in [
+               GlacierRelay.Motion,
+               GlacierRelay.Motion.Hub,
+               GlacierRelay.Motion.Link,
+               GlacierRelay.Motion.Listener,
+               GlacierRelay.Motion.Supervisor,
+               GlacierRelay.Motion.Destination
+             ],
+             "#{inspect(module)} calls #{inspect(m)}.#{f}/#{a}"
+
+      refute m == :gen_tcp and f == :send, "#{inspect(module)} writes a raw TCP socket"
+    end
+  end
+
+  test "the motion hub talks to the authority only to journal; it never issues, arms or opens" do
+    hub_to_authority =
+      for {GlacierRelay.Command.Authority, f, a} <- remote_calls(GlacierRelay.Motion.Hub),
+          do: {f, a}
+
+    assert Enum.uniq(hub_to_authority) == [motion_event: 1]
+
+    for pure <- [
+          GlacierRelay.Motion.Destination,
+          GlacierRelay.Motion.Source,
+          GlacierRelay.Motion.Course,
+          GlacierRelay.Motion.Codec,
+          GlacierRelay.Motion.LineCodec,
+          GlacierRelay.Peer.Codec,
+          GlacierRelay.Command.MotionControl
+        ],
+        {m, f, a} <- remote_calls(pure) do
+      refute m in [:gen_tcp, :ssl, :inet, :socket, GenServer, GlacierRelay.Command.Authority],
+             "#{inspect(pure)} (pure) calls #{inspect(m)}.#{f}/#{a}"
     end
   end
 

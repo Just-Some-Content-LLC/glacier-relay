@@ -47,6 +47,32 @@ defmodule GlacierRelayWeb.HeadlessTest do
     assert {:error, :econnrefused} = :gen_tcp.connect({127, 0, 0, 1}, port, [:binary], 500)
   end
 
+  test "the motion subtree is disabled by default and nothing of it runs (M7-B1 invariance)" do
+    assert Application.get_env(:glacier_relay, :motion)[:enabled] == false
+    assert Application.get_env(:glacier_relay, :motion)[:peer] == nil
+    refute GlacierRelay.Motion.enabled?()
+    assert {:error, :motion_disabled} = GlacierRelay.Motion.status()
+    assert {:error, :motion_disabled} = GlacierRelay.Motion.close_session()
+
+    for name <- [
+          GlacierRelay.Motion.Supervisor,
+          GlacierRelay.Motion.Hub,
+          GlacierRelay.Motion.Trace,
+          GlacierRelay.Motion.Listener,
+          GlacierRelay.Motion.LinkSupervisor,
+          GlacierRelay.Motion.PeerEndpoint,
+          GlacierRelay.HeadlessPeer,
+          GlacierRelay.HeadlessPeer.Driver,
+          GlacierRelay.HeadlessPeer.Endpoint
+        ] do
+      assert Process.whereis(name) == nil, "#{inspect(name)} is running with motion disabled"
+    end
+
+    for port <- [Application.get_env(:glacier_relay, :motion)[:port], 4750, 4760] do
+      assert {:error, :econnrefused} = :gen_tcp.connect({127, 0, 0, 1}, port, [:binary], 500)
+    end
+  end
+
   test "the supervision tree holds exactly the three M2 children, in the M2 order" do
     ids =
       GlacierRelay.Supervisor
