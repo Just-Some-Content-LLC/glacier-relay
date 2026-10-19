@@ -52,7 +52,9 @@ defmodule GlacierRelay.Motion.Supervisor do
       [
         %{id: Trace, start: {Trace, :start_link, [trace_opts]}},
         {Hub, trace: Trace},
-        {DynamicSupervisor, name: GlacierRelay.Motion.LinkSupervisor, strategy: :one_for_one},
+        # at most two motion-link processes at a time, bound or not (verifier finding K)
+        {DynamicSupervisor,
+         name: GlacierRelay.Motion.LinkSupervisor, strategy: :one_for_one, max_children: 2},
         {Listener, Keyword.take(opts, [:ip, :port, :hello_timeout_ms])}
       ] ++ peer
 

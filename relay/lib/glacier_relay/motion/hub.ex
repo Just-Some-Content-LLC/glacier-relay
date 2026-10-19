@@ -21,6 +21,14 @@ defmodule GlacierRelay.Motion.Hub do
   as a close. Trace loss, audit degradation and either link's loss close the share and the session;
   close itself never waits for anything but the native's answer, and gives up after 1,000 ms
   (`unknown`).
+
+  Verifier corrections (M7-B1 record): the trace and the audit are checked when a share or session
+  activates, and every refused trace append closes both (a batch's trace records are written before
+  its effects; a target the trace could not record is withdrawn, never sent); a close requested
+  while the open is in flight is applied the moment the outcome is known; an open whose outcome is
+  unknown or whose opening snapshot differs is ended on the motion link (never left to the native's
+  silence timer alone); a native close received before activation is honoured; a stream bound once
+  is never bound to a second session.
   """
 
   use GenServer
@@ -104,6 +112,8 @@ defmodule GlacierRelay.Motion.Hub do
      %{
        trace: Keyword.get(opts, :trace, GlacierRelay.Motion.Trace),
        trace_ok: true,
+       audit_ok: true,
+       used_streams: MapSet.new(),
        link: nil,
        peer: nil,
        share: nil,
@@ -115,7 +125,8 @@ defmodule GlacierRelay.Motion.Hub do
          unknown_ids: 0,
          native_messages: 0,
          peer_samples: 0,
-         send_failures: 0
+         send_failures: 0,
+         trace_dropped: 0
        }
      }}
   end
@@ -151,6 +162,9 @@ defmodule GlacierRelay.Motion.Hub do
       not state.trace_ok ->
         {:reply, {:error, :trace_unhealthy}, state}
 
+      not state.audit_ok ->
+        {:reply, {:error, :audit_degraded}, state}
+
       state.share != nil and state.share.status != :done ->
         {:reply, {:error, :share_exists}, state}
 
@@ -164,8 +178,7 @@ defmodule GlacierRelay.Motion.Hub do
         {:reply, {:error, :peer_not_current}, state}
 
       true ->
-        {:reply, {:ok, st},
-         %{state | share: %{id: st.share_id, statement: st, status: :pending, src: nil}}}
+        {:reply, {:ok, st}, %{state | share: pending(st.share_id, %{statement: st, src: nil})}}
     end
   end
 
@@ -175,6 +188,12 @@ defmodule GlacierRelay.Motion.Hub do
     cond do
       not state.trace_ok ->
         {:reply, {:error, :trace_unhealthy}, state}
+
+      not state.audit_ok ->
+        {:reply, {:error, :audit_degraded}, state}
+
+      MapSet.member?(state.used_streams, ap.stream_id) ->
+        {:reply, {:error, :stream_already_used}, state}
 
       state.session != nil and state.session.status != :done ->
         {:reply, {:error, :session_exists}, state}
@@ -196,7 +215,7 @@ defmodule GlacierRelay.Motion.Hub do
 
       true ->
         {:reply, {:ok, ap},
-         %{state | session: %{id: ap.session_id, approval: ap, status: :pending, dest: nil}}}
+         %{state | session: pending(ap.session_id, %{approval: ap, dest: nil})}}
     end
   end
 
@@ -220,11 +239,39 @@ defmodule GlacierRelay.Motion.Hub do
     {:reply, :ok, state |> dest(&Destination.close(&1, reason, now())) |> reschedule()}
   end
 
+  def handle_call({:close_session, reason}, _from, %{session: %{status: :pending} = s} = state) do
+    state =
+      %{state | session: %{s | close_requested: s.close_requested || reason}}
+      |> trace([
+        %{
+          "event" => "hub.close_requested_while_open_in_flight",
+          "session_id" => s.id,
+          "reason" => Destination.reason_text(reason)
+        }
+      ])
+
+    {:reply, :ok, state}
+  end
+
   def handle_call({:close_session, _reason}, _from, state),
     do: {:reply, {:error, :no_active_session}, state}
 
   def handle_call({:close_share, reason}, _from, %{share: %{status: :active}} = state) do
     {:reply, :ok, state |> src(&Source.close(&1, reason, now())) |> reschedule()}
+  end
+
+  def handle_call({:close_share, reason}, _from, %{share: %{status: :pending} = sh} = state) do
+    state =
+      %{state | share: %{sh | close_requested: sh.close_requested || reason}}
+      |> trace([
+        %{
+          "event" => "hub.close_requested_while_open_in_flight",
+          "share_id" => sh.id,
+          "reason" => Destination.reason_text(reason)
+        }
+      ])
+
+    {:reply, :ok, state}
   end
 
   def handle_call({:close_share, _reason}, _from, state),
@@ -240,32 +287,14 @@ defmodule GlacierRelay.Motion.Hub do
         {:share_result, id, status, facts},
         %{share: %{id: id, status: :pending}} = state
       ) do
-    st = state.share.statement
-
     state =
       case status do
         :applied ->
-          src =
-            Source.new(%{
-              share_id: id,
-              interval_ms: st.interval_ms,
-              duration_ms: st.duration_ms,
-              opened_at: now(),
-              label: st[:label]
-            })
+          activate_share(state, nil, facts)
 
-          state = %{state | share: %{state.share | status: :active, src: src}}
-
-          cond do
-            not peer_matches?(state, st.peer) or state.link == nil or
-                state.link.generation != st.motion_link_generation ->
-              src(state, &Source.close(&1, :binding_lost_before_activation, now()))
-
-            true ->
-              state
-              |> send_peer_control("stream.open", Source.stream_open(src))
-              |> event(%{"event" => "motion.share.activated", "share_id" => id, "facts" => facts})
-          end
+        :unknown ->
+          # the native may be sampling: end it on the motion link
+          activate_share(state, :open_unknown, facts)
 
         other ->
           state
@@ -295,39 +324,19 @@ defmodule GlacierRelay.Motion.Hub do
         {:session_result, id, status, facts},
         %{session: %{id: id, status: :pending}} = state
       ) do
-    ap = state.session.approval
-
     state =
       case status do
         :applied ->
-          dest =
-            Destination.new(%{
-              session_id: id,
-              stream_id: ap.stream_id,
-              limits: ap.limits,
-              opening_world: facts.opening_world,
-              opened_at: now()
-            })
+          activate_session(state, facts.opening_world, nil)
 
-          state = %{state | session: %{state.session | status: :active, dest: dest}}
-
-          state =
-            event(state, %{
-              "event" => "motion.session.activated",
-              "session_id" => id,
-              "stream_id" => ap.stream_id,
-              "opening_world" => facts.opening_world
-            })
-
-          stream = state.peer && Map.get(state.peer.streams, ap.stream_id)
-
-          if peer_matches?(state, ap.peer) and stream != nil and
-               stream.source_kind == ap.source_kind and
-               state.link != nil and state.link.generation == ap.motion_link_generation do
-            state
-          else
-            dest(state, &Destination.close(&1, :binding_lost_before_activation, now()))
-          end
+        uncertain when uncertain in [:unknown, :open_unverified] ->
+          # the native may have opened a session: end it on the motion link (confirmed or unknown),
+          # never leave it to the native's silence timer alone
+          activate_session(
+            state,
+            facts[:opening_world] || facts.expect_world,
+            if(uncertain == :unknown, do: :open_unknown, else: :open_unverified)
+          )
 
         other ->
           state
@@ -359,7 +368,7 @@ defmodule GlacierRelay.Motion.Hub do
 
   def handle_cast(:audit_degraded, state) do
     {:noreply,
-     state
+     %{state | audit_ok: false}
      |> dest(&Destination.close(&1, :audit_degraded, now()))
      |> src(&Source.close(&1, :audit_degraded, now()))
      |> reschedule()}
@@ -408,6 +417,137 @@ defmodule GlacierRelay.Motion.Hub do
 
   def handle_info(_msg, state), do: {:noreply, state}
 
+  # -- activation (verifier corrections A and B) ---------------------------------------------------------
+
+  # a prepared entry: a close requested or a native close received while its open is in flight is
+  # kept here and applied the moment the authority reports the outcome
+  defp pending(id, fields),
+    do: Map.merge(fields, %{id: id, status: :pending, close_requested: nil, native_closed: nil})
+
+  defp activate_share(state, forced, facts) do
+    sh = state.share
+    st = sh.statement
+
+    src =
+      Source.new(%{
+        share_id: sh.id,
+        interval_ms: st.interval_ms,
+        duration_ms: st.duration_ms,
+        opened_at: now(),
+        label: st[:label]
+      })
+
+    state = %{state | share: %{sh | status: :active, src: src}}
+
+    reason =
+      cond do
+        forced != nil ->
+          forced
+
+        sh.close_requested != nil ->
+          sh.close_requested
+
+        not state.trace_ok ->
+          :trace_unhealthy
+
+        not state.audit_ok ->
+          :audit_degraded
+
+        not peer_matches?(state, st.peer) or state.link == nil or
+            state.link.generation != st.motion_link_generation ->
+          :binding_lost_before_activation
+
+        true ->
+          nil
+      end
+
+    cond do
+      sh.native_closed != nil ->
+        src(state, &Source.native_closed(&1, sh.native_closed, now()))
+
+      reason != nil ->
+        state
+        |> event(%{
+          "event" => "motion.share.closing_at_activation",
+          "share_id" => sh.id,
+          "reason" => Destination.reason_text(reason)
+        })
+        |> src(&Source.close(&1, reason, now()))
+
+      true ->
+        state
+        |> send_peer_control("stream.open", Source.stream_open(src))
+        |> then(&put_in(&1.share.src, Source.announced(&1.share.src)))
+        |> event(%{"event" => "motion.share.activated", "share_id" => sh.id, "facts" => facts})
+    end
+  end
+
+  defp activate_session(state, opening_world, forced) do
+    s = state.session
+    ap = s.approval
+
+    dest =
+      Destination.new(%{
+        session_id: s.id,
+        stream_id: ap.stream_id,
+        limits: ap.limits,
+        opening_world: opening_world,
+        opened_at: now()
+      })
+
+    state = %{
+      state
+      | session: %{s | status: :active, dest: dest},
+        used_streams: MapSet.put(state.used_streams, ap.stream_id)
+    }
+
+    stream = state.peer && Map.get(state.peer.streams, ap.stream_id)
+
+    reason =
+      cond do
+        forced != nil ->
+          forced
+
+        s.close_requested != nil ->
+          s.close_requested
+
+        not state.trace_ok ->
+          :trace_unhealthy
+
+        not state.audit_ok ->
+          :audit_degraded
+
+        not (peer_matches?(state, ap.peer) and stream != nil and
+               stream.source_kind == ap.source_kind and
+               state.link != nil and state.link.generation == ap.motion_link_generation) ->
+          :binding_lost_before_activation
+
+        true ->
+          nil
+      end
+
+    state =
+      event(state, %{
+        "event" =>
+          if(reason, do: "motion.session.closing_at_activation", else: "motion.session.activated"),
+        "session_id" => s.id,
+        "stream_id" => ap.stream_id,
+        "opening_world" => opening_world,
+        "reason" => reason && Destination.reason_text(reason)
+      })
+
+    cond do
+      s.native_closed != nil ->
+        dest(state, &Destination.native_closed(&1, s.native_closed, now()))
+
+      reason != nil ->
+        dest(state, &Destination.close(&1, reason, now()))
+
+      true ->
+        state
+    end
+  end
+
   # -- native messages ----------------------------------------------------------------------------------
 
   defp native({:hero_sample, hs}, state) do
@@ -426,7 +566,8 @@ defmodule GlacierRelay.Motion.Hub do
         if s == :active,
           do: src(state, &Source.native_closed(&1, c, now())),
           else:
-            event(state, %{
+            %{state | share: %{state.share | native_closed: c}}
+            |> event(%{
               "event" => "motion.share.closed_before_activation",
               "share_id" => id,
               "reason" => c.reason
@@ -449,7 +590,8 @@ defmodule GlacierRelay.Motion.Hub do
         end
 
       %{id: id, status: :pending} when id == m.session_id and kind == :ghost_closed ->
-        event(state, %{
+        %{state | session: %{state.session | native_closed: m}}
+        |> event(%{
           "event" => "motion.session.closed_before_activation",
           "session_id" => id,
           "reason" => m.reason
@@ -635,15 +777,30 @@ defmodule GlacierRelay.Motion.Hub do
 
   defp src(state, _fun), do: state
 
+  # the batch's trace records first: a required trace that cannot take them closes the share and
+  # the session, and this batch's effects (a target, a relayed sample) are withdrawn, never sent
   defp run(state, actions, owner) do
-    {state, traces} =
-      Enum.reduce(actions, {state, []}, fn
-        {:trace, rec}, {st, tr} -> {st, [rec | tr]}
-        action, {st, tr} -> {act(action, st, owner), tr}
-      end)
+    {traces, others} = Enum.split_with(actions, &match?({:trace, _}, &1))
+    state = trace(state, Enum.map(traces, &elem(&1, 1)))
 
-    trace(state, Enum.reverse(traces))
+    Enum.reduce(others, state, fn action, st ->
+      if st.trace_ok or not effect?(action),
+        do: act(action, st, owner),
+        else: withdraw(action, st, owner)
+    end)
   end
+
+  defp effect?({:send_target, _}), do: true
+  defp effect?({:send_peer, "pose.sample", _}), do: true
+  defp effect?(_), do: false
+
+  defp withdraw({:send_target, t}, state, :session),
+    do: put_in(state.session.dest, Destination.withdrawn(state.session.dest, t.seq))
+
+  defp withdraw({:send_peer, "pose.sample", _}, state, :share),
+    do: put_in(state.share.src, Source.send_dropped(state.share.src))
+
+  defp withdraw(_action, state, _owner), do: state
 
   defp act({:send_target, t}, state, :session) do
     case write(state, Codec.target(t.session_id, t.seq, t.pos)) do
@@ -661,7 +818,7 @@ defmodule GlacierRelay.Motion.Hub do
 
   defp act({:send_share_close, reason}, state, :share) do
     case write(state, Codec.close_share(state.share.id, Destination.reason_text(reason))) do
-      {:ok, state} -> state
+      {:ok, state} -> src(state, &Source.close_transmitted(&1, now()))
       {:error, state} -> lose_link(state, :share_close_not_written)
     end
   end
@@ -719,8 +876,15 @@ defmodule GlacierRelay.Motion.Hub do
     end
   end
 
-  # the trace is required: a refused append closes the share and the session
+  # the trace is required: every refused append — and every record after the trace became
+  # unhealthy, which is no longer offered to it — closes the share and the session (idempotent)
   defp trace(state, []), do: state
+
+  defp trace(%{trace_ok: false} = state, records) do
+    state
+    |> Map.update!(:counts, &Map.update!(&1, :trace_dropped, fn n -> n + length(records) end))
+    |> close_for_trace()
+  end
 
   defp trace(state, records) do
     case safe_append(state.trace, records) do
@@ -732,20 +896,23 @@ defmodule GlacierRelay.Motion.Hub do
           "motion hub: trace unhealthy (#{inspect(health)}); closing share and session"
         )
 
-        t = now()
-
-        if state.trace_ok do
-          %{state | trace_ok: false}
-          |> dest(&Destination.close(&1, :trace_unhealthy, t))
-          |> src(&Source.close(&1, :trace_unhealthy, t))
-        else
-          state
-        end
+        %{state | trace_ok: false}
+        |> Map.update!(:counts, &Map.update!(&1, :trace_dropped, fn n -> n + length(records) end))
+        |> close_for_trace()
     end
   end
 
+  defp close_for_trace(state) do
+    t = now()
+
+    state
+    |> dest(&Destination.close(&1, :trace_unhealthy, t))
+    |> src(&Source.close(&1, :trace_unhealthy, t))
+  end
+
+  # a short deadline: a slow trace never holds the hub (and with it close handling) for long
   defp safe_append(trace, records) do
-    Trace.append(trace, records)
+    Trace.append(trace, records, 200)
   catch
     :exit, reason -> {:error, {:trace_unavailable, reason}}
   end
@@ -809,6 +976,8 @@ defmodule GlacierRelay.Motion.Hub do
           },
       history: state.history,
       trace_ok: state.trace_ok,
+      audit_ok: state.audit_ok,
+      used_streams: MapSet.size(state.used_streams),
       counts: state.counts
     }
   end

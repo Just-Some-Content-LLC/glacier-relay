@@ -94,6 +94,9 @@ defmodule GlacierRelay.Peer.Connection do
 
   @impl true
   def init(opts) do
+    # the endpoint must hand the socket over and say go within the handshake deadline
+    Process.send_after(self(), :tls_timeout, TLS.handshake_timeout_ms())
+
     {:ok,
      %{
        socket: Keyword.fetch!(opts, :socket),
@@ -110,6 +113,7 @@ defmodule GlacierRelay.Peer.Connection do
        hello_timer: nil,
        ping_timer: nil,
        ping_seq: 0,
+       ping_sent: nil,
        last_inbound: Clock.now_ms(),
        closed: false,
        counts: %{
@@ -219,6 +223,11 @@ defmodule GlacierRelay.Peer.Connection do
 
   def handle_info(:hello_timeout, state), do: {:noreply, state}
 
+  def handle_info(:tls_timeout, %{phase: :tls} = state),
+    do: {:stop, :normal, %{state | closed: true}}
+
+  def handle_info(:tls_timeout, state), do: {:noreply, state}
+
   def handle_info(:ping, %{phase: :identified} = state) do
     now = Clock.now_ms()
 
@@ -226,7 +235,13 @@ defmodule GlacierRelay.Peer.Connection do
       shutdown(state, :idle, true)
     else
       seq = state.ping_seq + 1
-      state = %{state | ping_seq: seq, ping_timer: Process.send_after(self(), :ping, @ping_ms)}
+
+      state = %{
+        state
+        | ping_seq: seq,
+          ping_sent: {seq, now},
+          ping_timer: Process.send_after(self(), :ping, @ping_ms)
+      }
 
       send_line(
         state,
@@ -288,11 +303,20 @@ defmodule GlacierRelay.Peer.Connection do
         end
 
       {{:ok, {:pong, f}}, :identified} ->
-        # the RTT on this node's clock only: its own echoed send time against its own now
-        rtt = Clock.now_ms() - f.echo_mono_ms
-        state = %{state | last_rtt_ms: rtt} |> out(:pongs)
-        notify(state, {:rtt, info(state), %{ping_seq: f.ping_seq, rtt_ms: rtt}})
-        {:cont, {:ok, state}}
+        # the RTT on this node's clock only, from the send time it kept itself (verifier finding
+        # M: the peer's echo is never trusted); an unmatched pong is counted and ignored
+        state = out(state, :pongs)
+
+        case state.ping_sent do
+          {seq, sent} when seq == f.ping_seq ->
+            rtt = Clock.now_ms() - sent
+            state = %{state | last_rtt_ms: rtt, ping_sent: nil}
+            notify(state, {:rtt, info(state), %{ping_seq: seq, rtt_ms: rtt}})
+            {:cont, {:ok, state}}
+
+          _ ->
+            {:cont, {:ok, state}}
+        end
 
       {{:ok, {:bye, f}}, _} ->
         {:halt, {:close, {:peer_bye, f.reason}, state}}

@@ -107,7 +107,8 @@ defmodule GlacierRelay.Command.Authority do
     evidence_clock_skew_ms: 5_000,
     reversal_inspection_max_age_ms: 60_000,
     motion: false,
-    max_motion_sessions: 1
+    max_motion_sessions: 1,
+    restart_latch: nil
   ]
 
   @observation_types ~w(visual_confirmation visual_no_change later_frame_read_back engine_consistent note)
@@ -224,33 +225,68 @@ defmodule GlacierRelay.Command.Authority do
     # source, and the stored config never carries `:token`.
     {credential, token_source} = TokenHolder.open(config)
 
-    {:ok,
-     %{
-       config: Keyword.delete(config, :token),
-       credential: credential,
-       token_source: token_source,
-       journal: Keyword.get(opts, :journal, Journal),
-       link: nil,
-       next_generation: 1,
-       armed: false,
-       effectful: nil,
-       corroboration: nil,
-       audit: :intact,
-       in_flight: nil,
-       commands: %{},
-       order: [],
-       motion: MotionControl.initial(config),
-       counters: %{
-         issued: 0,
-         refused: 0,
-         anomalies: 0,
-         links: 0,
-         unknown: 0,
-         audit_failures: 0,
-         attest_failures: 0,
-         observations: 0
-       }
-     }}
+    state = %{
+      config: Keyword.delete(config, :token),
+      credential: credential,
+      token_source: token_source,
+      journal: Keyword.get(opts, :journal, Journal),
+      link: nil,
+      next_generation: 1,
+      armed: false,
+      effectful: nil,
+      corroboration: nil,
+      audit: :intact,
+      in_flight: nil,
+      commands: %{},
+      order: [],
+      motion: MotionControl.initial(config),
+      starts: count_start(config[:restart_latch]),
+      counters: %{
+        issued: 0,
+        refused: 0,
+        anomalies: 0,
+        links: 0,
+        unknown: 0,
+        audit_failures: 0,
+        attest_failures: 0,
+        observations: 0
+      }
+    }
+
+    if state.motion.enabled and state.starts > 1,
+      do: {:ok, state, {:continue, :latch}},
+      else: {:ok, state}
+  end
+
+  # M7-B1 (verifier finding C): how many times an authority started under this command subtree's
+  # latch — a reference the subtree's parent creates once, so it survives every restart of the
+  # authority, the journal or the subtree itself. With motion on, a later start refuses every
+  # motion-gated and every transform entry until the node restarts: a restart never resets the
+  # session budget, the exclusivity or the M6 forward budget behind a displaced candidate.
+  defp count_start(nil), do: 1
+
+  defp count_start(latch) do
+    key = {__MODULE__, :starts, latch}
+    n = :persistent_term.get(key, 0) + 1
+    :persistent_term.put(key, n)
+    n
+  end
+
+  @impl true
+  def handle_continue(:latch, state) do
+    {state, _} =
+      audit(state, %{
+        "event" => "motion.restart_latched",
+        "authority_starts" => state.starts,
+        "refused_until_node_restart" => [
+          "player.pose.share/1",
+          "candidate.motion.session/1",
+          "candidate.transform.set/1",
+          "candidate.transform.set/2"
+        ]
+      })
+
+    {:noreply, state}
   end
 
   # Defense in depth since the token-guard correction moved the token out of the state into the private holder: a
@@ -1127,6 +1163,10 @@ defmodule GlacierRelay.Command.Authority do
 
       entry.issuable == false ->
         {:error, {:not_issuable, name, version}}
+
+      state.motion.enabled and state.starts > 1 and
+          (Map.get(entry, :gate) == :motion or entry.effect == :transform) ->
+        {:error, {:authority_restarted, state.starts}}
 
       not effectful and not state.armed ->
         {:error, :disarmed}

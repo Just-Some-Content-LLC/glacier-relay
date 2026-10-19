@@ -67,6 +67,7 @@ defmodule GlacierRelay.Motion.Destination do
     :last_forward_r,
     phase: :open,
     last_seq: 0,
+    last_applied_seq: 0,
     last_src: nil,
     lag_base: nil,
     pending: nil,
@@ -154,6 +155,7 @@ defmodule GlacierRelay.Motion.Destination do
       unacknowledged: 0,
       reports: 0,
       dropped_on_close: 0,
+      withdrawn: 0,
       max_lag_growth_ms: 0,
       refused: Map.new(@refusals, &{&1, 0})
     }
@@ -340,7 +342,11 @@ defmodule GlacierRelay.Motion.Destination do
           "applied" ->
             if ack.exact == true and ack.post == f.pos do
               st =
-                %{st | ref: %{seq: f.seq, x: f.x, y: f.y, pos: f.pos, r: f.r_sent}}
+                %{
+                  st
+                  | ref: %{seq: f.seq, x: f.x, y: f.y, pos: f.pos, r: f.r_sent},
+                    last_applied_seq: f.seq
+                }
                 |> bump(:applied)
 
               {st, a} = try_forward(st, now)
@@ -503,6 +509,19 @@ defmodule GlacierRelay.Motion.Destination do
 
   def close(%__MODULE__{} = st, _reason, _now), do: {st, []}
 
+  @doc """
+  The target in flight was never written (its trace record was refused first): it is withdrawn —
+  not uncertain, because no byte of it left this node — and the session is already closing.
+  """
+  def withdrawn(%__MODULE__{in_flight: %{seq: seq}} = st, seq),
+    do: %{
+      bump(st, :withdrawn)
+      | in_flight: nil,
+        counts: Map.update!(st.counts, :forwarded, &(&1 - 1))
+    }
+
+  def withdrawn(st, _seq), do: st
+
   @doc "The `ghost.close` line was written."
   def close_transmitted(%__MODULE__{close: %{state: :requested}} = st, now) do
     st = put_in(st.close.state, :transmitted)
@@ -622,12 +641,37 @@ defmodule GlacierRelay.Motion.Destination do
             last_applied_seq: nc.last_applied_seq,
             applied: nc.applied
           },
-      restorable:
-        st.phase == :closed and st.close != nil and st.close.state == :confirmed and nc != nil and
-          nc.clean == true and is_binary(nc.final_world) and st.counts.uncertain == 0 and
-          st.unresolved == nil
+      restorable: restorable?(st, nc)
     }
   end
+
+  # BEAM-side closes that mean the two sides disagree or an outcome is uncertain (an open whose
+  # outcome is unknown or whose opening snapshot differed included): never restorable, whatever the
+  # native reports
+  @disagreements [
+    :report_gap,
+    :report_disagrees,
+    :ack_mismatch,
+    :skip_disagrees,
+    :postimage_mismatch,
+    :ack_timeout,
+    :open_unknown,
+    :open_unverified
+  ]
+
+  # restorable only after a native-confirmed clean close whose own counts agree with the
+  # acknowledgements BEAM received, with no uncertainty and no disagreement on either side
+  defp restorable?(st, nc) do
+    st.phase == :closed and st.close != nil and st.close.state == :confirmed and nc != nil and
+      nc.clean == true and is_binary(nc.final_world) and st.counts.uncertain == 0 and
+      st.unresolved == nil and Map.get(st.counts, :mismatched_acks, 0) == 0 and
+      not disagreement?(st.close.reason) and nc.applied == st.counts.applied and
+      (nc.last_applied_seq || 0) == st.last_applied_seq
+  end
+
+  defp disagreement?(r) when r in @disagreements, do: true
+  defp disagreement?({:uncertain, _}), do: true
+  defp disagreement?(_), do: false
 
   @doc "A close reason as text."
   def reason_text(r) when is_atom(r), do: Atom.to_string(r)

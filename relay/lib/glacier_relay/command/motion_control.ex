@@ -42,7 +42,7 @@ defmodule GlacierRelay.Command.MotionControl do
   def initial(config) do
     %{
       enabled: Keyword.get(config, :motion, false) == true,
-      max_sessions: Keyword.get(config, :max_motion_sessions, 1),
+      max_sessions: max_sessions(Keyword.get(config, :max_motion_sessions, 1)),
       link: nil,
       next_generation: 1,
       sessions: %{},
@@ -52,6 +52,13 @@ defmodule GlacierRelay.Command.MotionControl do
   end
 
   def native_limits, do: @native_limits
+
+  # the destination-session budget per authority process: 1 … 4, nothing else (verifier finding O)
+  defp max_sessions(n) when is_integer(n) and n >= 1 and n <= 4, do: n
+
+  defp max_sessions(other),
+    do:
+      raise(ArgumentError, "max_motion_sessions must be an integer 1..4, got: #{inspect(other)}")
 
   # -- the motion link ----------------------------------------------------------------------------------
 
@@ -229,6 +236,9 @@ defmodule GlacierRelay.Command.MotionControl do
          {:ok, q} <- TransformBinding.qualify(ctx, Keyword.get(opts, :inspection_command_id)),
          true <- q.journal_seq > facts.closed_seq or {:error, :inspection_not_after_close},
          true <- q.adapter == facts.adapter or {:error, :inspection_adapter_mismatch},
+         true <-
+           q.mission_generation == facts.mission_generation or
+             {:error, :inspection_generation_not_the_sessions},
          :ok <- restore_state(q.world, facts),
          canonical =
            Map.merge(expectations(q), %{
@@ -265,11 +275,17 @@ defmodule GlacierRelay.Command.MotionControl do
 
     with true <- rec != nil or {:error, {:unknown_motion_session, sid}},
          true <- rec.state == :closed_clean or {:error, {:session_not_restorable, rec.state}},
+         true <-
+           (state.link != nil and state.link.token_verified == true) or
+             {:error, :no_token_verified_link},
          {:ok, ctx} <- ctx_fun.(),
          {:ok, facts} <- journal_facts(ctx.journal.entries, sid, rec.open_command_id),
          {:ok, q} <- TransformBinding.qualify(ctx, inspection_id),
          true <- q.journal_seq > facts.closed_seq or {:error, :inspection_not_after_close},
          true <- q.adapter == facts.adapter or {:error, :inspection_adapter_mismatch},
+         true <-
+           q.mission_generation == facts.mission_generation or
+             {:error, :inspection_generation_not_the_sessions},
          true <- TransformWords.encode(q.world) == facts.preimage or {:error, :not_at_baseline} do
       {:ok, Map.merge(binding_of(q), %{"session_id" => sid, "preimage" => facts.preimage})}
     end
@@ -310,7 +326,14 @@ defmodule GlacierRelay.Command.MotionControl do
          when is_binary(final) <-
            c["summary"],
          {:ok, adapter} <- adapter_of(entries, a["link_generation"]) do
-      {:ok, %{preimage: preimage, final: final, closed_seq: c["seq"], adapter: adapter}}
+      {:ok,
+       %{
+         preimage: preimage,
+         final: final,
+         closed_seq: c["seq"],
+         adapter: adapter,
+         mission_generation: get_in(a, ["preconditions", "mission_generation"])
+       }}
     else
       _ -> {:error, :session_history_not_restorable}
     end
@@ -455,7 +478,7 @@ defmodule GlacierRelay.Command.MotionControl do
               {:open_failed, status}
           end
 
-        facts = %{opening_world: elem_or_nil(opening)}
+        facts = %{opening_world: elem_or_nil(opening), expect_world: cmd.params["expect_world"]}
         {%{state | motion: put_in(m.sessions[id].state, new)}, {:session, id, notify, facts}}
 
       :session_restore ->
@@ -485,7 +508,7 @@ defmodule GlacierRelay.Command.MotionControl do
   def on_terminal(state, _cmd, _result), do: {state, nil}
 
   @doc "An unknown outcome for a motion command (possible effect): never released."
-  def on_unknown(state, %{motion: %{kind: kind, id: id}}) do
+  def on_unknown(state, %{motion: %{kind: kind, id: id}} = cmd) do
     m = state.motion
 
     case kind do
@@ -495,7 +518,7 @@ defmodule GlacierRelay.Command.MotionControl do
 
       :session_open ->
         {%{state | motion: put_in(m.sessions[id].state, :open_unknown)},
-         {:session, id, :unknown, %{}}}
+         {:session, id, :unknown, %{expect_world: cmd.params["expect_world"]}}}
 
       :session_restore ->
         {%{state | motion: put_in(m.sessions[id].state, :restore_unknown)}, nil}
@@ -555,7 +578,9 @@ defmodule GlacierRelay.Command.MotionControl do
           %{session_id: sid, state: s.state, open_command_id: s.open_command_id}
         end),
       shares: Enum.map(m.shares, fn {id, s} -> %{share_id: id, state: s.state} end),
-      exclusivity: transform_allowed(state)
+      exclusivity: transform_allowed(state),
+      authority_starts: state.starts,
+      restart_latched: m.enabled and state.starts > 1
     }
   end
 end

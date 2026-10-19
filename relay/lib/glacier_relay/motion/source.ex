@@ -22,6 +22,7 @@ defmodule GlacierRelay.Motion.Source do
     :opened_at,
     :label,
     phase: :open,
+    announced: false,
     last_seq: 0,
     last_native_ms: nil,
     last_sent_r: nil,
@@ -60,6 +61,9 @@ defmodule GlacierRelay.Motion.Source do
       "label" => st.label,
       "course" => nil
     }
+
+  @doc "The stream was announced to the peer (`stream.open` queued)."
+  def announced(%__MODULE__{} = st), do: %{st | announced: true}
 
   @doc "A native `hero.sample` of the bound share."
   def hero_sample(%__MODULE__{} = st, hs, now) do
@@ -118,25 +122,40 @@ defmodule GlacierRelay.Motion.Source do
   @doc "A relayed sample the peer connection could not take (counted, never retried)."
   def send_dropped(%__MODULE__{} = st), do: bump(st, :send_dropped)
 
-  @doc "Ends the share (no arming): asks the native to stop and ends the stream on the peer link."
+  @doc """
+  Ends the share (no arming): asks the native to stop and — when the stream was announced — ends it
+  on the peer link. Close states as a destination's: `requested` → `transmitted` → `confirmed` (the
+  native's `share.closed`) or `unknown` (no confirmation within 1,000 ms, or the link lost first; the
+  link is then dropped).
+  """
   def close(%__MODULE__{phase: :open} = st, reason, now) do
     st = %{st | phase: :closing, close: %{reason: reason, state: :requested, requested_r: now}}
 
+    end_stream =
+      if st.announced,
+        do: [
+          {:send_peer, "stream.end",
+           %{
+             "stream_id" => st.share_id,
+             "reason" => reason_text(reason),
+             "last_seq" => st.last_seq,
+             "sent" => st.counts.relayed
+           }}
+        ],
+        else: []
+
     {st,
-     [
-       {:send_share_close, reason},
-       {:send_peer, "stream.end",
-        %{
-          "stream_id" => st.share_id,
-          "reason" => reason_text(reason),
-          "last_seq" => st.last_seq,
-          "sent" => st.counts.relayed
-        }},
-       trace(st, now, "close_requested", %{"reason" => reason_text(reason)})
-     ]}
+     [{:send_share_close, reason}] ++
+       end_stream ++ [trace(st, now, "close_requested", %{"reason" => reason_text(reason)})]}
   end
 
   def close(st, _reason, _now), do: {st, []}
+
+  @doc "The `share.close` line was written."
+  def close_transmitted(%__MODULE__{close: %{state: :requested}} = st, _now),
+    do: put_in(st.close.state, :transmitted) |> then(&{&1, []})
+
+  def close_transmitted(st, _now), do: {st, []}
 
   @doc "The native's `share.closed`."
   def native_closed(%__MODULE__{} = st, c, now) do
@@ -167,14 +186,35 @@ defmodule GlacierRelay.Motion.Source do
     {st, actions ++ [{:closed, summary(st)}]}
   end
 
-  @doc "The duration bound."
+  @doc "The duration bound, and the 1,000 ms close confirmation."
   def tick(%__MODULE__{phase: :open} = st, now) do
     if now >= st.opened_at + st.duration_ms, do: close(st, :duration, now), else: {st, []}
+  end
+
+  def tick(%__MODULE__{phase: :closing, close: %{state: s} = c} = st, now)
+      when s in [:requested, :transmitted] do
+    if now >= c.requested_r + 1_000 do
+      st = %{st | phase: :closed, close: %{c | state: :unknown}}
+
+      {st,
+       [
+         trace(st, now, "close_unknown", %{"why" => "no confirmation"}),
+         {:drop_link, :share_close_unconfirmed},
+         {:closed, summary(st)}
+       ]}
+    else
+      {st, []}
+    end
   end
 
   def tick(st, _now), do: {st, []}
 
   def next_deadline(%__MODULE__{phase: :open} = st), do: st.opened_at + st.duration_ms
+
+  def next_deadline(%__MODULE__{phase: :closing, close: %{state: s, requested_r: r}})
+      when s in [:requested, :transmitted],
+      do: r + 1_000
+
   def next_deadline(_), do: nil
 
   def summary(%__MODULE__{} = st),

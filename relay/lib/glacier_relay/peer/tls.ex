@@ -40,9 +40,17 @@ defmodule GlacierRelay.Peer.TLS do
   be a 0-arity function returning them, so that no child specification or crash report carries the
   material itself.
   """
-  def credentials(fun) when is_function(fun, 0), do: credentials(fun.())
+  def credentials(fun) when is_function(fun, 0), do: load(fun.())
 
+  # verifier finding L: an inline private key is accepted only inside a function, so it never sits
+  # in a child specification or a supervisor report; files are accepted as they are
   def credentials(opts) when is_list(opts) or is_map(opts) do
+    if Map.has_key?(Map.new(opts), :key),
+      do: {:error, :inline_key_only_through_a_function},
+      else: load(opts)
+  end
+
+  defp load(opts) when is_list(opts) or is_map(opts) do
     opts = Map.new(opts)
 
     with {:ok, cert} <- der(opts, :cert, :cert_file, :Certificate),
@@ -56,6 +64,8 @@ defmodule GlacierRelay.Peer.TLS do
       {:error, _} = error -> error
     end
   end
+
+  defp load(_), do: {:error, :credentials_invalid}
 
   defp der(opts, key, file_key, type) do
     cond do

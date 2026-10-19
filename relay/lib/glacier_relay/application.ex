@@ -39,7 +39,10 @@ defmodule GlacierRelay.Application do
   # M5-A (ADR 0009): the optional command subtree, last, only when enabled; nothing of it starts
   # otherwise and the tree stays exactly M4's.
   defp command_children do
-    if command_enabled?(), do: [GlacierRelay.Command.Supervisor], else: []
+    # one restart latch per application start: it survives every restart of the command subtree
+    if command_enabled?(),
+      do: [{GlacierRelay.Command.Supervisor, restart_latch: make_ref()}],
+      else: []
   end
 
   @doc "Whether the optional web subtree is configured to start with the application."

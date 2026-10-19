@@ -47,7 +47,10 @@ defmodule GlacierRelay.Command.Supervisor do
          ])
          |> Keyword.merge(
            motion: Keyword.get(motion, :enabled, false) == true,
-           max_motion_sessions: Keyword.get(motion, :max_sessions, 1)
+           max_motion_sessions: Keyword.get(motion, :max_sessions, 1),
+           # the parent's latch when given (the application creates one at its start), else one
+           # per start of this subtree (tests)
+           restart_latch: Keyword.get(config, :restart_latch) || make_ref()
          )},
         {DynamicSupervisor, name: GlacierRelay.Command.LinkSupervisor, strategy: :one_for_one},
         {Listener, Keyword.take(config, [:ip, :port, :max_line_bytes, :hello_timeout_ms])}

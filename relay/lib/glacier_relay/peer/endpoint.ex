@@ -105,11 +105,19 @@ defmodule GlacierRelay.Peer.Endpoint do
   defp maybe_connect(state), do: state
 
   # in the process that owns the socket: register a connection, pass the socket, start it
+  # verifier finding N: a failed hand-over closes the socket and ends the registered connection;
+  # the acceptor keeps serving
   defp hand_over(endpoint, socket) do
     case register(endpoint, socket) do
       {:ok, pid} ->
-        :ok = :ssl.controlling_process(socket, pid)
-        Connection.go(pid)
+        case :ssl.controlling_process(socket, pid) do
+          :ok ->
+            Connection.go(pid)
+
+          {:error, _} ->
+            :ssl.close(socket)
+            Process.exit(pid, :kill)
+        end
 
       {:error, _} ->
         :ssl.close(socket)

@@ -105,7 +105,9 @@ defmodule GlacierRelay.HeadlessPeer.Driver do
               start: start,
               sent: 0,
               dropped: 0,
+              spaced: 0,
               last_seq: 0,
+              last_sent_at: nil,
               timer: Process.send_after(self(), :emit, 0)
             }
 
@@ -173,10 +175,18 @@ defmodule GlacierRelay.HeadlessPeer.Driver do
       "reason" => nil
     }
 
+    # at most one sample per 45 ms per stream (contract 15.6): after a scheduler delay the overdue
+    # samples are dropped and counted, never sent as a burst with near-identical source times
     {src, rec} =
-      case state.peer && Connection.send_sample(state.peer.info, fields) do
-        :ok -> {%{src | sent: src.sent + 1, last_seq: s.seq}, "sent"}
-        _ -> {%{src | dropped: src.dropped + 1}, "dropped"}
+      cond do
+        src.last_sent_at != nil and now - src.last_sent_at < 45 ->
+          {%{src | spaced: src.spaced + 1}, "spacing"}
+
+        state.peer && Connection.send_sample(state.peer.info, fields) == :ok ->
+          {%{src | sent: src.sent + 1, last_seq: s.seq, last_sent_at: now}, "sent"}
+
+        true ->
+          {%{src | dropped: src.dropped + 1}, "dropped"}
       end
 
     # the next sample at the run's start + k × interval: no accumulated drift
@@ -225,12 +235,19 @@ defmodule GlacierRelay.HeadlessPeer.Driver do
       reason: to_string(reason),
       sent: src.sent,
       dropped: src.dropped,
+      spaced: src.spaced,
       last_seq: src.last_seq,
       total: src.total
     }
 
     %{state | source: nil, sources_done: Enum.take([done | state.sources_done], 16)}
-    |> trace([Map.merge(fields, %{"event" => "source.stream_end", "dropped" => src.dropped})])
+    |> trace([
+      Map.merge(fields, %{
+        "event" => "source.stream_end",
+        "dropped" => src.dropped,
+        "spaced" => src.spaced
+      })
+    ])
   end
 
   # -- sink -------------------------------------------------------------------------------------------
@@ -406,7 +423,7 @@ defmodule GlacierRelay.HeadlessPeer.Driver do
   defp peer_lost(state, _g, _reason), do: state
 
   defp source_view(src),
-    do: Map.take(src, [:stream_id, :course, :total, :sent, :dropped, :last_seq])
+    do: Map.take(src, [:stream_id, :course, :total, :sent, :dropped, :spaced, :last_seq])
 
   defp sink_view(s), do: Map.drop(s, [:last_r])
 
