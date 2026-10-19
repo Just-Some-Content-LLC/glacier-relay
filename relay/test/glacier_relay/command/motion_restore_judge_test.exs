@@ -17,13 +17,14 @@ defmodule GlacierRelay.Command.MotionRestoreJudgeTest do
   @brick FakeMotionNative.parent()
   @gen FakeMotionNative.generation()
   @displaced String.replace(@pre, "c2b2fae1", "c2b2f0a4")
+  @open_id "00000000-0000-4000-8000-0000000000bb"
 
   defp o(v), do: FakeMotionNative.obs(v)
 
   defp cmd(effect \\ %{invocation: :reported, effect: :changed, read_back: :native_same_frame}),
     do: %{
       id: "00000000-0000-4000-8000-0000000000aa",
-      params: %{"target_world" => @pre, "expect_parent" => @brick},
+      params: %{"target_world" => @pre, "expect_parent" => @brick, "restore_of" => @open_id},
       binding: %{"mission_generation" => @gen},
       effect: effect
     }
@@ -31,6 +32,9 @@ defmodule GlacierRelay.Command.MotionRestoreJudgeTest do
   defp observed(overrides) do
     Map.merge(
       %{
+        "mode" => o("restore"),
+        "restore_of" => o(@open_id),
+        "world_match" => o("target"),
         "requested_world_words" => o(@pre),
         "postimage_world_words" => o(@pre),
         "postimage_local_words" => o(@local),
@@ -56,6 +60,10 @@ defmodule GlacierRelay.Command.MotionRestoreJudgeTest do
 
     assert j.facts == %{
              "status" => "applied",
+             "mode" => "restore",
+             "restore_of" => @open_id,
+             "expected_restore_of" => @open_id,
+             "world_match" => "target",
              "target_world" => @pre,
              "requested_world" => @pre,
              "observed_world" => @pre,
@@ -80,6 +88,17 @@ defmodule GlacierRelay.Command.MotionRestoreJudgeTest do
   end
 
   @one_fact [
+    # the result's identity and the native's own comparison (verifier finding F2)
+    {"the mode absent", %{"mode" => :omit}, [:mode_unobserved]},
+    {"another mode", %{"mode" => FakeMotionNative.obs("open")}, [:mode_not_restore]},
+    {"restore_of absent", %{"restore_of" => :omit}, [:restore_of_unobserved]},
+    {"a foreign restore_of",
+     %{"restore_of" => FakeMotionNative.obs("00000000-0000-4000-8000-0000000000cc")},
+     [:restore_of_mismatch]},
+    {"the native's world comparison not target",
+     %{"world_match" => FakeMotionNative.obs("neither")}, [:world_match_not_target]},
+    {"the native's world comparison absent", %{"world_match" => :omit},
+     [:world_match_unobserved]},
     {"requested words absent", %{"requested_world_words" => :omit},
      [:requested_world_unobserved]},
     {"requested words not the target",
@@ -126,9 +145,14 @@ defmodule GlacierRelay.Command.MotionRestoreJudgeTest do
   end
 
   test "observed world words that differ: restore_not_exact (never released)" do
-    j = judge(%{"postimage_world_words" => o(@displaced)})
+    j = judge(%{"postimage_world_words" => o(@displaced), "world_match" => o("neither")})
     assert j.state == :restore_not_exact
-    assert j.reasons == [:postimage_not_target, :postimage_not_requested]
+
+    assert j.reasons == [
+             :postimage_not_target,
+             :postimage_not_requested,
+             :world_match_not_target
+           ]
   end
 
   test "the invocation and effect come from the authority's classification" do

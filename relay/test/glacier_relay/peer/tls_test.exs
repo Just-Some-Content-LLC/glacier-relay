@@ -414,12 +414,13 @@ defmodule GlacierRelay.Peer.TLSTest do
       :sys.suspend(info.connection)
       t = GlacierRelay.Motion.Clock.now_ms()
       :ok = Connection.send_sample(info, %{sample(1) | "stream_id" => sid}, t + 30)
-      :ok = Connection.send_sample(info, %{sample(2) | "stream_id" => sid}, t + 10_000)
       Process.sleep(60)
       :sys.resume(info.connection)
       wait(fn -> Connection.status(info.connection).counts.samples_expired == 1 end)
-      counts = Connection.status(info.connection).counts
-      assert counts.samples_out == 1 and counts.samples_stale == 0
+      # control: a sample inside its bound is written (queued after the resume: no stale margin)
+      :ok = Connection.send_sample(info, %{sample(2) | "stream_id" => sid}, t + 10_000)
+      wait(fn -> Connection.status(info.connection).counts.samples_out == 1 end)
+      assert Connection.status(info.connection).counts.samples_stale == 0
     end
 
     test "a control overflow closes the connection (stop stays possible)", %{info: info} do

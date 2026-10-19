@@ -129,6 +129,87 @@ defmodule GlacierRelay.Motion.DeadlineSendTest do
     assert st.counts.withdrawn == 1 and st.counts.forwarded == 0 and st.in_flight == nil
   end
 
+  describe "the verifier's corrections (accounting and evidence)" do
+    defp native_close(reason),
+      do: %{
+        reason: reason,
+        native_mono_ms: 1,
+        clean: true,
+        final_world: @pre,
+        last_applied_seq: 0,
+        applied: 0
+      }
+
+    test "F3: the closed summary of an event carries that event's late confirmation" do
+      {st, _} = Destination.close(new(%{}), :operator, 100)
+      {_st, a} = Destination.native_closed(st, native_close("beam:operator"), 1_100)
+      assert [{:closed, summary}] = for({:closed, _} = c <- a, do: c)
+
+      assert summary.close.state == :unknown and
+               summary.late_native_close.reason == "beam:operator"
+
+      refute summary.restorable
+    end
+
+    test "F4: a timed-out target's late answer is recognized after an earlier mismatch" do
+      {st, _} = Destination.sample(new(%{}), s(1, 0, 0.0), 50)
+      # a stray answer for another target: a mismatch (the session closes)
+      {st, _} = ack(st, 9, 0.0, 60)
+      assert st.phase == :closing and st.unresolved.seq == 9
+      {st, _} = Destination.tick(st, 250)
+      assert st.timed_out.seq == 1 and st.counts.uncertain == 1
+      {st, _} = ack(st, 1, 0.0, 270)
+      assert st.counts.late_acks == 1 and st.counts.mismatched_acks == 1
+      assert st.counts.applied == 0
+      assert Destination.summary(st).timed_out.late_ack_outcome == "applied"
+    end
+
+    test "F5: a link loss after an elapsed acknowledgement deadline counts it uncertain, once" do
+      {st, _} = Destination.sample(new(%{}), s(1, 0, 0.0), 50)
+      {st, a} = Destination.link_lost(st, 260)
+      assert st.counts.uncertain == 1 and st.counts.unacknowledged == 1
+      assert st.timed_out.seq == 1 and st.close.state == :unknown
+      assert [{:closed, _}] = for({:closed, _} = c <- a, do: c)
+    end
+
+    test "T2: an acknowledgement in time while closing still counts applied (control)" do
+      {st, _} = Destination.sample(new(%{}), s(1, 0, 0.0), 50)
+      {st, _} = Destination.close(st, :operator, 100)
+      {st, a} = ack(st, 1, 0.0, 249)
+      assert for({:send_target, _} = t <- a, do: t) == []
+      assert st.counts.applied == 1 and st.counts.uncertain == 0 and st.ref.seq == 1
+      assert st.counts.late_acks == 0 and st.timed_out == nil
+    end
+
+    test "F1: the stream's end names only what was handed to the connection" do
+      st =
+        Source.new(%{share_id: @share, interval_ms: 50, duration_ms: 1_000, opened_at: 0})
+        |> Source.announced()
+
+      hs = fn seq ->
+        %{
+          share_id: @share,
+          seq: seq,
+          frame: seq,
+          native_mono_ms: 10 * seq,
+          pos: "c2a77ccf,416b27e8,bfc2d6ba",
+          dirty: false
+        }
+      end
+
+      {st, _} = Source.hero_sample(st, hs.(1), 900)
+      st = Source.handed(st, 1)
+      {st, a} = Source.hero_sample(st, hs.(2), 990)
+      [fields] = for {:send_peer, "pose.sample", f} <- a, do: f
+      assert {:cancel, st, actions} = Source.before_send(st, fields, 1_000)
+
+      assert [%{"last_seq" => 1, "sent" => 1}] =
+               for({:send_peer, "stream.end", f} <- actions, do: f)
+
+      assert st.counts.relayed == 1 and st.counts.handed == 1
+    end
+  end
+
   describe "share: the sample's eligibility at its hand-over" do
     defp share,
       do:

@@ -504,7 +504,12 @@ defmodule GlacierRelay.Motion.DestinationTest do
     assert Destination.next_deadline(st) == 50
     {st, _} = Destination.tick(st, 50)
     assert Destination.next_deadline(st) == 250
+
+    # while closing, the in-flight target's acknowledgement deadline comes first (M7-B1 correction,
+    # verifier finding F7; it was 1,060 before), then the confirmation's
     {st, _} = Destination.close(st, :operator, 60)
-    assert Destination.next_deadline(st) == 1_060
+    assert Destination.next_deadline(st) == 250
+    {st, _} = Destination.tick(st, 250)
+    assert st.counts.uncertain == 1 and Destination.next_deadline(st) == 1_060
   end
 end
