@@ -11,6 +11,17 @@ defmodule GlacierRelay.Test.FakeMotionNative do
   silence, either link's loss, a generation change — which keep running when the relay's
   processes are suspended.
 
+  M7-B1 correction: a successful restore answers with the restoration-result contract's typed
+  fields (`docs/design/M7_NETWORK_GHOST.md` section 15.4; the same field names as the M6 transform
+  result) — requested and observed world words, observed parent-relative words, parent, dirty
+  state, entity and generation continuity, the control comparison, invocation and effect — each of
+  which a test can replace or omit (`{:restore_field, key, value | :omit}`), or answer with another
+  status (`{:restore_status, status}`). Every `ghost.target` line read from the motion socket is
+  logged (`{:target_line, session_id, seq, fake_ms}`), so a test can show which target bytes
+  reached the native; `:hold_motion_out` queues every line the fake would write on the motion link
+  until `release_motion_out/1` (in order); `{:share_overrun_ms, ms}` keeps the fake's share
+  sampling past its own duration (a native whose own close comes late).
+
   It is test tooling only and **never evidence of native game execution**: every result it
   writes is fake-native evidence, and that its timers close a session says nothing about the DLL
   (whose native enforcement is M7-B2's). Faults are injected with `fault/2`.
@@ -64,7 +75,15 @@ defmodule GlacierRelay.Test.FakeMotionNative do
   def drop_motion(pid), do: GenServer.call(pid, :drop_motion)
   def drop_command(pid), do: GenServer.call(pid, :drop_command)
   def bind_motion(pid), do: GenServer.call(pid, :bind_motion)
+  def release_motion_out(pid), do: GenServer.call(pid, :release_motion_out)
   def stop(pid), do: GenServer.stop(pid)
+
+  @doc "An observed read-back field object (for `{:restore_field, key, value}`)."
+  def obs(value), do: f(value)
+
+  @doc "The candidate's parent-relative words and parent in the fake's results."
+  def local, do: @local
+  def parent, do: @brick
 
   # -- raw helpers for binding tests -------------------------------------------------------------------
 
@@ -201,6 +220,7 @@ defmodule GlacierRelay.Test.FakeMotionNative do
       share: nil,
       faults: [],
       reading_motion: true,
+      held_out: [],
       events: []
     }
 
@@ -278,6 +298,13 @@ defmodule GlacierRelay.Test.FakeMotionNative do
   end
 
   def handle_call(:bind_motion, _from, state), do: {:reply, :ok, do_bind(state)}
+
+  def handle_call(:release_motion_out, _from, state) do
+    held = state.held_out
+    state = %{state | held_out: [], faults: List.delete(state.faults, :hold_motion_out)}
+    if state.motion, do: Enum.each(held, &:gen_tcp.send(state.motion, &1))
+    {:reply, length(held), log(state, {:released_motion_out, length(held)})}
+  end
 
   @impl true
   def handle_info({:tcp, s, line}, %{cmd: s} = state) do
@@ -480,11 +507,42 @@ defmodule GlacierRelay.Test.FakeMotionNative do
         post =
           if fault?(state, :restore_inexact), do: bump_y(closed.opening), else: closed.opening
 
-        observed = %{
-          "postimage_world_words" => f(TransformWords.encode(post)),
-          "preimage_world_words" => f(world),
-          "setter_called" => f(true)
-        }
+        target = TransformWords.encode(closed.opening)
+        post_text = TransformWords.encode(post)
+
+        # the restoration-result contract (M7-B1 correction): typed fields, each a test may vary
+        observed =
+          %{
+            "mode" => f("restore"),
+            "restore_of" => f(p["restore_of"]),
+            "generation_fresh" => f(state.gen),
+            "generation_post" => f(state.gen),
+            "preimage_world_words" => f(world),
+            "preimage_local_words" => f(@local),
+            "preimage_parent" => f(@brick),
+            "preimage_dirty" => f(false),
+            "requested_world_words" => f(target),
+            "postimage_world_words" => f(post_text),
+            "postimage_local_words" => f(@local),
+            "postimage_parent" => f(@brick),
+            "postimage_dirty" => f(false),
+            "post_same_entity" => f(true),
+            "world_match" => f(if(post_text == target, do: "target", else: "neither")),
+            "local_match" => f("unchanged"),
+            "hero_control" => f("unchanged"),
+            "setter_called" => f(true),
+            "apply_log" => f("written"),
+            "invocation" => f("called"),
+            "effect" => f("changed"),
+            "precondition_ok" => f(true)
+          }
+          |> restore_faults(state)
+
+        status =
+          Enum.find_value(state.faults, "applied", fn
+            {:restore_status, s} -> s
+            _ -> nil
+          end)
 
         state = %{
           state
@@ -493,8 +551,8 @@ defmodule GlacierRelay.Test.FakeMotionNative do
               Map.put(state.closed_sessions, p["session_id"], %{closed | restored: true})
         }
 
-        {"applied",
-         %{"observed" => observed, "frame" => state.frame, "mission_generation" => @gen}, state}
+        {status, %{"observed" => observed, "frame" => state.frame, "mission_generation" => @gen},
+         state}
     end
   end
 
@@ -522,6 +580,14 @@ defmodule GlacierRelay.Test.FakeMotionNative do
 
   defp execute(_name, _version, _p, _c, state),
     do: {"rejected", %{"reason" => "not_in_fake"}, state}
+
+  defp restore_faults(observed, state) do
+    Enum.reduce(state.faults, observed, fn
+      {:restore_field, key, :omit}, acc -> Map.delete(acc, key)
+      {:restore_field, key, value}, acc -> Map.put(acc, key, value)
+      _, acc -> acc
+    end)
+  end
 
   defp step_observed(pre, post),
     do: %{
@@ -573,7 +639,22 @@ defmodule GlacierRelay.Test.FakeMotionNative do
 
   # -- the motion link ------------------------------------------------------------------------------------
 
-  defp motion_in({:ghost_target, t}, %{session: %{id: id} = s} = state) when t.session_id == id do
+  defp motion_in({:ghost_target, t}, state) do
+    # every target line read from the motion socket, whatever the session state
+    motion_target(t, log(state, {:target_line, t.session_id, t.seq, now(state)}))
+  end
+
+  defp motion_in({:ghost_close, c}, %{session: %{id: id}} = state) when c.session_id == id,
+    do: close_session(state, "beam:" <> c.reason)
+
+  defp motion_in({:ghost_close, c}, state), do: log(state, {:close_without_session, c.session_id})
+
+  defp motion_in({:share_close, c}, %{share: %{id: id}} = state) when c.share_id == id,
+    do: close_share(state, "beam:" <> c.reason)
+
+  defp motion_in(other, state), do: log(state, {:unexpected, other})
+
+  defp motion_target(t, %{session: %{id: id} = s} = state) when t.session_id == id do
     s = %{s | counts: Map.update!(s.counts, :received, &(&1 + 1)), last_target: now(state)}
 
     s =
@@ -593,18 +674,8 @@ defmodule GlacierRelay.Test.FakeMotionNative do
     %{state | session: s}
   end
 
-  defp motion_in({:ghost_target, t}, state),
+  defp motion_target(t, state),
     do: log(state, {:target_without_session, t.session_id, t.seq})
-
-  defp motion_in({:ghost_close, c}, %{session: %{id: id}} = state) when c.session_id == id,
-    do: close_session(state, "beam:" <> c.reason)
-
-  defp motion_in({:ghost_close, c}, state), do: log(state, {:close_without_session, c.session_id})
-
-  defp motion_in({:share_close, c}, %{share: %{id: id}} = state) when c.share_id == id,
-    do: close_share(state, "beam:" <> c.reason)
-
-  defp motion_in(other, state), do: log(state, {:unexpected, other})
 
   defp motion_lost(state, why) do
     state = if state.session, do: close_session(state, Atom.to_string(why), false), else: state
@@ -846,7 +917,13 @@ defmodule GlacierRelay.Test.FakeMotionNative do
   defp share_tick(%{share: sh} = state) do
     t = now(state)
 
-    if t >= sh.opened + sh.duration do
+    overrun =
+      Enum.find_value(state.faults, 0, fn
+        {:share_overrun_ms, ms} -> ms
+        _ -> nil
+      end)
+
+    if t >= sh.opened + sh.duration + overrun do
       close_share(state, "duration")
     else
       seq = sh.seq + 1
@@ -891,11 +968,21 @@ defmodule GlacierRelay.Test.FakeMotionNative do
   defp send_motion(%{motion: nil} = state, _kind, _fields), do: state
 
   defp send_motion(state, kind, fields) do
-    # :mute_motion: a native that neither reads nor answers (its own timers still run)
-    unless fault?(state, :mute_motion),
-      do: _ = :gen_tcp.send(state.motion, Codec.encode_from_native(kind, fields))
+    line = Codec.encode_from_native(kind, fields)
 
-    state
+    cond do
+      # :mute_motion: a native that neither reads nor answers (its own timers still run)
+      fault?(state, :mute_motion) ->
+        state
+
+      # :hold_motion_out: written later, in order, by release_motion_out/1
+      fault?(state, :hold_motion_out) ->
+        %{state | held_out: state.held_out ++ [line]}
+
+      true ->
+        _ = :gen_tcp.send(state.motion, line)
+        state
+    end
   end
 
   defp fault?(state, fault), do: fault in state.faults
