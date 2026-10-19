@@ -166,17 +166,24 @@ defmodule GlacierRelay.Motion.SessionTest do
                  expected_generation: @gen
                )
 
-      assert {:error, {:motion_session_budget_exhausted, 1}} =
+      # the budget, judged on a fresh live stream (the old one is spent: stream_already_used)
+      stream2 = MotionStack.start_course(MotionStack.short_course(prefix_ms: 3_000))
+
+      assert {:error, :stream_already_used} =
                Motion.open_session(
                  inspection_command_id: insp2,
                  expected_generation: @gen,
                  stream_id: stream,
                  source_kind: "synthetic"
                )
-               |> then(fn
-                 {:error, :stream_not_open} -> {:error, {:motion_session_budget_exhausted, 1}}
-                 other -> other
-               end)
+
+      assert {:error, {:motion_session_budget_exhausted, 1}} =
+               Motion.open_session(
+                 inspection_command_id: insp2,
+                 expected_generation: @gen,
+                 stream_id: stream2,
+                 source_kind: "synthetic"
+               )
     end
 
     test "a candidate moved since the close is not restored over" do
@@ -334,7 +341,7 @@ defmodule GlacierRelay.Motion.SessionTest do
 
     test "an unexplained change of an untouched word is refused natively, never forced back" do
       st = MotionStack.start()
-      stream = MotionStack.start_course(MotionStack.short_course(prefix_ms: 300))
+      stream = MotionStack.start_course(MotionStack.short_course(prefix_ms: 4_000))
       {_sid, _} = MotionStack.open_session(st.adapter, stream)
       frame = FakeMotionNative.status(st.fake) |> then(fn _ -> :sys.get_state(st.fake).frame end)
       :ok = FakeMotionNative.fault(st.fake, {:z_drift_at_frame, frame + 20})
@@ -349,12 +356,14 @@ defmodule GlacierRelay.Motion.SessionTest do
 
     test "a native generation change closes natively; BEAM records the native's reason" do
       st = MotionStack.start()
-      stream = MotionStack.start_course(MotionStack.short_course(prefix_ms: 300))
+      stream = MotionStack.start_course(MotionStack.short_course(prefix_ms: 4_000))
       {_sid, _} = MotionStack.open_session(st.adapter, stream)
       frame = :sys.get_state(st.fake).frame
       :ok = FakeMotionNative.fault(st.fake, {:generation_change_at_frame, frame + 30})
       wait(&done?/0, 800)
-      assert summary().close.by == :native and summary().close.reason =~ "generation_changed"
+
+      assert summary().close.by == :native and summary().close.reason =~ "generation_changed",
+             inspect({summary().close, Enum.take(FakeMotionNative.events(st.fake), -4)})
     end
 
     test "a report that disagrees with the acknowledgements closes" do
@@ -535,21 +544,20 @@ defmodule GlacierRelay.Motion.SessionTest do
       assert {:error, {:motion_session_not_restored, ^sid, :open}} =
                Command.step_candidate(%{}, inspection_command_id: insp, expected_generation: @gen)
 
-      assert {:error, {:motion_session_not_restored, ^sid, :open}} =
-               Command.restore_candidate("00000000-0000-4000-8000-000000000000",
-                 inspection_command_id: insp,
-                 expected_generation: @gen
-               )
-               |> then(fn
-                 {:error, {:restore_of_unknown, _}} ->
-                   {:error, {:motion_session_not_restored, sid, :open}}
-
-                 {:error, :command_not_in_journal} ->
-                   {:error, {:motion_session_not_restored, sid, :open}}
-
-                 other ->
-                   other
-               end)
+      # v1 and v2 restores straight to the authority: the motion exclusivity is its first transform
+      # check, before any plan, binding or parameter (the facade's own journal plan would refuse a
+      # made-up original earlier)
+      for version <- [1, 2] do
+        assert {:error, {:motion_session_not_restored, ^sid, :open}} =
+                 Command.Authority.issue(
+                   "candidate.transform.set",
+                   version,
+                   %{"mode" => "restore", "restore_of" => "00000000-0000-4000-8000-000000000000"},
+                   inspection_command_id: insp,
+                   reversal_of: "00000000-0000-4000-8000-000000000000",
+                   preconditions: %{"mission_generation" => @gen}
+                 )
+      end
 
       wait(&done?/0, 800)
       stream2 = MotionStack.start_course(MotionStack.short_course(prefix_ms: 3_000))

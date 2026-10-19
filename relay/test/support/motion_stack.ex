@@ -72,20 +72,21 @@ defmodule GlacierRelay.Test.MotionStack do
           effectful_ttl_max_ms: 120_000,
           evidence_max_age_ms: 120_000,
           reversal_inspection_max_age_ms: 60_000,
-          motion: [
-            enabled: true,
-            port: 0,
-            trace_dir: Path.join(dir, "host-trace"),
-            max_sessions: Keyword.get(opts, :max_sessions, 1),
-            peer: [
-              ip: {127, 0, 0, 1},
-              port: hport,
-              credentials: fn -> creds.host end,
-              local: %{label: "host-test", client_kind: "game"},
-              expected: %{label: "headless-test", client_kind: "headless"},
-              reconnect_ms: 200
-            ]
-          ]
+          motion:
+            [
+              enabled: true,
+              port: 0,
+              trace_dir: Path.join(dir, "host-trace"),
+              max_sessions: Keyword.get(opts, :max_sessions, 1),
+              peer: [
+                ip: {127, 0, 0, 1},
+                port: hport,
+                credentials: fn -> creds.host end,
+                local: %{label: "host-test", client_kind: "game"},
+                expected: %{label: "headless-test", client_kind: "headless"},
+                reconnect_ms: 200
+              ]
+            ] ++ Keyword.get(opts, :motion_extra, [])
         ],
         Keyword.get(opts, :command, [])
       )

@@ -71,8 +71,8 @@ defmodule GlacierRelay.Motion.SourceCourseTest do
       assert [_] = relayed(a)
     end
 
-    test "the duration ends the share and the stream" do
-      {st, a} = Source.tick(src(), 1_000)
+    test "the duration ends the share and the (announced) stream" do
+      {st, a} = Source.tick(Source.announced(src()), 1_000)
       assert {:send_share_close, :duration} in a
 
       assert [{"stream.end", %{"reason" => "duration"}}] =

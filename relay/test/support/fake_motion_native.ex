@@ -35,6 +35,7 @@ defmodule GlacierRelay.Test.FakeMotionNative do
   @caps [
     "relay.probe/1",
     "relay.inspect.candidate_transform/1",
+    "candidate.transform.set/1",
     "candidate.transform.set/2",
     "player.pose.share/1",
     "candidate.motion.session/1"
@@ -59,6 +60,7 @@ defmodule GlacierRelay.Test.FakeMotionNative do
   def fault(pid, fault), do: GenServer.call(pid, {:fault, fault})
   def clear_fault(pid, fault), do: GenServer.call(pid, {:clear_fault, fault})
   def set_world(pid, world), do: GenServer.call(pid, {:set_world, world})
+  def set_generation(pid, gen), do: GenServer.call(pid, {:set_generation, gen})
   def drop_motion(pid), do: GenServer.call(pid, :drop_motion)
   def drop_command(pid), do: GenServer.call(pid, :drop_command)
   def bind_motion(pid), do: GenServer.call(pid, :bind_motion)
@@ -190,6 +192,7 @@ defmodule GlacierRelay.Test.FakeMotionNative do
         |> TransformWords.to_float(),
       hero_step_m: Keyword.get(opts, :hero_step_m, 0.05),
       t0: System.monotonic_time(:millisecond),
+      gen: @gen,
       frame: 1_000,
       frame_timer: timer,
       m6_ledger: :idle,
@@ -258,6 +261,8 @@ defmodule GlacierRelay.Test.FakeMotionNative do
     {:reply, :ok, state}
   end
 
+  def handle_call({:set_generation, gen}, _from, state), do: {:reply, :ok, %{state | gen: gen}}
+
   def handle_call({:set_world, world}, _from, state),
     do: {:reply, :ok, %{state | world: words(world)}}
 
@@ -297,25 +302,63 @@ defmodule GlacierRelay.Test.FakeMotionNative do
   end
 
   def handle_info(:frame, state), do: {:noreply, frame(%{state | frame: state.frame + 1})}
+  def handle_info({:run_command, c}, state), do: {:noreply, run_command(c, state)}
+
+  def handle_info({:late_reply, c, status, fields}, state) do
+    reply(state, c, status, fields)
+    {:noreply, state}
+  end
+
   def handle_info(:share_tick, state), do: {:noreply, share_tick(state)}
   def handle_info(_msg, state), do: {:noreply, state}
 
   # -- commands -------------------------------------------------------------------------------------------
 
   defp command(%{"kind" => "command"} = c, state) do
-    if fault?(state, :hold_commands) do
-      log(state, {:held_command, c["name"], c["command_id"]})
-    else
-      run_command(c, state)
+    delay =
+      Enum.find_value(state.faults, fn
+        {:delay_commands, ms} -> ms
+        _ -> nil
+      end)
+
+    cond do
+      fault?(state, :hold_commands) ->
+        log(state, {:held_command, c["name"], c["command_id"]})
+
+      delay != nil ->
+        Process.send_after(self(), {:run_command, c}, delay)
+        state
+
+      true ->
+        run_command(c, state)
     end
   end
 
   defp command(_other, state), do: state
 
   defp run_command(c, state) do
-    reply(state, c, "received", %{})
+    swallow = fault?(state, :swallow_results)
+    unless swallow, do: reply(state, c, "received", %{})
     {status, fields, state} = execute(c["name"], c["version"], c["params"], c, state)
-    reply(state, c, status, fields)
+
+    terminal_delay =
+      Enum.find_value(state.faults, fn
+        {:delay_terminal, ms} -> ms
+        _ -> nil
+      end)
+
+    cond do
+      # :swallow_results: the command is executed, but no answer ever leaves (an unknown outcome)
+      swallow ->
+        :ok
+
+      terminal_delay != nil ->
+        Process.send_after(self(), {:late_reply, c, status, fields}, terminal_delay)
+
+      true ->
+        reply(state, c, status, fields)
+    end
+
     log(state, {:command, c["name"], c["params"]["mode"], status, fields["reason"]})
   end
 
@@ -323,9 +366,10 @@ defmodule GlacierRelay.Test.FakeMotionNative do
     do:
       {"applied",
        %{
-         "observed" => qualifying(TransformWords.encode(state.world)),
+         "observed" =>
+           qualifying(TransformWords.encode(state.world), %{"generation_fresh" => f(state.gen)}),
          "frame" => state.frame,
-         "mission_generation" => @gen
+         "mission_generation" => state.gen
        }, state}
 
   defp execute("player.pose.share", 1, p, _c, state) do

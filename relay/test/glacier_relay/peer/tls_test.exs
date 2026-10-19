@@ -208,7 +208,7 @@ defmodule GlacierRelay.Peer.TLSTest do
       :ssl.connect(
         {127, 0, 0, 1},
         port,
-        TLS.connect_options(elem(TLS.credentials(c.host), 1)),
+        TLS.connect_options(elem(TLS.credentials(fn -> c.host end), 1)),
         3_000
       )
 
@@ -330,7 +330,7 @@ defmodule GlacierRelay.Peer.TLSTest do
       :ssl.connect(
         {127, 0, 0, 1},
         port,
-        TLS.connect_options(elem(TLS.credentials(c.host), 1)),
+        TLS.connect_options(elem(TLS.credentials(fn -> c.host end), 1)),
         3_000
       )
 
