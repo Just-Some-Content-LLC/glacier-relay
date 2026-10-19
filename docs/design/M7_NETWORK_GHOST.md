@@ -699,6 +699,16 @@ The fake models these; B2 must implement them in the DLL, on its own clock, with
 
 Unchanged from 15.5 and still B2's: the per-frame pre-call checks, the autonomous closes, the untouched-word rule and the uncertain post-call close.
 
+## 18. M7-B2 native implementation (pointer; 2026-10-19)
+
+M7-B2 implemented the native side of sections 15 and 17 offline, in ZHMModSDK `relay/m2` (`d503678a` … `8129d721`): the outbound motion-link client to `127.0.0.1:4750` with the attested binding, the read-only share of the local hero, the destination session's admission and per-frame enforcement on the native clock before the one setter call site, the acknowledgements, reports and qualified closes, the native exclusivity with M6, and the restoration of 17.2. The record is `M7B2_NATIVE_RECORD.md`; the build of record native6 (`91a7098f…`) is not installed. Nothing in this design was widened. The implementation choices inside it are recorded there (section 4):
+- a second target while one is pending is refused, never superseded (`superseded` stays 0);
+- an inexact postimage is acknowledged `uncertain`;
+- the current x / y must equal the reference before a call (an unexplained horizontal change is refused);
+- the target-silence clock is refreshed only by an accepted target, to its receipt time;
+- a call is made only when its acknowledgement and a close can be queued;
+- a native record is restorable only after a close whose `ghost.closed` was queued, and is released without a write when an exclusive operation's own frame read shows it at its opening preimage (how `confirm_baseline` meets it).
+
 ## 13. Sources
 
 | Claim area | Source (blobs in `source-facts.txt`) |

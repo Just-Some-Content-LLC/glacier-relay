@@ -1,6 +1,6 @@
 # M7-B1 — offline implementation record (BEAM, fake native endpoints, owned loopback peers)
 
-**Status:** DONE offline (2026-10-19); **corrected** the same day (section 11: deadlines at event and send boundaries, and the restoration result), awaiting architectural review.
+**Status:** DONE offline (2026-10-19); **corrected** the same day (section 11: deadlines at event and send boundaries, and the restoration result); **accepted** for its demonstrated offline scope (section 12).
 - M7 is **not** complete, and nothing here has run against HITMAN.
 - Every native answer in this stage came from a test fake (`Test.FakeMotionNative`). That makes it fake-native evidence, never evidence of what the DLL does.
 - A synthetic course is not walking, a numeric box is not a cleared route, and a headless peer is not a second game instance.
@@ -386,3 +386,16 @@ What B2's native must enforce **independently** (design 17.4), beyond section 15
 - **Unchanged from 15.5:** the pre-call checks, the untouched-word rule, the uncertain post-call close, and the autonomous closes.
 
 The BEAM side does not depend on any of this for its own guarantees. It will judge the native's answers by these rules.
+
+## 12. Bounded acceptance (2026-10-19)
+
+**Authorization:** "Glacier Relay — M7-B1 acceptance and M7-B2 native offline implementation".
+
+M7-B1 and its focused deadline and restoration correction (section 11) are **accepted for their demonstrated scope**: the BEAM, the fake native endpoint and owned loopback peers, including the headless peer in a second, non-distributed OS process over pinned TLS 1.3. Sections 1–11 stay exactly as recorded; nothing in them is rewritten by this acceptance.
+
+The acceptance does **not** extend to:
+- native enforcement of any rule — that is M7-B2's (`M7B2_NATIVE_RECORD.md`);
+- any engine behaviour, any LAN, the MacBook, or two real game instances;
+- the completion of M7, whose goal and exit are unchanged.
+
+`Test.FakeMotionNative` is an interoperability and testing aid. It is not proof that a native enforces anything, and it is not the specification where it differs from the reviewed contract (design sections 15 and 17 govern). B2 implements two behaviours differently from the fake, inside the contract, and records why (`M7B2_NATIVE_RECORD.md` section 4): a second target while one is pending is **refused** (the fake supersedes it silently and counts it), and a postimage that differs from the request is acknowledged **`uncertain`** (the fake answers `applied` with `exact: false`). The BEAM judges both identically: application ends and the session is never restorable.
