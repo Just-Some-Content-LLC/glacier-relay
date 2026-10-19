@@ -611,6 +611,16 @@ There is no installer, GUI, embedded runtime or updater in B1.
 
 M7-C, L and D each need their own authorization and fresh readiness.
 
+## 16. M7-B1 implementation (pointer)
+
+M7-B1 implemented section 15 offline: BEAM and test tooling, against a fake native endpoint and owned loopback peers. The record is `M7B1_OFFLINE_RECORD.md`. These clarifications made during the implementation are listed there (section 8) and do not widen anything:
+- `confirm_baseline` releases a cleanly closed session that a fresh inspection shows already at its preimage (journaled; nothing submitted);
+- a stream is bound to at most one session;
+- a share has the same four close states as a session;
+- an open whose outcome is unknown, or whose opening snapshot differs, is ended on the motion link and is never restorable;
+- with motion on, an authority restart latches the motion and transform entries until the node restarts;
+- the peer sender refuses the newest sample above its bound and drops stale ones, rather than dropping "the oldest" (15.6).
+
 ## 13. Sources
 
 | Claim area | Source (blobs in `source-facts.txt`) |
