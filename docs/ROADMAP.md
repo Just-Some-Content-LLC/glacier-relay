@@ -66,6 +66,15 @@ Two PCs, same mission. Each instance renders the other player's externally drive
 
 Exit: bidirectional movement/input representation survives a bounded test session.
 
+**Status: research / design begun (2026-10-19; M7-A, `docs/design/M7_NETWORK_GHOST.md`; ADR 0010 proposed). Nothing implemented, built, installed, launched or validated at runtime; no socket opened and no network change; M7-B1 and every later stage need their own authorization.** Both sentences above are recorded as originally written. M7-A selects observed spatial-state replication over input-intent replication. Each machine samples its own local hero (registry slot 0) and its BEAM node forwards the samples to the peer over one explicit, mutually authenticated BEAM-to-BEAM peer link. The receiving native adapter applies only the horizontal position to its own content-placed candidate, through the existing single setter site, inside a locally armed, bounded motion session. The control plane is journaled commands on the existing command link; the data plane is a new local motion link plus the peer link; the native links stay loopback. The proposed exit interpretation (for review) is horizontal-position movement representation in both directions between two real game instances, with no input, gait, rotation (v1), collision or world synchronization claimed. The available test resources are one Windows HITMAN host, an Xbox copy and a MacBook. Early M7 is therefore built around a reusable headless protocol peer, first local and optionally on the MacBook across the LAN; its synthetic samples are labelled, and native command authority stays local. Proposed stages:
+- M7-B1 (offline, BEAM only, with the headless peer; the smallest next authorization);
+- M7-B2 (offline, native);
+- M7-C (one attended run on the one game host with a local headless peer: real samples out, labelled synthetic in);
+- optionally M7-L (the headless peer on the MacBook);
+- M7-D (two real game instances), deferred until that resource is arranged.
+
+The claims that need two real instances — including the exit itself — are listed in section 9 of the design and are deferred. A synthetic-peer test is never treated as equivalent to two real clients.
+
 ## M8 — Shared-world slice
 Synchronize a deliberately small set of semantic facts: selected doors, one NPC lifecycle, one item lifecycle, and objective state.
 
