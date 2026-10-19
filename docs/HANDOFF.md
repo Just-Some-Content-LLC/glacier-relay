@@ -9,6 +9,13 @@ Updated: 2026-10-19, after **M7-A — the Network ghost architecture and capabil
   - **Boundaries:** the native adapter stays local; M6 v1 / v2 contracts are unchanged (their forwards refused while a session is open).
 - **Hardware amendment (operator, verbatim in `operator-amendment.txt`):** one Windows HITMAN host (Steam), an Xbox copy and a MacBook; no second compatible Windows installation assumed. Early M7 is built around a reusable **headless protocol peer** — first local, optionally on the MacBook across the LAN — with synthetic samples labelled (`source_kind: synthetic`) and native authority local. The claims that need two real game instances, including the M7 exit, are listed in design section 9 and deferred; a synthetic-peer test is never reported as equivalent to two real clients. Split-screen, console adaptation, simultaneous instances and purchases are not prerequisites.
 - **Verifier:** one read-only verifier on the pre-amendment draft: no blocker, 4 major, 13 minor, 8 notes. Every finding has been applied or made moot by the amendment, with its replacement checked; none was rejected (`verifier-report.txt`, `verifier-disposition.txt`).
+- **Operator review answers (design section 14, verbatim; recorded in a follow-up docs commit):**
+  - the MacBook is on the same LAN, and Elixir is already installed on it — its versions, `ssl` support and firewall were not inspected;
+  - the exit interpretation and the section 9 claims split are accepted;
+  - courses: synthetic figure-eights and a rectangle around the planters and a shuttle between planter pairs (all inside the ±8 m box); real walks around the circular fountain — its geometry is not recorded, so it is needed before any destination use — and of the same shapes;
+  - Game Bar recording confirmed.
+
+  Nothing is newly authorized.
 - **Proposed stages (none authorized):**
   - M7-B1 — offline, BEAM only, with the local headless peer; **the smallest next authorization**;
   - M7-B2 — offline, native; native6 build of record, not installed;

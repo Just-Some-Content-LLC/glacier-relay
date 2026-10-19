@@ -330,6 +330,33 @@ No full historical audit without a trigger (M6-F 14.6).
 4. Can the operator record the game host's screen for C2 (Game Bar, as in M6-G2)?
 5. How the two-instance test resource might later be arranged is outside this design, and not a prerequisite.
 
+## 14. Operator review answers (2026-10-19; recorded after commit `4c01fb76`; sections 1–13 kept as written)
+
+The operator's answers to section 12, verbatim:
+- "Yes the Mac is on the same LAN as the PC. Elixir is already on the MacBook, as I have been developing a separate unrelated project on it."
+- "Yes I accept it." (the exit interpretation of section 3 and the section 9 split of claims)
+- "Figure eights around the planters would make a could synthetic course. Walking around the circular fountain would be a good idea. Making a square or rectangle around the planters would be decent as well.  Bidirectional walking back and forth between planters is another idea."
+- "I can record the screen using the game bar again."
+
+**What changes, and what does not:**
+- **The MacBook.** M7-L's LAN prerequisite is now operator-reported, and Elixir is present (operator-reported). Its Elixir / OTP versions, its `ssl` support and its firewall were **not inspected**: no machine was contacted. They are recorded at M7-L's checkpoint, together with its one inbound rule, which still needs its own authorization. The MacBook's unrelated project is not touched. The headless peer runs as a separate application with its own directory, node name and port.
+- **Acceptance.** The section 3 exit interpretation and the section 9 claims split are accepted by the operator as written. The M7 exit itself is unchanged, and the two-instance claims stay deferred.
+- **Courses** (P; built from the planter centres of `M6E_VISUAL_PLACEMENT.md` section 11 — rows y 11.99359 / 17.67185, columns x −80.477 / −84.044 / −87.670 / −91.318; the extents of the planters are unmeasured, and the ghost has no collision, so clearance is visual only):
+
+  | Course | Kind | Proposed geometry | In the ±8 m box |
+  |---|---|---|---|
+  | S1 figure-eight around two planters of the +y row | synthetic (C2), both senses | lobes centred on (−87.670, 17.672) and (−91.318, 17.672), radius 1.824 m, crossing at (−89.494, 17.672) | yes |
+  | S2 rectangle around the four planters at P (a square variant around one planter) | synthetic (C2), both senses | x −92.82 … −86.17, y 10.49 … 19.17 (a 1.5 m margin), 30.65 m perimeter | yes |
+  | S3 shuttle, back and forth between planter pairs | synthetic (C2); also walkable for real | the avenue centreline y 14.833, x −91.318 … −84.044 (7.27 m) | yes |
+  | R1 around the circular fountain | **real** (C1 sampling; later M7-D) | the operator walks it; the fountain's position and radius are **not recorded** (U) | not known |
+  | R2–R4 the operator walking S1–S3 | **real** | as walked | to be checked |
+
+  Proposed synthetic speeds are 1.0–1.5 m/s, that is 0.05–0.075 m per 20 Hz sample, far inside the 1.0 m step bound; the game's own walking speed is U. The planter column at x −80.477 lies outside the box (box x ≤ −81.49), so no course uses it.
+- **Effect on the box.** C1 sends real samples to a recording sink and writes nothing to the engine, so R1 needs no box. Any **destination** use of R1 (M7-D) needs the fountain's geometry first: the box is fitted to it, or the session refuses it. That geometry is to come from an offline read of the preserved Paris content in a later stage's preparation, not from screenshots.
+- **Recording.** Game Bar is confirmed for C1 and C2; no frame synchronization is claimed (as in M6-G2).
+
+**Unchanged:** nothing is authorized by these answers. M7-B1 remains the proposed next authorization.
+
 ## 13. Sources
 
 | Claim area | Source (blobs in `source-facts.txt`) |
