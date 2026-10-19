@@ -37,8 +37,11 @@ defmodule GlacierRelay.Command.MotionControl do
   before it takes effect. `restored` — the only releasing outcome — needs status `applied` and
   every one of these read-back facts, each strictly decoded (`TransformReadback.decode_apply/1`)
   and kept separate:
+  - the result's own identity: `mode` `restore` and `restore_of` naming this restore's session
+    open (verifier finding F2; the accepted M6 qualification also requires the mode);
   - the requested world words (`requested_world_words`) equal to the restore's target;
-  - the observed world words (`postimage_world_words`) equal to the requested words, bit for bit;
+  - the observed world words (`postimage_world_words`) equal to the requested words, bit for bit,
+    and the native's own comparison agreeing (`world_match` `target`);
   - the observed parent-relative words (`postimage_local_words`) present — recorded, never
     required equal (the world setter does not promise them);
   - the parent (`postimage_parent`) equal to the restore's expected parent;
@@ -49,8 +52,10 @@ defmodule GlacierRelay.Command.MotionControl do
     the accepted M6 policy: `unchanged` only);
   - a reported invocation and a changed effect (the authority's own classification of
     `setter_called` / `effect`).
-  An `applied` result whose observed world words differ is `restore_not_exact`; any other missing,
-  dirty, contradictory or uncertain fact is `restore_unqualified`. A non-application status
+  An `applied` result whose observed world words differ is `restore_not_exact`; any other listed
+  fact missing, unobserved or not as required is `restore_unqualified`. Fields outside this list
+  (`precondition_ok`, `apply_log`, the invocation text, `restore_facts`, …) are journaled with the
+  command's terminal but not judged. A non-application status
   returns the session to `closed_clean` only when no invocation and no change or uncertain effect
   is reported; otherwise it is `restore_unqualified` too. All three are terminal for the session:
   non-releasing, never retried, no second restore and no baseline release.
@@ -528,13 +533,16 @@ defmodule GlacierRelay.Command.MotionControl do
     eff = Map.get(effect, :effect, :unreported)
     target = cmd.params["target_world"]
     parent = cmd.params["expect_parent"]
+    restore_of = cmd.params["restore_of"]
     generation = cmd.binding && cmd.binding["mission_generation"]
     status = Schema.status_atom(result.status)
 
     {state, reasons} =
       cond do
         status == :applied ->
-          reasons = restore_failures(d, invocation, eff, target, parent, generation)
+          reasons =
+            identity_failures(d, restore_of) ++
+              restore_failures(d, invocation, eff, target, parent, generation)
 
           state =
             cond do
@@ -566,9 +574,13 @@ defmodule GlacierRelay.Command.MotionControl do
       reasons: reasons,
       facts: %{
         "status" => result.status,
+        "mode" => fact(d.mode),
+        "restore_of" => fact(d.restore_of),
+        "expected_restore_of" => restore_of,
         "target_world" => target,
         "requested_world" => fact(d.requested_world_words),
         "observed_world" => fact(d.postimage.world_words),
+        "world_match" => fact(d.world_match),
         "observed_local" => fact(d.postimage.local_words),
         "local_match" => fact(d.local_match),
         "parent" => fact(d.postimage.parent),
@@ -595,6 +607,7 @@ defmodule GlacierRelay.Command.MotionControl do
       observed == nil && :postimage_world_unobserved,
       (observed != nil and observed != target) && :postimage_not_target,
       (observed != nil and requested != nil and observed != requested) && :postimage_not_requested,
+      text_failure(d.world_match, "target", :world_match_unobserved, :world_match_not_target),
       not match?({:ok, _}, d.postimage.local_words) && :postimage_local_unobserved,
       parent_failure(d.postimage.parent, parent),
       flag_failure(d.postimage.dirty, false, :postimage_dirty_unobserved, :postimage_dirty),
@@ -611,6 +624,17 @@ defmodule GlacierRelay.Command.MotionControl do
     ]
     |> Enum.reject(&(&1 == false))
   end
+
+  # the result names this restore: the mode and the session open it restores
+  defp identity_failures(d, restore_of),
+    do:
+      Enum.reject(
+        [
+          text_failure(d.mode, "restore", :mode_unobserved, :mode_not_restore),
+          text_failure(d.restore_of, restore_of, :restore_of_unobserved, :restore_of_mismatch)
+        ],
+        &(&1 == false)
+      )
 
   defp words_text({:ok, words}), do: TransformWords.encode(words)
   defp words_text(_), do: nil

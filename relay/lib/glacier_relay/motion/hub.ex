@@ -844,7 +844,7 @@ defmodule GlacierRelay.Motion.Hub do
         state = put_in(state.share.src, s)
 
         case state.peer && Connection.send_sample(state.peer.info, fields, not_after) do
-          :ok -> state
+          :ok -> put_in(state.share.src, Source.handed(state.share.src, fields["seq"]))
           _ -> put_in(state.share.src, Source.send_dropped(state.share.src))
         end
 

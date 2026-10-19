@@ -23,6 +23,12 @@ defmodule GlacierRelay.Motion.Source do
   the hub hands a relayed sample to the peer connection, and gives the connection the same bound
   (`not_after`), which it checks again before the TLS write; a sample cancelled there counts as
   `cancelled_before_send` and no longer as relayed. Neither check recalls a line already written.
+
+  `relayed` counts the samples this share decided to relay; `handed` those the peer connection
+  accepted (`handed/2`). The `stream.end` reports the handed ones (`sent`, `last_seq`), so a
+  sample cancelled or refused here is never named as sent (verifier finding F1). A sample the
+  connection itself drops afterwards (stale, or past `not_after`) is counted by the connection and
+  shows at the sink as a gap: `sent` means handed to the connection, not written to TLS.
   """
 
   @close_confirm_ms 1_000
@@ -38,6 +44,7 @@ defmodule GlacierRelay.Motion.Source do
     last_seq: 0,
     last_native_ms: nil,
     last_sent_r: nil,
+    last_handed_seq: nil,
     close: nil,
     late_native_close: nil,
     counts: %{}
@@ -60,7 +67,8 @@ defmodule GlacierRelay.Motion.Source do
         rate: 0,
         not_open: 0,
         send_dropped: 0,
-        cancelled_before_send: 0
+        cancelled_before_send: 0,
+        handed: 0
       }
     }
   end
@@ -140,6 +148,9 @@ defmodule GlacierRelay.Motion.Source do
   @doc "A relayed sample the peer connection could not take (counted, never retried)."
   def send_dropped(%__MODULE__{} = st), do: bump(st, :send_dropped)
 
+  @doc "A relayed sample the peer connection accepted (queued for its TLS write)."
+  def handed(%__MODULE__{} = st, seq), do: %{bump(st, :handed) | last_handed_seq: seq}
+
   @doc """
   The send boundary (correction A): the hub calls this immediately before handing a relayed
   sample (`fields`) to the peer connection. `{:send, state, not_after}` — the share's bound,
@@ -193,8 +204,8 @@ defmodule GlacierRelay.Motion.Source do
            %{
              "stream_id" => st.share_id,
              "reason" => reason_text(reason),
-             "last_seq" => st.last_seq,
-             "sent" => st.counts.relayed
+             "last_seq" => st.last_handed_seq,
+             "sent" => st.counts.handed
            }}
         ],
         else: []
@@ -219,7 +230,13 @@ defmodule GlacierRelay.Motion.Source do
   def native_closed(%__MODULE__{} = st, c, now) do
     {st, expired} = expire(st, now)
     {st, actions} = take_native_close(st, c, now)
-    {st, expired ++ actions}
+
+    # a closed summary emitted during this event is the account after the whole event
+    {st,
+     Enum.map(expired ++ actions, fn
+       {:closed, _} -> {:closed, summary(st)}
+       other -> other
+     end)}
   end
 
   defp take_native_close(%{phase: :closed, close: %{state: :confirmed}} = st, c, now),

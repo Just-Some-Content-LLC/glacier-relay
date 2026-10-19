@@ -54,6 +54,12 @@ defmodule GlacierRelay.Motion.Destination do
     `ghost.closed` processed afterwards is kept as qualified evidence (`late_native_close`), never
     a confirmation, and never overwrites the unknown close.
 
+  The timed-out target is kept apart (`timed_out`) from an earlier mismatch marker, so its late
+  answer is always recognized; the closed summary an event emits is computed after the whole
+  event, so it carries the event's late evidence; while closing, the acknowledgement deadline is
+  scheduled too; and a link loss applies an acknowledgement deadline that has already passed
+  (verifier findings F3, F4, F5, F7 of the correction).
+
   The **send boundary** is checked again by `before_send/3`, which the hub calls after the
   batch's required trace write and immediately before the target's bytes: a target whose session
   has reached its duration, or whose stall deadline (measured from the previous send) has passed,
@@ -97,6 +103,7 @@ defmodule GlacierRelay.Motion.Destination do
     pending: nil,
     in_flight: nil,
     unresolved: nil,
+    timed_out: nil,
     report_seq: 0,
     close: nil,
     native_close: nil,
@@ -194,7 +201,7 @@ defmodule GlacierRelay.Motion.Destination do
   def sample(%__MODULE__{} = st, s, now) do
     {st, expired} = expire(st, now)
     {st, actions} = take_sample(bump(st, :received), s, now)
-    {st, expired ++ actions}
+    closed_after(st, expired ++ actions)
   end
 
   defp take_sample(st, s, now) do
@@ -363,20 +370,20 @@ defmodule GlacierRelay.Motion.Destination do
   def applied(%__MODULE__{} = st, ack, now) do
     {st, expired} = expire(st, now)
     {st, actions} = take_ack(st, ack, now)
-    {st, expired ++ actions}
+    closed_after(st, expired ++ actions)
   end
 
   defp take_ack(st, ack, now) do
     f = st.in_flight
-    u = st.unresolved
+    to = st.timed_out
 
     cond do
       st.phase == :closed ->
         {bump(st, :late_acks), [trace(st, now, "ack_after_close", ack_fields(ack))]}
 
       # the answer for a target whose deadline already passed: evidence beside it, no resolution
-      f == nil and is_map(u) and u.seq == ack.seq and is_map_key(u, :timed_out_r) ->
-        st = %{bump(st, :late_acks) | unresolved: Map.put(u, :late_ack, ack_fields(ack))}
+      f == nil and is_map(to) and to.seq == ack.seq ->
+        st = %{bump(st, :late_acks) | timed_out: Map.put(to, :late_ack, ack_fields(ack))}
 
         {st,
          [
@@ -384,7 +391,7 @@ defmodule GlacierRelay.Motion.Destination do
              st,
              now,
              "ack_late",
-             Map.put(ack_fields(ack), "deadline_mono_ms", u.r_sent + @ack_timeout_ms)
+             Map.put(ack_fields(ack), "deadline_mono_ms", to.r_sent + @ack_timeout_ms)
            )
          ]}
 
@@ -464,7 +471,7 @@ defmodule GlacierRelay.Motion.Destination do
   def report(%__MODULE__{} = st, rep, now) do
     {st, expired} = expire(st, now)
     {st, actions} = take_report(st, rep, now)
-    {st, expired ++ actions}
+    closed_after(st, expired ++ actions)
   end
 
   defp take_report(st, rep, now) do
@@ -519,8 +526,17 @@ defmodule GlacierRelay.Motion.Destination do
   def native_closed(%__MODULE__{} = st, c, now) do
     {st, expired} = expire(st, now)
     {st, actions} = take_native_close(st, c, now)
-    {st, expired ++ actions}
+    closed_after(st, expired ++ actions)
   end
+
+  # a closed summary emitted during an event is the account after the whole event (verifier F3)
+  defp closed_after(st, actions),
+    do:
+      {st,
+       Enum.map(actions, fn
+         {:closed, _} -> {:closed, summary(st)}
+         other -> other
+       end)}
 
   defp take_native_close(%{phase: :closed, close: %{state: :confirmed}} = st, c, now),
     do: {st, [trace(st, now, "closed_duplicate", %{"reason" => c.reason})]}
@@ -669,6 +685,8 @@ defmodule GlacierRelay.Motion.Destination do
   def link_lost(%__MODULE__{phase: :closed} = st, _now), do: {st, []}
 
   def link_lost(%__MODULE__{} = st, now) do
+    # an acknowledgement deadline that passed before the loss was processed counts as passed
+    {st, timed_out} = if ack_due?(st, now), do: time_out_ack(st, now), else: {st, []}
     close = st.close || %{reason: :link_lost, by: :link, requested_r: now}
     st = if st.in_flight, do: bump(st, :unacknowledged), else: st
 
@@ -681,7 +699,9 @@ defmodule GlacierRelay.Motion.Destination do
         close: Map.put(close, :state, :unknown)
     }
 
-    {st, [trace(st, now, "close_unknown", %{"why" => "link_lost"}), {:closed, summary(st)}]}
+    {st,
+     timed_out ++
+       [trace(st, now, "close_unknown", %{"why" => "link_lost"}), {:closed, summary(st)}]}
   end
 
   @doc "Handles every deadline that has passed at `now` (`expire/2`), then forwards if the pacing allows."
@@ -745,7 +765,8 @@ defmodule GlacierRelay.Motion.Destination do
   # resolves it
   defp time_out_ack(%{in_flight: f} = st, now) do
     st = st |> bump(:uncertain) |> bump(:unacknowledged)
-    st = %{st | in_flight: nil, unresolved: st.unresolved || Map.put(f, :timed_out_r, now)}
+    t = Map.put(f, :timed_out_r, now)
+    st = %{st | in_flight: nil, timed_out: t, unresolved: st.unresolved || t}
     {st, [trace(st, now, "ack_timeout", %{"seq" => f.seq, "sent_mono_ms" => f.r_sent})]}
   end
 
@@ -763,9 +784,11 @@ defmodule GlacierRelay.Motion.Destination do
     |> Enum.min(fn -> nil end)
   end
 
-  def next_deadline(%__MODULE__{phase: :closing, close: %{state: s} = c})
-      when s in [:requested, :transmitted],
-      do: c.requested_r + @close_confirm_ms
+  def next_deadline(%__MODULE__{phase: :closing, close: %{state: s} = c} = st)
+      when s in [:requested, :transmitted] do
+    ack = st.in_flight && st.in_flight.r_sent + @ack_timeout_ms
+    min(ack || c.requested_r + @close_confirm_ms, c.requested_r + @close_confirm_ms)
+  end
 
   def next_deadline(_), do: nil
 
@@ -793,6 +816,13 @@ defmodule GlacierRelay.Motion.Destination do
       confirmed_seq: st.ref.seq,
       confirmed_pos: st.ref.pos,
       unresolved_seq: st.unresolved && st.unresolved.seq,
+      timed_out:
+        st.timed_out &&
+          %{
+            seq: st.timed_out.seq,
+            sent_mono_ms: st.timed_out.r_sent,
+            late_ack_outcome: st.timed_out[:late_ack] && st.timed_out.late_ack["outcome"]
+          },
       native_close:
         nc &&
           %{
