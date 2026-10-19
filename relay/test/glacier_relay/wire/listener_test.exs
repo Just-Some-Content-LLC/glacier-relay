@@ -380,10 +380,10 @@ defmodule GlacierRelay.Wire.ListenerTest do
   end
 
   test "an actor outcome sent with no open attempt is unattributed" do
-    [_playing | rest] = @b1
+    [_playing, first | _] = @b1
 
     first_outcome =
-      hd(rest) |> String.replace("bf3be44e-a36d-4ac6-9508-d94330fb855e", "orphan-outcome")
+      first |> String.replace("bf3be44e-a36d-4ac6-9508-d94330fb855e", "orphan-outcome")
 
     socket = connect()
     :ok = :gen_tcp.send(socket, first_outcome <> "\n")
