@@ -250,12 +250,18 @@ defmodule GlacierRelay.Motion.DestinationTest do
   describe "freshness: lag growth" do
     test "growth is the receiver interval minus the source interval; above the bound the session closes" do
       st = new(%{stall_ms: 1_000})
+
+      # each target is acknowledged in time (M7-B1 correction A: an event processed after a target's
+      # 200 ms deadline closes ack_timeout first, so this test of lag growth answers every target)
       {st, _} = Destination.sample(st, s(1, 1_000), 60)
+      {st, _} = applied(st, 1, pos2(0.0), 70)
       {st, _} = Destination.sample(st, s(2, 1_050), 110)
+      {st, _} = applied(st, 2, pos2(0.0), 120)
       # received 150 ms later for 50 ms of source time: growth 100 — at the bound, still fresh
       {st, a} = Destination.sample(st, s(3, 1_100), 260)
       assert closes(a) == []
       assert st.counts.max_lag_growth_ms == 100
+      {st, _} = applied(st, 3, pos2(0.0), 270)
       {st, a} = Destination.sample(st, s(4, 1_150), 311)
       assert closes(a) == [:late]
       assert st.counts.refused.late == 1
@@ -464,12 +470,24 @@ defmodule GlacierRelay.Motion.DestinationTest do
     end
 
     test "a native-initiated close is confirmed with the native's reason" do
+      # processed before any BEAM deadline (M7-B1 correction A moved this input from t=1,000, which
+      # is past the stall deadline; that case is the next test)
       {_st, a} =
-        Destination.native_closed(new(), %{closed(true) | reason: "target_silence"}, 1_000)
+        Destination.native_closed(new(), %{closed(true) | reason: "target_silence"}, 200)
 
       assert [{:closed, summary}] = for({:closed, _} = c <- a, do: c)
       assert summary.close.by == :native and summary.close.state == :confirmed
       assert summary.close.reason == "native:target_silence"
+    end
+
+    test "a native close processed after a BEAM deadline: the deadline first, then the confirmation" do
+      {_st, a} =
+        Destination.native_closed(new(), %{closed(true) | reason: "target_silence"}, 1_000)
+
+      assert closes(a) == [:stall]
+      assert [{:closed, summary}] = for({:closed, _} = c <- a, do: c)
+      assert summary.close.by == :beam and summary.close.state == :confirmed
+      assert summary.close.reason == "stall" and summary.native_close.reason == "target_silence"
     end
 
     test "an unclean native close is not restorable" do

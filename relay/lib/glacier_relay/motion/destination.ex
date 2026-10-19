@@ -37,6 +37,30 @@ defmodule GlacierRelay.Motion.Destination do
   loss, trace or audit loss). Close states: `requested` → `transmitted` → `confirmed` (the native's
   `ghost.closed`) or `unknown` (no confirmation within 1,000 ms, or the motion link lost first). A
   native-initiated `ghost.closed` is `confirmed` with the native's reason.
+
+  **Time (M7-B1 correction A).** A timer is a wakeup, not the deadline: every event —
+  `sample/3`, `applied/3`, `report/3`, `native_closed/3` and `tick/2` — first applies, through
+  `expire/2`, every deadline that has passed at its own processing time (`>=`: a deadline expires
+  at its instant), in a fixed order: the acknowledgement of the target in flight, the duration,
+  the stall; while closing, the acknowledgement and the 1,000 ms confirmation. Only then is the
+  event itself handled, so an event that loses the race to its timer message cannot create an
+  effect the timer would have prevented. `expire/2` never forwards. Its outcomes:
+  - an acknowledgement deadline passed: the target's outcome is **unknown** (`uncertain`,
+    `unacknowledged`, kept as `unresolved`) and, while open, the session closes (`ack_timeout`);
+    an answer for it processed afterwards is a **late answer** — counted (`late_acks`) and kept
+    beside the unresolved target as evidence, never a resolution: it moves no reference, counts no
+    apply and releases no pending target;
+  - the confirmation deadline passed: the close is `unknown` (the link is dropped); a
+    `ghost.closed` processed afterwards is kept as qualified evidence (`late_native_close`), never
+    a confirmation, and never overwrites the unknown close.
+
+  The **send boundary** is checked again by `before_send/3`, which the hub calls after the
+  batch's required trace write and immediately before the target's bytes: a target whose session
+  has reached its duration, or whose stall deadline (measured from the previous send) has passed,
+  is cancelled before any byte is written (`cancelled_before_send`; not uncertain) and the session
+  closes; otherwise the target's send time — the start of its acknowledgement deadline, its forward
+  pacing and its stall — is the actual send. A clock check does not make the later write atomic,
+  and nothing recalls a line already written.
   """
 
   alias GlacierRelay.Command.TransformWords
@@ -76,6 +100,7 @@ defmodule GlacierRelay.Motion.Destination do
     report_seq: 0,
     close: nil,
     native_close: nil,
+    late_native_close: nil,
     counts: %{}
   ]
 
@@ -156,6 +181,8 @@ defmodule GlacierRelay.Motion.Destination do
       reports: 0,
       dropped_on_close: 0,
       withdrawn: 0,
+      cancelled_before_send: 0,
+      late_acks: 0,
       max_lag_growth_ms: 0,
       refused: Map.new(@refusals, &{&1, 0})
     }
@@ -165,8 +192,12 @@ defmodule GlacierRelay.Motion.Destination do
 
   @doc "A received `pose.sample` (decoded by `Peer.Codec`) of the bound stream."
   def sample(%__MODULE__{} = st, s, now) do
-    st = bump(st, :received)
+    {st, expired} = expire(st, now)
+    {st, actions} = take_sample(bump(st, :received), s, now)
+    {st, expired ++ actions}
+  end
 
+  defp take_sample(st, s, now) do
     cond do
       st.phase != :open ->
         refuse(st, s, :not_open, now)
@@ -282,7 +313,14 @@ defmodule GlacierRelay.Motion.Destination do
       if distance <= allowance do
         st = %{
           st
-          | in_flight: %{seq: p.seq, x: p.x, y: p.y, pos: p.pos, r_sent: now},
+          | in_flight: %{
+              seq: p.seq,
+              x: p.x,
+              y: p.y,
+              pos: p.pos,
+              r_sent: now,
+              prev_forward_r: st.last_forward_r
+            },
             pending: nil,
             last_forward_r: now
         }
@@ -323,11 +361,32 @@ defmodule GlacierRelay.Motion.Destination do
 
   @doc "A `ghost.applied` for this session."
   def applied(%__MODULE__{} = st, ack, now) do
+    {st, expired} = expire(st, now)
+    {st, actions} = take_ack(st, ack, now)
+    {st, expired ++ actions}
+  end
+
+  defp take_ack(st, ack, now) do
     f = st.in_flight
+    u = st.unresolved
 
     cond do
       st.phase == :closed ->
-        {st, [trace(st, now, "ack_after_close", ack_fields(ack))]}
+        {bump(st, :late_acks), [trace(st, now, "ack_after_close", ack_fields(ack))]}
+
+      # the answer for a target whose deadline already passed: evidence beside it, no resolution
+      f == nil and is_map(u) and u.seq == ack.seq and is_map_key(u, :timed_out_r) ->
+        st = %{bump(st, :late_acks) | unresolved: Map.put(u, :late_ack, ack_fields(ack))}
+
+        {st,
+         [
+           trace(
+             st,
+             now,
+             "ack_late",
+             Map.put(ack_fields(ack), "deadline_mono_ms", u.r_sent + @ack_timeout_ms)
+           )
+         ]}
 
       f == nil or ack.seq != f.seq ->
         st = record_late_ack(st, ack)
@@ -403,6 +462,12 @@ defmodule GlacierRelay.Motion.Destination do
 
   @doc "A `ghost.report` for this session."
   def report(%__MODULE__{} = st, rep, now) do
+    {st, expired} = expire(st, now)
+    {st, actions} = take_report(st, rep, now)
+    {st, expired ++ actions}
+  end
+
+  defp take_report(st, rep, now) do
     expected = st.report_seq + 1
     acked = st.counts.applied + st.counts.skipped + st.counts.refused_native + st.counts.uncertain
     in_flight = if st.in_flight, do: 1, else: 0
@@ -446,11 +511,37 @@ defmodule GlacierRelay.Motion.Destination do
     end
   end
 
-  @doc "The native's `ghost.closed` for this session: native-confirmed."
-  def native_closed(%__MODULE__{phase: :closed, close: %{state: :confirmed}} = st, c, now),
+  @doc """
+  The native's `ghost.closed` for this session: native-confirmed — unless the confirmation
+  deadline passed first (`expire/2`), in which case the close stays `unknown` and this message is
+  kept as qualified evidence (`late_native_close`).
+  """
+  def native_closed(%__MODULE__{} = st, c, now) do
+    {st, expired} = expire(st, now)
+    {st, actions} = take_native_close(st, c, now)
+    {st, expired ++ actions}
+  end
+
+  defp take_native_close(%{phase: :closed, close: %{state: :confirmed}} = st, c, now),
     do: {st, [trace(st, now, "closed_duplicate", %{"reason" => c.reason})]}
 
-  def native_closed(%__MODULE__{} = st, c, now) do
+  defp take_native_close(%{phase: :closed} = st, c, now) do
+    st = %{st | late_native_close: c}
+
+    {st,
+     [
+       trace(st, now, "closed_late", %{
+         "native_reason" => c.reason,
+         "clean" => c.clean,
+         "final_world" => c.final_world,
+         "last_applied_seq" => c.last_applied_seq,
+         "native_applied" => c.applied,
+         "qualification" => "received after the close was declared unknown; not a confirmation"
+       })
+     ]}
+  end
+
+  defp take_native_close(st, c, now) do
     close =
       case st.close do
         nil -> %{reason: {:native, c.reason}, by: :native, requested_r: now}
@@ -513,14 +604,58 @@ defmodule GlacierRelay.Motion.Destination do
   The target in flight was never written (its trace record was refused first): it is withdrawn —
   not uncertain, because no byte of it left this node — and the session is already closing.
   """
-  def withdrawn(%__MODULE__{in_flight: %{seq: seq}} = st, seq),
-    do: %{
-      bump(st, :withdrawn)
-      | in_flight: nil,
-        counts: Map.update!(st.counts, :forwarded, &(&1 - 1))
-    }
+  def withdrawn(%__MODULE__{in_flight: %{seq: seq}} = st, seq) do
+    # the bump first: a record update reading st.counts would discard it (M7-B1 correction)
+    st = bump(st, :withdrawn)
+    %{st | in_flight: nil, counts: Map.update!(st.counts, :forwarded, &(&1 - 1))}
+  end
 
   def withdrawn(st, _seq), do: st
+
+  @doc """
+  The send boundary (correction A): the hub calls this after the batch's required trace write and
+  immediately before writing the target's line. `{:send, state}` — the target's send time, and
+  with it its acknowledgement deadline, its pacing and the stall, start now — or
+  `{:cancel, state, actions}`: the target is cancelled before any byte of it is written (not
+  uncertain), and a deadline that passed closes the session.
+  """
+  def before_send(%__MODULE__{phase: :open, in_flight: %{seq: seq} = f} = st, seq, now) do
+    l = st.limits
+
+    cond do
+      now >= st.opened_at + l.duration_ms -> cancel_send(st, :duration, now)
+      now >= f.prev_forward_r + l.stall_ms -> cancel_send(st, :stall, now)
+      true -> {:send, %{st | in_flight: %{f | r_sent: now}, last_forward_r: now}}
+    end
+  end
+
+  def before_send(%__MODULE__{in_flight: %{seq: seq}} = st, seq, now),
+    do: cancel_send(st, :not_open, now)
+
+  def before_send(%__MODULE__{} = st, seq, now),
+    do:
+      {:cancel, st,
+       [trace(st, now, "send_cancelled", %{"seq" => seq, "why" => "not_the_target_in_flight"})]}
+
+  defp cancel_send(st, why, now) do
+    f = st.in_flight
+    st = bump(st, :cancelled_before_send)
+    st = %{st | in_flight: nil, counts: Map.update!(st.counts, :forwarded, &(&1 - 1))}
+
+    tr =
+      trace(st, now, "send_cancelled", %{
+        "seq" => f.seq,
+        "why" => reason_text(why),
+        "decided_mono_ms" => f.r_sent
+      })
+
+    if why == :not_open do
+      {:cancel, st, [tr]}
+    else
+      {st, closing} = close(st, why, now)
+      {:cancel, st, [tr | closing]}
+    end
+  end
 
   @doc "The `ghost.close` line was written."
   def close_transmitted(%__MODULE__{close: %{state: :requested}} = st, now) do
@@ -549,15 +684,27 @@ defmodule GlacierRelay.Motion.Destination do
     {st, [trace(st, now, "close_unknown", %{"why" => "link_lost"}), {:closed, summary(st)}]}
   end
 
-  @doc "Handles every deadline that has passed at `now`, then forwards if the pacing allows."
-  def tick(%__MODULE__{phase: :open} = st, now) do
+  @doc "Handles every deadline that has passed at `now` (`expire/2`), then forwards if the pacing allows."
+  def tick(%__MODULE__{} = st, now) do
+    {st, expired} = expire(st, now)
+    {st, forwarded} = try_forward(st, now)
+    {st, expired ++ forwarded}
+  end
+
+  @doc """
+  Applies every deadline that has passed at `now` and nothing else (it never forwards): while
+  open, the acknowledgement of the target in flight, the duration and the stall (the first that
+  passed closes the session); while closing, the acknowledgement and the 1,000 ms confirmation.
+  Every event calls it before handling itself.
+  """
+  def expire(%__MODULE__{phase: :open} = st, now) do
     l = st.limits
 
     cond do
-      st.in_flight != nil and now >= st.in_flight.r_sent + @ack_timeout_ms ->
-        st = st |> bump(:uncertain) |> bump(:unacknowledged)
-        st = %{st | unresolved: st.in_flight}
-        close(st, :ack_timeout, now)
+      ack_due?(st, now) ->
+        {st, timed_out} = time_out_ack(st, now)
+        {st, closing} = close(st, :ack_timeout, now)
+        {st, timed_out ++ closing}
 
       now >= st.opened_at + l.duration_ms ->
         close(st, :duration, now)
@@ -566,27 +713,41 @@ defmodule GlacierRelay.Motion.Destination do
         close(st, :stall, now)
 
       true ->
-        try_forward(st, now)
+        {st, []}
     end
   end
 
-  def tick(%__MODULE__{phase: :closing} = st, now) do
+  def expire(%__MODULE__{phase: :closing} = st, now) do
+    {st, timed_out} = if ack_due?(st, now), do: time_out_ack(st, now), else: {st, []}
+
     if st.close.state in [:requested, :transmitted] and
          now >= st.close.requested_r + @close_confirm_ms do
       st = %{st | phase: :closed, close: %{st.close | state: :unknown}}
 
       {st,
-       [
-         trace(st, now, "close_unknown", %{"why" => "no confirmation"}),
-         {:drop_link, :close_unconfirmed},
-         {:closed, summary(st)}
-       ]}
+       timed_out ++
+         [
+           trace(st, now, "close_unknown", %{"why" => "no confirmation"}),
+           {:drop_link, :close_unconfirmed},
+           {:closed, summary(st)}
+         ]}
     else
-      {st, []}
+      {st, timed_out}
     end
   end
 
-  def tick(st, _now), do: {st, []}
+  def expire(st, _now), do: {st, []}
+
+  defp ack_due?(st, now),
+    do: st.in_flight != nil and now >= st.in_flight.r_sent + @ack_timeout_ms
+
+  # the target's outcome is unknown from its deadline on: never "unapplied", and no later answer
+  # resolves it
+  defp time_out_ack(%{in_flight: f} = st, now) do
+    st = st |> bump(:uncertain) |> bump(:unacknowledged)
+    st = %{st | in_flight: nil, unresolved: st.unresolved || Map.put(f, :timed_out_r, now)}
+    {st, [trace(st, now, "ack_timeout", %{"seq" => f.seq, "sent_mono_ms" => f.r_sent})]}
+  end
 
   @doc "The earliest time at which `tick/2` has something to do, or nil."
   def next_deadline(%__MODULE__{phase: :open} = st) do
@@ -640,6 +801,14 @@ defmodule GlacierRelay.Motion.Destination do
             final_world: nc.final_world,
             last_applied_seq: nc.last_applied_seq,
             applied: nc.applied
+          },
+      late_native_close:
+        st.late_native_close &&
+          %{
+            reason: st.late_native_close.reason,
+            clean: st.late_native_close.clean,
+            final_world: st.late_native_close.final_world,
+            qualification: "received after the close was declared unknown; not a confirmation"
           },
       restorable: restorable?(st, nc)
     }

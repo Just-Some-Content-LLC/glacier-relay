@@ -17,7 +17,9 @@ defmodule GlacierRelay.Peer.Connection do
   Outbound: `send_sample/2` and `send_control/3` are bounded before anything is queued — at most 8
   samples and 16 control messages waiting for this process (an `:atomics` count). A sample above the
   bound is dropped by its producer (`{:error, :backlog}`, counted there); a sample that waited more
-  than 100 ms is dropped here as stale (counted); a control message above the bound closes the
+  than 100 ms is dropped here as stale (counted), and so is one whose producer's bound
+  (`not_after`, a share's duration) has been reached by the time it would be written
+  (`samples_expired`; M7-B1 correction A); a control message above the bound closes the
   connection, so stop stays possible. Every TLS send has a 500 ms deadline and closes on timeout.
   Liveness: `ping` every second (the RTT is measured on this node's clock only, from its own
   `sender_mono_ms` echoed back); three seconds without any input closes the connection.
@@ -53,13 +55,17 @@ defmodule GlacierRelay.Peer.Connection do
 
   # -- producer API (any process holding the connection's info) -------------------------------------
 
-  @doc "Queues one `pose.sample` (bounded). `:ok` or `{:error, :backlog}`."
-  def send_sample(%{connection: pid, credits: ref}, fields) when is_map(fields) do
+  @doc """
+  Queues one `pose.sample` (bounded). `not_after`: this node's clock time from which the sample
+  may no longer be written (nil: no bound). `:ok` or `{:error, :backlog}`.
+  """
+  def send_sample(%{connection: pid, credits: ref}, fields, not_after \\ nil)
+      when is_map(fields) and (is_integer(not_after) or is_nil(not_after)) do
     if :atomics.add_get(ref, 1, 1) > @sample_credits do
       :atomics.sub(ref, 1, 1)
       {:error, :backlog}
     else
-      GenServer.cast(pid, {:sample, fields, Clock.now_ms()})
+      GenServer.cast(pid, {:sample, fields, Clock.now_ms(), not_after})
       :ok
     end
   end
@@ -122,6 +128,7 @@ defmodule GlacierRelay.Peer.Connection do
          samples_in: 0,
          samples_out: 0,
          samples_stale: 0,
+         samples_expired: 0,
          controls_out: 0,
          pings: 0,
          pongs: 0
@@ -151,14 +158,18 @@ defmodule GlacierRelay.Peer.Connection do
     end
   end
 
-  def handle_cast({:sample, fields, enqueued}, state) do
+  def handle_cast({:sample, fields, enqueued, not_after}, state) do
     :atomics.sub(state.credits, 1, 1)
+    t = Clock.now_ms()
 
     cond do
       state.phase != :identified or state.closed ->
         {:noreply, state}
 
-      Clock.now_ms() - enqueued > @max_send_age_ms ->
+      not_after != nil and t >= not_after ->
+        {:noreply, out(state, :samples_expired)}
+
+      t - enqueued > @max_send_age_ms ->
         {:noreply, out(state, :samples_stale)}
 
       true ->

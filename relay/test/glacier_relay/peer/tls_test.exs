@@ -394,6 +394,34 @@ defmodule GlacierRelay.Peer.TLSTest do
       assert Connection.status(info.connection).queued_samples == 0
     end
 
+    test "a sample whose producer's bound is reached before its write is dropped, not written",
+         %{info: info} do
+      # M7-B1 correction A: a share's sample carries the share's bound (not_after); the connection
+      # checks it again immediately before the TLS write
+      sid = Schema.uuid4()
+
+      :ok =
+        Connection.send_control(info, "stream.open", %{
+          "stream_id" => sid,
+          "source_kind" => "game",
+          "interval_ms" => 50,
+          "src_clock" => "native",
+          "label" => nil,
+          "course" => nil
+        })
+
+      wait(fn -> Connection.status(info.connection).counts.controls_out == 1 end)
+      :sys.suspend(info.connection)
+      t = GlacierRelay.Motion.Clock.now_ms()
+      :ok = Connection.send_sample(info, %{sample(1) | "stream_id" => sid}, t + 30)
+      :ok = Connection.send_sample(info, %{sample(2) | "stream_id" => sid}, t + 10_000)
+      Process.sleep(60)
+      :sys.resume(info.connection)
+      wait(fn -> Connection.status(info.connection).counts.samples_expired == 1 end)
+      counts = Connection.status(info.connection).counts
+      assert counts.samples_out == 1 and counts.samples_stale == 0
+    end
+
     test "a control overflow closes the connection (stop stays possible)", %{info: info} do
       :sys.suspend(info.connection)
       results = for _ <- 1..17, do: Connection.send_control(info, "bye", %{"reason" => "t"})

@@ -29,6 +29,14 @@ defmodule GlacierRelay.Motion.Hub do
   unknown or whose opening snapshot differs is ended on the motion link (never left to the native's
   silence timer alone); a native close received before activation is honoured; a stream bound once
   is never bound to a second session.
+
+  Deadline correction (M7-B1 correction A): the machines apply every passed deadline at each
+  event's processing time, whatever the order of this process's messages (a `:tick` is only a
+  wakeup). The send boundary is checked again **after** the batch's required trace write and
+  immediately before the bytes: `Destination.before_send/3` before a `ghost.target` is written to
+  the motion socket, `Source.before_send/3` before a relayed sample is handed to the peer
+  connection (with the share's bound as the connection's `not_after`). A target or sample that is
+  no longer eligible is cancelled there, before any byte of it is written.
   """
 
   use GenServer
@@ -802,10 +810,17 @@ defmodule GlacierRelay.Motion.Hub do
 
   defp withdraw(_action, state, _owner), do: state
 
+  # the send boundary: re-checked after the batch's trace write, immediately before the bytes
   defp act({:send_target, t}, state, :session) do
-    case write(state, Codec.target(t.session_id, t.seq, t.pos)) do
-      {:ok, state} -> state
-      {:error, state} -> lose_link(state, :target_not_written)
+    case Destination.before_send(state.session.dest, t.seq, now()) do
+      {:send, d} ->
+        case write(put_in(state.session.dest, d), Codec.target(t.session_id, t.seq, t.pos)) do
+          {:ok, state} -> state
+          {:error, state} -> lose_link(state, :target_not_written)
+        end
+
+      {:cancel, d, actions} ->
+        state |> put_in([:session, :dest], d) |> run(actions, :session)
     end
   end
 
@@ -824,9 +839,17 @@ defmodule GlacierRelay.Motion.Hub do
   end
 
   defp act({:send_peer, "pose.sample", fields}, state, :share) do
-    case state.peer && Connection.send_sample(state.peer.info, fields) do
-      :ok -> state
-      _ -> put_in(state.share.src, Source.send_dropped(state.share.src))
+    case Source.before_send(state.share.src, fields, now()) do
+      {:send, s, not_after} ->
+        state = put_in(state.share.src, s)
+
+        case state.peer && Connection.send_sample(state.peer.info, fields, not_after) do
+          :ok -> state
+          _ -> put_in(state.share.src, Source.send_dropped(state.share.src))
+        end
+
+      {:cancel, s, actions} ->
+        state |> put_in([:share, :src], s) |> run(actions, :share)
     end
   end
 
