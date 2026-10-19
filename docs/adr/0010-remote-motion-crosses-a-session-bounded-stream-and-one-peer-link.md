@@ -1,6 +1,8 @@
 # ADR 0010 — Remote motion crosses a session-bounded stream; inter-host exchange is BEAM-to-BEAM over one explicit peer link
 
-**Status:** Proposed (2026-10-19, with the M7-A design `docs/design/M7_NETWORK_GHOST.md`). Scope: **M7 — Network ghost only.** Nothing here authorizes implementation, a socket, a network, firewall or WSL change, a second machine or a runtime experiment.
+**Status:** **Accepted (2026-10-19), as amended below, for the amended boundary and the M7-B1 scope** (offline, BEAM and tooling, fake native endpoints and owned loopback peers). Proposed earlier the same day with the M7-A design `docs/design/M7_NETWORK_GHOST.md`; the reviewed contract is that design's section 15. Acceptance is **not** evidence of native or runtime enforcement: the DLL implements none of this until M7-B2, and nothing has run against the game. Scope: **M7 — Network ghost only.** Nothing here authorizes a native change, a game run, a LAN socket, a network, firewall or WSL change, or a second machine.
+
+The Context and Decision sections below are the proposal as reviewed. They are kept as written; the **Amendments on acceptance** section changes them and governs where they conflict.
 
 **It amends ADR 0009 rule 3:** engine writes would no longer come only from individual commands; they could also come from samples inside a session that a command opened.
 
@@ -49,3 +51,17 @@ Only one Windows game host is available. Early development therefore needs a pee
 - Loss and ordering are handled by sequence numbers and the receiver's own hold timers, not by delivery guarantees. Exactly-once application is not claimed.
 - Cross-machine monotonic clocks are not compared; one-way latency is only estimated.
 - A UDP / DTLS transport, interpolation, rotation and z-following are later, separately evidenced decisions.
+
+## Amendments on acceptance (2026-10-19; design section 15)
+
+These are amendments. The proposal above did not contain them.
+
+1. **Close is not a command.** `candidate.motion.session/1` carries `open` and `restore` only. Close is a `ghost.close` on the bound motion link — or, when that line cannot be written within its deadline, the dropping of the link, on which the native closes. The command link's one-in-flight rule therefore cannot block it. It needs no arming, works with full buffers or a degraded audit, and is journaled when known as `requested`, `transmitted`, `confirmed` or `unknown`. A peer ends only its own bound stream.
+2. **The local data link is bound, not merely loopback.** The `4750` link is accepted only for the current token-verified command link's adapter and generation. It is then attested by an HMAC of the run token over a fresh nonce and both link generations, verified inside `TokenHolder`. The token never leaves the host. A share or session names its motion link generation.
+3. **The local approval fixes the session.** It fixes the peer pin, boot, connection, stream and `source_kind`, the starting exact inspection, the identity mapping, and the numeric limits and expiry (section 15.3), all before application is possible. There is no acquisition exemption: the first target, and any target after a pause, is bounded against the opening snapshot or the last **confirmed-applied** postimage. The displacement credit is capped, so a pause earns nothing extra.
+4. **First uncertainty ends application.** The first uncertain post-call result ends application, as does any native refusal, critical identity, generation, parent, registry or control failure, report disagreement, or trace or audit loss. A declared stall or lag growth closes the session. There is no resumption, and no automatic recovery or re-arming.
+5. **Exclusivity covers restores.** `candidate.transform.set` v1 / v2 forwards **and restores** are refused while a motion session is not restored. A motion open is refused while an M6 forward is unrestored. There is one session per authority process by default, and a new session never replaces an unrestored one's preimage. A motion restore needs a native-confirmed clean close, the retained preimage, a fresh later exact inspection and new arming; lost or uncertain history is ineligible.
+6. **Peer authentication.** TLS 1.3 only, mutual. Each side has a per-experiment private CA and a pinned leaf. The verification callback only narrows, and the pin is checked again after the handshake. There is no trust on first use, no resumption, no early data and no Erlang distribution between peers. B1's 4750 / 4760 refuse any non-loopback bind, and B1's test peers are non-distributed.
+7. **Freshness claims are limited** to order, receipt silence and bounded delay growth (receiver interval minus source interval). Every queue, frame, deadline and control capacity is bounded; control overflow closes the connection.
+8. **Evidence.** There is a separate, bounded motion trace with explicit incompleteness. Per-apply postimages travel in `ghost.applied`. F2 (engine frames +1 … +4) is unmeasured unless B2 adds the bounded instrument. RTT / 2 is not a latency.
+9. **Corrections.** The epmd "harmless under NAT" and "would be exposed" claims are retracted (wildcard listener observed; reachability and firewall not established). "No collision" means collision is unvalidated.

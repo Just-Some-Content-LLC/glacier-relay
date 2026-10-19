@@ -2,6 +2,8 @@
 
 **Status:** design only (2026-10-19). Nothing implemented, built, installed or launched; no socket opened, no network change, no other machine contacted, no token, no engine command. Nothing here implies that multiplayer works. Every stage below needs its own authorization.
 
+**Reviewed (2026-10-19):** section 15 is the reviewed contract that M7-B1 implements against fakes. It amends, and where they conflict governs, sections 1–14. ADR 0010 is accepted for that amended boundary and the B1 scope only.
+
 This revision includes the operator's **hardware and ownership constraint** (section 9). There is one Windows HITMAN development host (the Steam copy), an Xbox copy and a MacBook. A second compatible Windows game installation is not assumed.
 
 **Authorization:** "Glacier Relay — Proposed M7-A architecture investigation", with the amendment "M7-A hardware and ownership constraint".
@@ -341,7 +343,7 @@ The operator's answers to section 12, verbatim:
 **What changes, and what does not:**
 - **The MacBook.** M7-L's LAN prerequisite is now operator-reported, and Elixir is present (operator-reported). Its Elixir / OTP versions, its `ssl` support and its firewall were **not inspected**: no machine was contacted. They are recorded at M7-L's checkpoint, together with its one inbound rule, which still needs its own authorization. The MacBook's unrelated project is not touched. The headless peer runs as a separate application with its own directory, node name and port.
 - **Acceptance.** The section 3 exit interpretation and the section 9 claims split are accepted by the operator as written. The M7 exit itself is unchanged, and the two-instance claims stay deferred.
-- **Courses** (P; built from the planter centres of `M6E_VISUAL_PLACEMENT.md` section 11 — rows y 11.99359 / 17.67185, columns x −80.477 / −84.044 / −87.670 / −91.318; the extents of the planters are unmeasured, and the ghost has no collision, so clearance is visual only):
+- **Courses** (P; built from the planter centres of `M6E_VISUAL_PLACEMENT.md` section 11 — rows y 11.99359 / 17.67185, columns x −80.477 / −84.044 / −87.670 / −91.318; the extents of the planters are unmeasured; collision and physical coupling are unvalidated: this stage neither disables collision nor provides collision avoidance, and a path inside the coordinate box is not proven clear or safe, even when it looks plausible — corrected in section 15.1):
 
   | Course | Kind | Proposed geometry | In the ±8 m box |
   |---|---|---|---|
@@ -356,6 +358,258 @@ The operator's answers to section 12, verbatim:
 - **Recording.** Game Bar is confirmed for C1 and C2; no frame synchronization is claimed (as in M6-G2).
 
 **Unchanged:** nothing is authorized by these answers. M7-B1 remains the proposed next authorization.
+
+## 15. Reviewed contract (M7-A review; normative for M7-B1)
+
+**Status:** reviewed amendments recorded on 2026-10-19 under the authorization "Glacier Relay — M7-B1 offline implementation authorization" (with "M7-A review and M7-B1 bounded offline implementation"), **before** any M7 code. Sections 1–14 remain the proposal as reviewed; where they conflict with this section, this section governs. The original proposal did **not** contain the protections below; they are amendments. B1 makes them executable against fake native endpoints and owned loopback peers only. Native enforcement (B2) and every runtime claim remain unvalidated.
+
+**Review basis:** the design at `4c01fb76` (sections 1–13) and `2a66d0e3` (section 14), and ADR 0010 as proposed; the design seal `m7a-design\` manifest `cc73bfb4b515f0d9986c9e4c1afa684a6c813dc2a276a1aeb97fbdcc2e615c87`. The M7-A verifier inspected a pre-amendment draft that was **not retained**. Its line references cannot be re-resolved, and its report is not independently repeatable; it stays as historical evidence with that qualification.
+
+### 15.1 Corrections to earlier text
+
+- **epmd (section 1; HANDOFF).** Retracted: "harmless under the default WSL2 NAT mode" and "a later networking change would expose epmd". Observed: `epmd -daemon` (pid 45286, started 2026-10-12, this user's OTP 28.4.2) listens on `0.0.0.0:4369` and `[::]:4369`. The project's tooling starts `--sname` nodes, which makes it the likely starter; that is not proven. Which interfaces can reach it, and the firewall state, were not established. epmd and distribution are separate listeners. B1 uses no named node. The daemon is reported, not stopped or rebound.
+- **Collision (section 14; also section 8's "no collision").** Read as: collision and physical coupling are unvalidated. This stage neither disables collision nor provides collision avoidance. A path inside the coordinate box is not proven clear or safe, even when it looks plausible.
+- **Acquisition exemption (section 4.2).** Removed. No target, first or after a pause, bypasses the displacement bound (15.3).
+- **"Close after 3 consecutive" (section 6).** Replaced. The first uncertain post-call result, or the first critical identity, generation, parent, registry or control failure, ends application.
+- **Evidence claims (sections 6–7, 10).** A 250 ms report is not a trace of every apply. A 20 Hz stream says nothing about engine frames +1 … +4. F2 is **unmeasured** unless B2 adds the bounded instrument named in 15.8. RTT / 2 is never reported as a one-way latency. "It tests F1–F6" in M7-C is withdrawn.
+- **"Never dropped" control messages (section 4.3).** Replaced by bounded control capacity (15.6).
+
+### 15.2 Identities and bindings
+
+| Identity | Scope | Use |
+|---|---|---|
+| Peer | the pinned leaf certificate (SHA-256 of its DER) and the configured label and client kind (`game` / `headless`) | authentication; the declared client kind must equal the configured one |
+| Boot | a random UUID per BEAM boot, in `hello` | rejects data from a previous boot |
+| Connection generation | a local counter per peer connection | a session is bound to one |
+| Stream | a UUID per source attempt (`stream.open`), with `source_kind` | a session is bound to one stream, so a restarted source opens a new stream, which the session refuses |
+| Share, session | local UUIDs | journaled, never authority on the wire |
+| Adapter, command link generation, motion link generation | local only | never sent to a peer |
+| Mission generation | each machine's own | a local precondition only, never compared across machines |
+
+A headless peer may declare only `source_kind: synthetic`; a headless peer declaring `game` is a protocol violation that closes the connection. `source_kind` is authenticated-peer **provenance**, not proof that a game produced truthful values. A sink never forwards or relabels what it receives: there is no API path from a sink to a source.
+
+**Mapping:** identity only (source world x / y = destination target x / y). With absolute identity mapping, two real players starting at the same place would put the ghost on the receiving local hero. Before any real-to-real runtime (M7-D), non-overlapping starts or an explicitly armed fixed mapping must be chosen; there is no implicit dynamic recentering. B1 refuses any mapping other than `identity`.
+
+### 15.3 Destination application (BEAM rules; the native rules are 15.5)
+
+The **local approval** fixes all of the following before application is possible:
+- the peer (pin, label, kind), boot, connection generation and stream, with `source_kind`;
+- the scope (the compiled candidate) and the mapping;
+- the starting evidence: one fresh exact inspection, through `TransformBinding.qualify/2`;
+- the limits below and the expiry.
+
+No peer message can open, extend or widen any of it. A session that does not exist ignores every sample.
+
+| Limit | Default | Compiled bound | Boundary |
+|---|---|---|---|
+| Area: the anchor (the opening snapshot's x / y) ± `half_extent_m` | 8.0 | 0.1 … 8.0 | inclusive; a sample outside it closes the session (`outside_area`) |
+| Forward rate: at most one `ghost.target` per `min_forward_interval_ms` (receiver BEAM clock) | 50 | 50 … 1,000 | one target in flight: the next is sent only after the previous one's `ghost.applied` |
+| Displacement from the **reference** | `max_speed_mps` × min(Δr, `credit_ms`) / 1,000 | speed 0.1 … 3.0 (default 2.0); credit 50 … 200 (default 100) | ≤ passes. Δr is the receiver-clock time since the reference was sent. The credit cap means a pause never earns more than `credit_ms` of movement (0.2 m at the defaults). A refused target is withheld (`refused_displacement`) and never clamped. |
+| Stall: no target forwarded for `stall_ms` | 250 | 100 … 1,000 | ≥ closes (`stall`) |
+| Lag growth (15.6) | 100 | 20 … 250 | > closes (`late`) |
+| Duration | 120,000 | 1,000 … 300,000 | BEAM closes at the end; the native closes on its own clock |
+| Acknowledgement of the target in flight | 200 | fixed | a timeout is **uncertain**, which closes |
+
+**Reference:** the last target that `ghost.applied` confirmed applied, with its exact postimage; before that, the opening snapshot. Acquisition is the first target against the opening snapshot, under the same displacement rule, with no exemption. An old or delayed target inside the box does not acquire anything. Received, validated, superseded, forwarded and confirmed sequence numbers are kept distinct. Supersession in the pending slot never advances the reference.
+
+**Sequence:**
+- a duplicate or older sequence number is refused and counted, and is never re-applied;
+- a target is never re-sent because it is still available;
+- a source-clock value that does not increase closes the session (`protocol`);
+- a sample with `qualified: false` (dirty or unqualified at the source) is withheld (`unqualified`), and a receiver never promotes it.
+
+**Ends application (BEAM side):**
+- `ghost.applied` reporting `uncertain`, a postimage that differs from the request, any native refusal, or an acknowledgement timeout;
+- a report whose counts disagree with the acknowledgements received before it, or a report-sequence gap;
+- loss of the trace or the audit trail;
+- `stream.end` or peer-link loss;
+- the operator.
+
+There is **no resumption**. A declared stall or loss of stream context ends the session; a new session needs new local approval and new arming. No automatic recovery or re-arming happens in the first attended experiment.
+
+### 15.4 Lifecycle and close
+
+**Order:**
+1. peer connection (TLS, then `hello`);
+2. for the source: local inert arming and a `player.pose.share/1` `open`, whose operator statement fixes the peer, the stream, the duration (≤ 300 s) and the interval (≥ 50 ms). For the destination:
+   1. a fresh exact inspection;
+   2. effectful arming (the existing one-shot arming, with its telemetry attestation and ownership evidence);
+   3. `Motion` approval (15.3);
+   4. `candidate.motion.session/1` `open`;
+3. native confirmation (the result's opening snapshot equals the inspection's words);
+4. application;
+5. close;
+6. optionally, a separately approved `restore`.
+
+The command entries carry **`open` and `restore` only**.
+
+**Close** is never a command, so the command link's one-in-flight rule cannot block it. It is a `ghost.close` on the bound motion link. If that line cannot be written within its send deadline, the motion link is dropped, and the native closes on link loss. Close needs no arming. It works with no sample flowing, with a command in flight, with full buffers and with a degraded audit (a failed journal entry is recorded as a gap and never forces continued application). It is journaled when known, with one of four states:
+- `requested`: BEAM has stopped sending targets;
+- `transmitted`: the line was written;
+- `confirmed`: `ghost.closed` was received;
+- `unknown`: no confirmation within 1,000 ms, or the link was lost first. BEAM then drops the motion link, and the native's own timers are the remaining, unconfirmed stop.
+
+A peer ends only its own bound stream. A `stream.end` naming another stream or boot is refused and counted.
+
+**Hold and closed** mean that Relay stops invoking the setter. They do not mean the engine keeps the entity motionless, and absolute targets do not prove that the engine call is idempotent.
+
+**Mutual exclusion** (authority; mirrored natively in B2):
+- `candidate.transform.set` v1 / v2 — forward **and** restore — is refused while a motion session exists that is not restored, or while a motion `open` / `restore` is in flight;
+- a motion `open` is refused while any command is in flight, or while an M6 forward has consumed its budget without a confirmed restoration;
+- the read-only `relay.inspect.candidate_transform/1` stays issuable.
+
+**Budget:** at most `max_sessions` destination sessions per authority process (default **1**). A new session is refused while an earlier one is not restored, so a session never replaces another's retained preimage. The M6 one-forward budget is unchanged, and nothing resets either budget. An authority restart ends the attended run's commands (M6-F 12.5).
+
+**Restore** (`candidate.motion.session/1` `restore`) is issuable only when all of these hold:
+- the session closed `confirmed` and clean (native-reported, with no uncertain outcome);
+- the session's journaled opening preimage is retained;
+- a fresh exact inspection, later than the close, finds the candidate's words equal to the native-confirmed final words, on the session's adapter, the current token-verified link and the same mission generation;
+- new effectful arming is held.
+
+If the inspection finds the words already equal to the preimage, the result is `already_at_baseline`, and nothing is submitted. An `unknown` close, lost history, a different adapter or a mismatching inspection is ineligible. There is no automatic inverse and one restore per session.
+
+### 15.5 The local data link (`127.0.0.1:4750`) and the native rules (B2 contract, modelled in B1)
+
+**Binding:**
+- The native connects and sends `motion.hello {adapter_instance_id, command_link_generation}`. It is accepted only if it equals the **current, token-verified** command link.
+- BEAM answers with `motion.welcome {motion_link_generation, nonce}`.
+- The native returns, within 2 s, `motion.attest` = HMAC-SHA256(run token, `motion|nonce|motion_link_generation|command_link_generation|adapter_instance_id`), verified inside `TokenHolder`. The run token never leaves the host.
+- The binding lives only as long as that command link, that motion link and that authority process. A command-link loss drops the motion link.
+- A share or session names its motion link generation, and every data line names its share or session. Loopback access, or a UUID alone, binds nothing.
+
+**Native rules** (one pending slot; at most one apply per frame, and at least `min_apply_interval_ms` = 40 apart on the native clock):
+- Before each call, on that frame:
+  - the session is open;
+  - the mission is playing;
+  - the generation, the scene and both link generations are as at open;
+  - the latch is clear;
+  - the candidate is resolved, distinct and not in the registry, and its cache is clean;
+  - its parent is unchanged;
+  - **every word except Trans.x / Trans.y equals the opening snapshot's**: an unexplained change is refused, never forced back, and closes the session;
+  - the sequence number is greater than the last applied one;
+  - the target is finite and in the area;
+  - its distance from the last applied postimage (or the opening snapshot) is at most `max_speed` × `credit`.
+- A target whose x / y words equal the last applied ones is `skipped_identical`: no call.
+- A pre-call failure means **no invocation**.
+- After the call, a postimage that differs from the request, or a read-back that is unavailable, is **uncertain**: never reported as unapplied, and it closes the session (a fault sets the existing latch).
+- `ghost.applied` is sent for every target; `ghost.report` every 250 ms, with a report sequence number.
+- **Autonomous closes**, with no BEAM needed:
+  - duration;
+  - target silence of `silence_close_ms` (default 1,000);
+  - motion- or command-link loss;
+  - a generation or scene change;
+  - a predicate fall;
+  - any refusal or uncertainty.
+- `ghost.closed` carries its reason, `clean`, the final words and the counts.
+
+The B1 fake models these timers in a separate process, so they keep running while BEAM's motion process is suspended. That shows the BEAM contract, **not** that the DLL enforces any of it.
+
+### 15.6 Freshness and bounded transport
+
+**What is established:**
+- order and the refusal of duplicates within one stream;
+- receipt silence on the receiver's clock;
+- the **growth** of one-way delay relative to the epoch's least-delayed validated sample. It is computed as the receiver interval minus the source interval, each subtraction within one clock domain, and its error is the two clocks' rate difference (an assumption, labelled).
+
+**Not established:**
+- absolute delay or sample age;
+- a constant delay present from the first sample;
+- the source clock's truthfulness.
+
+**Bounds:**
+
+| Part | Bound |
+|---|---|
+| Frames | lines of at most 1,024 bytes on the peer link and the motion link, with at most 1,024 buffered partial bytes |
+| Parsing | strict: an unknown kind or field is a violation and closes the connection |
+| Receive | one read at a time (`active: :once`); each sample is handed to the destination by a call with a 200 ms deadline |
+| Peer sender | samples: at most 8 queued and one per 45 ms per stream, the oldest dropped and counted; control: at most 16 queued, and an overflow closes the connection, so stop stays possible |
+| Send deadlines | 500 ms (peer) and 200 ms (motion link), closing on timeout. Measured: OTP 28 `ssl` with `send_timeout` returned `{:error, :timeout}` after about 209 KB had been buffered (`m7b1-offline\tls-probe\`) |
+| Liveness | `ping` each second; three seconds without input closes the connection. RTT is recorded on the sender's clock only |
+
+Delayed traffic can sit in kernel, TLS and application buffers well beyond the visible queues (209 KB is roughly 70 s of samples). It never plays out as a catch-up trajectory, for three reasons:
+- a stall closes the session first;
+- lag growth closes it;
+- forward pacing and the displacement bound limit any burst.
+
+### 15.7 Peer authentication and network isolation
+
+**TLS:**
+- **TLS 1.3 only, mutual.** Each side has a per-experiment private CA (ECDSA P-256, SHA-256) and a leaf certificate. Each side trusts exactly the other side's CA, `fail_if_no_peer_cert` is set, and the other side's **leaf SHA-256 is pinned**.
+- The verification callback only narrows: it accepts `valid_peer` on an exact pin and never overrides a `bad_cert`. The pin is checked again after the handshake.
+- There is no trust on first use, no session resumption and no early data. The hostname check is off, because the pin is the identity.
+- OTP 28 refuses a self-signed leaf even when that leaf is in `cacerts` (`selfsigned_peer`; `tls-probe\t1`). That is why the CA-and-leaf form is used, rather than an accepting callback.
+
+**One allowlisted peer and one connection.** A second connection is refused.
+
+**Refused:** a missing or wrong certificate, a wrong pin, TLS 1.2, a malformed handshake, a `hello` whose identity or kind differs from the configuration, and an oversized or malformed line.
+
+**Credentials** are throwaway and live in test-owned temporary directories. Private keys never enter a report.
+
+**Isolation:**
+- No Erlang distribution between peers. B1's test peers are **non-distributed** (`nonode@nohost`); the second BEAM process is controlled over its standard input and output.
+- 4747 / 4748 / 4749 keep their loopback configuration; 4749's refusal of a non-loopback bind is preserved. 4750 and 4760 refuse any non-loopback bind at start in B1, including `0.0.0.0` and `::`.
+- No LAN exposure, no firewall, WSL or Mac change, and nothing is done to the shared epmd. Any later stage that uses a named node restricts epmd and distribution itself (both, IPv6 included) and verifies the sockets. A new environment setting does not rebind a daemon that is already running.
+
+### 15.8 Evidence
+
+**Trace.** A per-node `glacier-relay.motion-trace/1`, separate from the journal and from recordings:
+- **Bounds:** 200,000 records or 32 MiB; a datasync every 100 ms and at close.
+- **Markers:** a footer `trace.closed`; `trace.truncated` at the bound, after which the health is `full`; an I/O error makes it `failed`.
+- **Required for a destination session or a share:** health other than `ok` stops further effects and closes, without blocking stop.
+- **Incompleteness:** a trace without its footer may lack the records since the last sync.
+- **Clock domains:** every record carries the writer's clock. Foreign-domain values are labelled (`src_mono_ms`, `native_mono_ms`) and never subtracted across domains.
+
+**Accounting** for each destination session:
+- received, by verdict;
+- superseded, forwarded, and acknowledgements by outcome;
+- uncertain;
+- report gaps;
+- the close reason and state;
+- sequence reconciliation against the source's `stream.end` `last_seq`.
+
+**Verdicts:**
+- **F1:** every applied target's postimage on its own frame (`ghost.applied`). The first mismatch ends the session, so there is no percentage threshold.
+- **F2:** unmeasured. The smallest instrument is a B2 native read of the candidate's words on the next ≤ 4 frames after each apply, during sessions only.
+- **F3:** testimony and recording only.
+- **F4:** native and runtime.
+- **F5:** the unqualified fraction, from the trace.
+- **F6:** a sampled-hero change with a stationary operator report is a finding, not proof of pushing.
+
+Software no-feedback means no re-forwarding and never the candidate as a source. It does not exclude engine coupling.
+
+### 15.9 Courses
+
+**One deterministic generator** (`Motion.Course`), with no pathfinding:
+- **Segments:** `hold`, `line` and `arc`.
+- **Profiles:** out-and-back, shuttle, rectangle (or square), figure-eight (tangent lobes, opposite senses, a smooth crossing) and circle.
+- **Parameters recorded:** origin, scale, orientation, direction, speed policy (constant speed per segment), sample interval and seed-free timing (sample *k* is the path position at *k* × interval).
+- **Bounds:** every profile **starts with a stationary sample at the anchor P**. It reaches its start by an explicit `line` and returns by one. Transitions and closing segments are inside the area, rate and displacement checks.
+- **Sources and labels:** courses are offline fixtures (section 14's geometry) and are never real-player samples or a locomotion demonstration. The 1.0–1.5 m/s preference stays a proposal under the enforced limits.
+
+**First destination course (a recommendation, not permission):** a short, slow out-and-back from P along the avenue centreline (y 14.833). It goes 1.0 m out at 0.5 m/s, with holds, in a corridor reviewed for that run. The full shuttle, the rectangle and the figure-eight stay options for separately approved runs, after their real geometry and exposure have been reviewed.
+
+**Fountain walk:** source-only. It needs no destination box, but it does need bounded duration, rate and output, and a share approval. Its geometry is deferred until a destination course needs it. A captured walk is not proof that the path is safe to assign to another character.
+
+**Future onboarding** (a requirement only, not a deliverable now): a participant with a second game installation would need, at the least:
+- a reproducible installation check against the content fingerprint;
+- generation of per-experiment credentials and an exchange of pins;
+- a one-command peer start that opens nothing but the agreed port;
+- the same evidence guard.
+
+There is no installer, GUI, embedded runtime or updater in B1.
+
+### 15.10 Remaining untested (unchanged by B1)
+
+- native sampling of a moving hero, and its dirty fraction;
+- native enforcement of 15.5;
+- repeated setter writes, x writes and frame cost;
+- collision and coupling;
+- every TLS path other than loopback;
+- MacBook compatibility (OTP, `ssl`, firewall);
+- any LAN or two-game behaviour.
+
+M7-C, L and D each need their own authorization and fresh readiness.
 
 ## 13. Sources
 
