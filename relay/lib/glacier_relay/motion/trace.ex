@@ -32,7 +32,8 @@ defmodule GlacierRelay.Motion.Trace do
     do: GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
 
   @doc "Appends records (maps with string keys). `:ok`, or `{:error, health}`."
-  def append(server, records) when is_list(records), do: GenServer.call(server, {:append, records})
+  def append(server, records) when is_list(records),
+    do: GenServer.call(server, {:append, records})
 
   @doc "The trace's identity, path, counts and health."
   def status(server), do: GenServer.call(server, :status)

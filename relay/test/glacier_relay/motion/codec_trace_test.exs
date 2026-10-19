@@ -17,15 +17,42 @@ defmodule GlacierRelay.Motion.CodecTraceTest do
   describe "motion link codec" do
     test "round trips every kind in both directions" do
       for {kind, fields} <- [
-            {"motion.hello", %{"adapter_instance_id" => Schema.uuid4(), "command_link_generation" => 1}},
+            {"motion.hello",
+             %{"adapter_instance_id" => Schema.uuid4(), "command_link_generation" => 1}},
             {"hero.sample",
-             %{"share_id" => @sid, "seq" => 1, "frame" => 2, "native_mono_ms" => 3, "pos" => "c2a77ccf,416b27e8,bfc2d6ba", "dirty" => false}},
+             %{
+               "share_id" => @sid,
+               "seq" => 1,
+               "frame" => 2,
+               "native_mono_ms" => 3,
+               "pos" => "c2a77ccf,416b27e8,bfc2d6ba",
+               "dirty" => false
+             }},
             {"ghost.applied",
-             %{"session_id" => @sid, "seq" => 1, "frame" => 2, "native_mono_ms" => 3, "outcome" => "applied", "reason" => nil, "post" => "c2b2fae1,416d47ae", "exact" => true}},
+             %{
+               "session_id" => @sid,
+               "seq" => 1,
+               "frame" => 2,
+               "native_mono_ms" => 3,
+               "outcome" => "applied",
+               "reason" => nil,
+               "post" => "c2b2fae1,416d47ae",
+               "exact" => true
+             }},
             {"ghost.closed",
-             %{"session_id" => @sid, "reason" => "duration", "native_mono_ms" => 3, "clean" => true, "final_world" => nil, "last_applied_seq" => nil, "applied" => 0}}
+             %{
+               "session_id" => @sid,
+               "reason" => "duration",
+               "native_mono_ms" => 3,
+               "clean" => true,
+               "final_world" => nil,
+               "last_applied_seq" => nil,
+               "applied" => 0
+             }}
           ] do
-        assert {:ok, {_atom, decoded}} = Codec.decode_from_native(String.trim(Codec.encode_from_native(kind, fields)))
+        assert {:ok, {_atom, decoded}} =
+                 Codec.decode_from_native(String.trim(Codec.encode_from_native(kind, fields)))
+
         assert decoded.version == 1
       end
 
@@ -34,14 +61,38 @@ defmodule GlacierRelay.Motion.CodecTraceTest do
     end
 
     test "refuses unknown kinds, fields, versions, oversize, bad UTF-8, non-finite and miscounted words" do
-      base = %{"motion_protocol_version" => 1, "kind" => "ghost.applied", "session_id" => @sid, "seq" => 1, "frame" => 1, "native_mono_ms" => 1, "outcome" => "applied"}
+      base = %{
+        "motion_protocol_version" => 1,
+        "kind" => "ghost.applied",
+        "session_id" => @sid,
+        "seq" => 1,
+        "frame" => 1,
+        "native_mono_ms" => 1,
+        "outcome" => "applied"
+      }
+
       assert {:ok, _} = Codec.decode_from_native(line(base))
-      assert {:error, {:unknown_kind, "ghost.teleport"}} = Codec.decode_from_native(line(%{base | "kind" => "ghost.teleport"}))
-      assert {:error, {:unknown_fields, ["speed"]}} = Codec.decode_from_native(line(Map.put(base, "speed", 9)))
-      assert {:error, {:unsupported_version, 2}} = Codec.decode_from_native(line(%{base | "motion_protocol_version" => 2}))
-      assert {:error, {:invalid_field, "outcome", _}} = Codec.decode_from_native(line(%{base | "outcome" => "maybe"}))
-      assert {:error, {:invalid_field, "seq", _}} = Codec.decode_from_native(line(%{base | "seq" => 0}))
-      assert {:error, :line_too_long} = Codec.decode_from_native(line(Map.put(base, "reason", String.duplicate("x", 1_100))))
+
+      assert {:error, {:unknown_kind, "ghost.teleport"}} =
+               Codec.decode_from_native(line(%{base | "kind" => "ghost.teleport"}))
+
+      assert {:error, {:unknown_fields, ["speed"]}} =
+               Codec.decode_from_native(line(Map.put(base, "speed", 9)))
+
+      assert {:error, {:unsupported_version, 2}} =
+               Codec.decode_from_native(line(%{base | "motion_protocol_version" => 2}))
+
+      assert {:error, {:invalid_field, "outcome", _}} =
+               Codec.decode_from_native(line(%{base | "outcome" => "maybe"}))
+
+      assert {:error, {:invalid_field, "seq", _}} =
+               Codec.decode_from_native(line(%{base | "seq" => 0}))
+
+      assert {:error, :line_too_long} =
+               Codec.decode_from_native(
+                 line(Map.put(base, "reason", String.duplicate("x", 1_100)))
+               )
+
       assert {:error, :invalid_utf8} = Codec.decode_from_native(<<"{\"kind\":\"", 0xFF, "\"}">>)
       # a NaN word and a miscounted group never decode
       assert {:error, {:invalid_field, "post", {:not_finite_words, 2, _}}} =
@@ -50,7 +101,9 @@ defmodule GlacierRelay.Motion.CodecTraceTest do
       assert {:error, {:invalid_field, "post", {:not_finite_words, 2, _}}} =
                Codec.decode_from_native(line(Map.put(base, "post", "c2b2fae1")))
 
-      assert {:error, {:invalid_field, "session_id", :missing}} = Codec.decode_from_native(line(Map.delete(base, "session_id")))
+      assert {:error, {:invalid_field, "session_id", :missing}} =
+               Codec.decode_from_native(line(Map.delete(base, "session_id")))
+
       assert {:error, :missing_kind} = Codec.decode_from_native(line(Map.delete(base, "kind")))
       assert {:error, :not_an_object} = Codec.decode_from_native("[1,2]")
     end
@@ -65,7 +118,9 @@ defmodule GlacierRelay.Motion.CodecTraceTest do
   describe "peer codec" do
     test "round trips and strictness" do
       hello = Peer.Codec.hello("host", "game", Schema.uuid4())
-      assert {:ok, {:hello, %{client_kind: "game", capabilities: ["pose/1"]}}} = Peer.Codec.decode(String.trim(hello))
+
+      assert {:ok, {:hello, %{client_kind: "game", capabilities: ["pose/1"]}}} =
+               Peer.Codec.decode(String.trim(hello))
 
       sample = %{
         "peer_protocol_version" => 1,
@@ -77,16 +132,39 @@ defmodule GlacierRelay.Motion.CodecTraceTest do
         "qualified" => true
       }
 
-      assert {:ok, {:pose_sample, %{src_frame: nil, reason: nil}}} = Peer.Codec.decode(line(sample))
-      assert {:error, {:unknown_fields, ["session_id"]}} = Peer.Codec.decode(line(Map.put(sample, "session_id", @sid)))
-      assert {:error, {:unknown_fields, ["adapter_instance_id"]}} = Peer.Codec.decode(line(Map.put(sample, "adapter_instance_id", @sid)))
-      assert {:error, {:invalid_field, "pos", _}} = Peer.Codec.decode(line(%{sample | "pos" => "c2b2fae1,416d47ae"}))
-      assert {:error, {:invalid_field, "src_mono_ms", _}} = Peer.Codec.decode(line(%{sample | "src_mono_ms" => -1}))
+      assert {:ok, {:pose_sample, %{src_frame: nil, reason: nil}}} =
+               Peer.Codec.decode(line(sample))
 
-      open = %{"peer_protocol_version" => 1, "kind" => "stream.open", "stream_id" => @sid, "source_kind" => "replay", "interval_ms" => 50, "src_clock" => "beam"}
+      assert {:error, {:unknown_fields, ["session_id"]}} =
+               Peer.Codec.decode(line(Map.put(sample, "session_id", @sid)))
+
+      assert {:error, {:unknown_fields, ["adapter_instance_id"]}} =
+               Peer.Codec.decode(line(Map.put(sample, "adapter_instance_id", @sid)))
+
+      assert {:error, {:invalid_field, "pos", _}} =
+               Peer.Codec.decode(line(%{sample | "pos" => "c2b2fae1,416d47ae"}))
+
+      assert {:error, {:invalid_field, "src_mono_ms", _}} =
+               Peer.Codec.decode(line(%{sample | "src_mono_ms" => -1}))
+
+      open = %{
+        "peer_protocol_version" => 1,
+        "kind" => "stream.open",
+        "stream_id" => @sid,
+        "source_kind" => "replay",
+        "interval_ms" => 50,
+        "src_clock" => "beam"
+      }
+
       assert {:error, {:invalid_field, "source_kind", _}} = Peer.Codec.decode(line(open))
-      assert {:error, {:invalid_field, "interval_ms", _}} = Peer.Codec.decode(line(%{open | "source_kind" => "synthetic", "interval_ms" => 10}))
-      assert {:error, {:unknown_kind, "session.open"}} = Peer.Codec.decode(line(%{open | "kind" => "session.open"}))
+
+      assert {:error, {:invalid_field, "interval_ms", _}} =
+               Peer.Codec.decode(
+                 line(%{open | "source_kind" => "synthetic", "interval_ms" => 10})
+               )
+
+      assert {:error, {:unknown_kind, "session.open"}} =
+               Peer.Codec.decode(line(%{open | "kind" => "session.open"}))
     end
 
     test "a line fragmented over many reads decodes once complete; an oversized partial is refused" do
@@ -108,7 +186,9 @@ defmodule GlacierRelay.Motion.CodecTraceTest do
 
   describe "motion trace" do
     setup do
-      dir = Path.join(System.tmp_dir!(), "glacier-relay-trace-#{System.unique_integer([:positive])}")
+      dir =
+        Path.join(System.tmp_dir!(), "glacier-relay-trace-#{System.unique_integer([:positive])}")
+
       on_exit(fn -> File.rm_rf(dir) end)
       %{dir: dir}
     end
@@ -125,7 +205,9 @@ defmodule GlacierRelay.Motion.CodecTraceTest do
       assert hd(recs)["format"] == "glacier-relay.motion-trace/1"
     end
 
-    test "the bound writes one truncation marker; later appends are refused and counted", %{dir: dir} do
+    test "the bound writes one truncation marker; later appends are refused and counted", %{
+      dir: dir
+    } do
       {:ok, t} = Trace.start_link(dir: dir, role: "test", max_records: 4)
       assert :ok = Trace.append(t, [%{"event" => "a"}, %{"event" => "b"}])
       assert {:error, :full} = Trace.append(t, [%{"event" => "c"}, %{"event" => "d"}])
@@ -133,7 +215,13 @@ defmodule GlacierRelay.Motion.CodecTraceTest do
       %{path: path, health: :full, dropped: dropped} = Trace.status(t)
       assert dropped >= 2
       GenServer.stop(t)
-      events = path |> File.read!() |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!(&1)["event"])
+
+      events =
+        path
+        |> File.read!()
+        |> String.split("\n", trim: true)
+        |> Enum.map(&JSON.decode!(&1)["event"])
+
       assert "trace.truncated" in events and List.last(events) == "trace.closed"
       refute "e" in events
     end
@@ -145,7 +233,13 @@ defmodule GlacierRelay.Motion.CodecTraceTest do
       :ok = Trace.flush(t)
       %{path: path} = Trace.status(t)
       Process.exit(t, :kill)
-      events = path |> File.read!() |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!(&1)["event"])
+
+      events =
+        path
+        |> File.read!()
+        |> String.split("\n", trim: true)
+        |> Enum.map(&JSON.decode!(&1)["event"])
+
       assert events == ["trace.opened", "a"]
     end
   end

@@ -227,7 +227,12 @@ defmodule GlacierRelay.Peer.Connection do
     else
       seq = state.ping_seq + 1
       state = %{state | ping_seq: seq, ping_timer: Process.send_after(self(), :ping, @ping_ms)}
-      send_line(state, Codec.encode("ping", %{"ping_seq" => seq, "sender_mono_ms" => now}), :pings)
+
+      send_line(
+        state,
+        Codec.encode("ping", %{"ping_seq" => seq, "sender_mono_ms" => now}),
+        :pings
+      )
     end
   end
 
@@ -262,7 +267,10 @@ defmodule GlacierRelay.Peer.Connection do
 
       {{:ok, {:stream_end, f}}, :identified} ->
         if Map.has_key?(state.streams, f.stream_id) do
-          event(%{state | streams: Map.delete(state.streams, f.stream_id)}, {:stream_end, info(state), f})
+          event(
+            %{state | streams: Map.delete(state.streams, f.stream_id)},
+            {:stream_end, info(state), f}
+          )
         else
           {:halt, {:close, {:violation, :end_for_a_stream_not_open}, state}}
         end
@@ -270,7 +278,10 @@ defmodule GlacierRelay.Peer.Connection do
       {{:ok, {:ping, f}}, :identified} ->
         case :ssl.send(
                state.socket,
-               Codec.encode("pong", %{"ping_seq" => f.ping_seq, "echo_mono_ms" => f.sender_mono_ms})
+               Codec.encode("pong", %{
+                 "ping_seq" => f.ping_seq,
+                 "echo_mono_ms" => f.sender_mono_ms
+               })
              ) do
           :ok -> {:cont, {:ok, out(state, :lines_out)}}
           {:error, reason} -> {:halt, {:close, {:send_failed, reason}, state}}

@@ -77,8 +77,9 @@ defmodule GlacierRelay.Peer.TLS do
 
   defp key(opts) do
     case {Map.get(opts, :key), Map.get(opts, :key_file)} do
-      {{type, der}, _} when type in [:ECPrivateKey, :RSAPrivateKey, :PrivateKeyInfo] and
-                              is_binary(der) ->
+      {{type, der}, _}
+      when type in [:ECPrivateKey, :RSAPrivateKey, :PrivateKeyInfo] and
+             is_binary(der) ->
         {:ok, {type, der}}
 
       {nil, file} when is_binary(file) ->

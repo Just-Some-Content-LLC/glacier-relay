@@ -26,7 +26,8 @@ defmodule GlacierRelay.Motion.Link do
 
   @impl true
   def init({socket, opts}) do
-    timer = Process.send_after(self(), :binding_timeout, Keyword.get(opts, :hello_timeout_ms, 2_000))
+    timer =
+      Process.send_after(self(), :binding_timeout, Keyword.get(opts, :hello_timeout_ms, 2_000))
 
     {:ok,
      %{
@@ -90,7 +91,8 @@ defmodule GlacierRelay.Motion.Link do
                       command_generation: h.command_link_generation
                   }}}
 
-              {:error, reason} -> {:halt, {:close, {:welcome_not_sent, reason}, state}}
+              {:error, reason} ->
+                {:halt, {:close, {:welcome_not_sent, reason}, state}}
             end
 
           {:error, reason} ->
@@ -111,7 +113,6 @@ defmodule GlacierRelay.Motion.Link do
           if state.timer, do: Process.cancel_timer(state.timer)
           {:cont, {:ok, %{state | phase: :bound, timer: nil}}}
         else
-
           {:error, reason} ->
             _ = :gen_tcp.send(state.socket, Codec.refused(reason))
             {:halt, {:close, {:attest_failed, reason}, state}}

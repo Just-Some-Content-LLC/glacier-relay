@@ -22,14 +22,26 @@ defmodule GlacierRelay.Motion.SourceCourseTest do
       dirty: Keyword.get(opts, :dirty, false)
     }
 
-  defp src, do: Source.new(%{share_id: @share, interval_ms: 50, duration_ms: 1_000, opened_at: 0, label: "test"})
+  defp src,
+    do:
+      Source.new(%{
+        share_id: @share,
+        interval_ms: 50,
+        duration_ms: 1_000,
+        opened_at: 0,
+        label: "test"
+      })
+
   defp relayed(actions), do: for({:send_peer, "pose.sample", f} <- actions, do: f)
 
   describe "share relay" do
     test "relays the native's samples with the native clock as the source clock" do
       {st, a} = Source.hero_sample(src(), hs(1, 5_000), 10)
       assert [f] = relayed(a)
-      assert f["stream_id"] == @share and f["seq"] == 1 and f["src_mono_ms"] == 5_000 and f["qualified"]
+
+      assert f["stream_id"] == @share and f["seq"] == 1 and f["src_mono_ms"] == 5_000 and
+               f["qualified"]
+
       assert Source.stream_open(st)["source_kind"] == "game"
       assert Source.stream_open(st)["src_clock"] == "native"
     end
@@ -62,7 +74,10 @@ defmodule GlacierRelay.Motion.SourceCourseTest do
     test "the duration ends the share and the stream" do
       {st, a} = Source.tick(src(), 1_000)
       assert {:send_share_close, :duration} in a
-      assert [{"stream.end", %{"reason" => "duration"}}] = for({:send_peer, "stream.end", f} <- a, do: {"stream.end", f})
+
+      assert [{"stream.end", %{"reason" => "duration"}}] =
+               for({:send_peer, "stream.end", f} <- a, do: {"stream.end", f})
+
       {st, a} = Source.native_closed(st, %{reason: "beam:duration", last_seq: 0, sent: 0}, 1_010)
       assert st.phase == :closed and st.close.state == :confirmed
       assert [{:closed, _}] = for({:closed, _} = c <- a, do: c)
@@ -78,13 +93,26 @@ defmodule GlacierRelay.Motion.SourceCourseTest do
     defp courses do
       [
         Course.out_and_back(@p),
-        Course.out_and_back(@p, direction: :reverse, heading_rad: :math.pi() / 2, distance_m: 0.5),
+        Course.out_and_back(@p,
+          direction: :reverse,
+          heading_rad: :math.pi() / 2,
+          distance_m: 0.5
+        ),
         Course.shuttle(@p, a: {-91.318, 14.833}, b: {-84.044, 14.833}),
-        Course.shuttle(@p, a: {-91.318, 14.833}, b: {-84.044, 14.833}, direction: :reverse, laps: 2),
+        Course.shuttle(@p,
+          a: {-91.318, 14.833},
+          b: {-84.044, 14.833},
+          direction: :reverse,
+          laps: 2
+        ),
         Course.rectangle(@p, x: {-92.82, -86.17}, y: {10.49, 19.17}),
         Course.rectangle(@p, x: {-92.82, -86.17}, y: {10.49, 19.17}, direction: :reverse),
         Course.figure_eight(@p, c1: {-87.670, 17.672}, c2: {-91.318, 17.672}),
-        Course.figure_eight(@p, c1: {-87.670, 17.672}, c2: {-91.318, 17.672}, direction: :reverse),
+        Course.figure_eight(@p,
+          c1: {-87.670, 17.672},
+          c2: {-91.318, 17.672},
+          direction: :reverse
+        ),
         Course.circle(@p, center: {-89.49, 12.0}, radius_m: 1.5),
         Course.circle(@p, center: {-89.49, 12.0}, radius_m: 1.5, direction: :reverse)
       ]
@@ -100,14 +128,18 @@ defmodule GlacierRelay.Motion.SourceCourseTest do
         assert stats.max_step_m <= c.speed_mps * c.interval_ms / 1_000 + 0.001
         {x0, x1, y0, y1} = stats.bbox
         {ax, ay} = c.origin
-        assert abs(x0 - ax) <= 8.0 and abs(x1 - ax) <= 8.0 and abs(y0 - ay) <= 8.0 and abs(y1 - ay) <= 8.0
+
+        assert abs(x0 - ax) <= 8.0 and abs(x1 - ax) <= 8.0 and abs(y0 - ay) <= 8.0 and
+                 abs(y1 - ay) <= 8.0
       end
     end
 
     test "every profile returns to the anchor and ends with a hold there" do
       for c <- courses() do
         last = List.last(Course.samples(c))
-        assert abs(last.x - elem(c.origin, 0)) < 1.0e-4 and abs(last.y - elem(c.origin, 1)) < 1.0e-4,
+
+        assert abs(last.x - elem(c.origin, 0)) < 1.0e-4 and
+                 abs(last.y - elem(c.origin, 1)) < 1.0e-4,
                "#{c.name} ends at #{last.x},#{last.y}"
       end
     end
@@ -131,7 +163,10 @@ defmodule GlacierRelay.Motion.SourceCourseTest do
       # the crossing is reached by an explicit transition, never acquired by a jump
       c8 = Course.figure_eight(@p, c1: {-87.670, 17.672}, c2: {-91.318, 17.672})
       steps = c8 |> Course.samples() |> Enum.chunk_every(2, 1, :discard)
-      assert Enum.all?(steps, fn [a, b] -> :math.sqrt(:math.pow(b.x - a.x, 2) + :math.pow(b.y - a.y, 2)) <= 0.051 end)
+
+      assert Enum.all?(steps, fn [a, b] ->
+               :math.sqrt(:math.pow(b.x - a.x, 2) + :math.pow(b.y - a.y, 2)) <= 0.051
+             end)
     end
 
     test "the figure-eight's lobes turn in opposite senses through the crossing" do

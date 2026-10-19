@@ -20,7 +20,10 @@ defmodule GlacierRelay.Motion.TwoProcessTest do
 
   setup do
     creds = PeerCredentials.pair()
-    dir = Path.join(System.tmp_dir!(), "glacier-relay-m7b1-2p-#{System.unique_integer([:positive])}")
+
+    dir =
+      Path.join(System.tmp_dir!(), "glacier-relay-m7b1-2p-#{System.unique_integer([:positive])}")
+
     on_exit(fn -> File.rm_rf(dir) end)
     files = PeerCredentials.write_files(creds.headless, Path.join(dir, "child-creds"), "headless")
 
@@ -52,19 +55,29 @@ defmodule GlacierRelay.Motion.TwoProcessTest do
         "op" => "start_course",
         "profile" => "out_and_back",
         "origin" => [ax, ay],
-        "opts" => Map.merge(%{"prefix_ms" => 1_200, "distance_m" => 0.2, "speed_mps" => 0.5, "hold_ms" => 200}, extra)
+        "opts" =>
+          Map.merge(
+            %{"prefix_ms" => 1_200, "distance_m" => 0.2, "speed_mps" => 0.5, "hold_ms" => 200},
+            extra
+          )
       })
 
     MotionStack.wait(fn -> Map.has_key?(Hub.status().peer.streams, stream) end)
     stream
   end
 
-  test "neither node is distributed; the child listens on loopback only; it is a separate OS process", %{ready: ready} do
+  test "neither node is distributed; the child listens on loopback only; it is a separate OS process",
+       %{ready: ready} do
     assert ready["distributed"] == false and ready["node"] == "nonode@nohost"
     refute Node.alive?()
     assert ready["os_pid"] != System.pid()
     {out, 0} = System.cmd("ss", ["-H", "-ltnp"])
-    mine = out |> String.split("\n", trim: true) |> Enum.filter(&String.contains?(&1, "pid=#{ready["os_pid"]},"))
+
+    mine =
+      out
+      |> String.split("\n", trim: true)
+      |> Enum.filter(&String.contains?(&1, "pid=#{ready["os_pid"]},"))
+
     assert [line] = mine, inspect(mine)
     # columns: state, recv-q, send-q, LOCAL address:port, peer address:port, process
     assert Enum.at(String.split(line), 3) == "127.0.0.1:#{ready["port"]}"
@@ -74,17 +87,31 @@ defmodule GlacierRelay.Motion.TwoProcessTest do
     assert Endpoint.status(GlacierRelay.Motion.PeerEndpoint).role == :connect
   end
 
-  test "game host → headless: the share reaches the other process's sink, labelled and reconciled", %{child: child} do
+  test "game host → headless: the share reaches the other process's sink, labelled and reconciled",
+       %{child: child} do
     :ok = MotionStack.arm()
-    {:ok, %{share_id: share}} = Motion.open_share(duration_ms: 1_000, expected_generation: @gen, label: "B1 fake native — not a game")
+
+    {:ok, %{share_id: share}} =
+      Motion.open_share(
+        duration_ms: 1_000,
+        expected_generation: @gen,
+        label: "B1 fake native — not a game"
+      )
+
     MotionStack.wait(fn -> child_status(child)["sink_done"] != [] end, 300)
     [done] = child_status(child)["sink_done"]
-    assert done["stream_id"] == share and done["source_kind"] == "game" and done["src_clock"] == "native"
+
+    assert done["stream_id"] == share and done["source_kind"] == "game" and
+             done["src_clock"] == "native"
+
     r = done["reconciliation"]
     assert r["received"] == r["source_sent"] and r["last_seq_received"] == r["source_last_seq"]
   end
 
-  test "headless → game host: the other process's synthetic course drives the fake native", %{child: child, st: st} do
+  test "headless → game host: the other process's synthetic course drives the fake native", %{
+    child: child,
+    st: st
+  } do
     stream = course(child)
     {_sid, _} = MotionStack.open_session(st.adapter, stream)
     MotionStack.wait(fn -> match?(%{status: :done}, Hub.status().session) end, 800)
@@ -100,13 +127,21 @@ defmodule GlacierRelay.Motion.TwoProcessTest do
     assert s.counts.refused.duplicate == 0 and s.counts.refused.older == 0
   end
 
-  test "duplex on one link: a share out and a session in at the same time", %{child: child, st: st} do
+  test "duplex on one link: a share out and a session in at the same time", %{
+    child: child,
+    st: st
+  } do
     stream = course(child, %{"prefix_ms" => 800})
     {_sid, _} = MotionStack.open_session(st.adapter, stream)
     :ok = MotionStack.arm()
     {:ok, %{share_id: share}} = Motion.open_share(duration_ms: 1_200, expected_generation: @gen)
     MotionStack.wait(fn -> match?(%{status: :done}, Hub.status().session) end, 800)
-    MotionStack.wait(fn -> Enum.any?(child_status(child)["sink_done"], &(&1["stream_id"] == share)) end, 300)
+
+    MotionStack.wait(
+      fn -> Enum.any?(child_status(child)["sink_done"], &(&1["stream_id"] == share)) end,
+      300
+    )
+
     s = Hub.status().session.summary
     assert s.close.state == :confirmed and s.counts.applied > 0
     [done] = Enum.filter(child_status(child)["sink_done"], &(&1["stream_id"] == share))
@@ -114,11 +149,17 @@ defmodule GlacierRelay.Motion.TwoProcessTest do
     assert Endpoint.status(GlacierRelay.Motion.PeerEndpoint).counts.connections == 1
   end
 
-  test "delayed traffic in the other process's buffers is not played out after a stall", %{child: child, st: st} do
+  test "delayed traffic in the other process's buffers is not played out after a stall", %{
+    child: child,
+    st: st
+  } do
     stream = course(child, %{"prefix_ms" => 400, "distance_m" => 0.4, "hold_ms" => 1_500})
     {_sid, _} = MotionStack.open_session(st.adapter, stream)
     Process.sleep(200)
-    {:ok, %{"ok" => true}} = HeadlessHarness.request(child, %{"op" => "suspend_connection", "ms" => 800})
+
+    {:ok, %{"ok" => true}} =
+      HeadlessHarness.request(child, %{"op" => "suspend_connection", "ms" => 800})
+
     MotionStack.wait(fn -> match?(%{status: :done}, Hub.status().session) end, 400)
     assert Hub.status().session.summary.close.reason == "stall"
     applied = length(for {:applied, _, _, _} <- FakeMotionNative.events(st.fake), do: 1)

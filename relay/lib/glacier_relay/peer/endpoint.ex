@@ -178,7 +178,8 @@ defmodule GlacierRelay.Peer.Endpoint do
   end
 
   def handle_call({:register, _socket}, _from, state) do
-    {:reply, {:error, :busy}, %{state | counts: Map.update!(state.counts, :refused_busy, &(&1 + 1))}}
+    {:reply, {:error, :busy},
+     %{state | counts: Map.update!(state.counts, :refused_busy, &(&1 + 1))}}
   end
 
   def handle_call(:status, _from, state) do

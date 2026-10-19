@@ -219,7 +219,8 @@ defmodule GlacierRelay.Motion.Course do
 
   defp at({:hold, _}, start, _finish, _frac), do: start
 
-  defp at({:line, _}, {ax, ay}, {bx, by}, frac), do: {ax + (bx - ax) * frac, ay + (by - ay) * frac}
+  defp at({:line, _}, {ax, ay}, {bx, by}, frac),
+    do: {ax + (bx - ax) * frac, ay + (by - ay) * frac}
 
   defp at({:arc, {cx, cy}, sweep}, {ax, ay}, _finish, frac) do
     r = :math.sqrt(:math.pow(ax - cx, 2) + :math.pow(ay - cy, 2))
@@ -288,7 +289,9 @@ defmodule GlacierRelay.Motion.Course do
     steps =
       ss
       |> Enum.chunk_every(2, 1, :discard)
-      |> Enum.map(fn [a, b] -> {b.seq, :math.sqrt(:math.pow(b.x - a.x, 2) + :math.pow(b.y - a.y, 2))} end)
+      |> Enum.map(fn [a, b] ->
+        {b.seq, :math.sqrt(:math.pow(b.x - a.x, 2) + :math.pow(b.y - a.y, 2))}
+      end)
 
     violations =
       Enum.flat_map(ss, fn s ->

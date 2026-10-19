@@ -19,7 +19,14 @@ defmodule GlacierRelay.Motion.DestinationTest do
 
   defp new(limits \\ %{}) do
     {:ok, l} = Destination.limits(limits)
-    Destination.new(%{session_id: @sid, stream_id: @stream, limits: l, opening_world: @pre, opened_at: 0})
+
+    Destination.new(%{
+      session_id: @sid,
+      stream_id: @stream,
+      limits: l,
+      opening_world: @pre,
+      opened_at: 0
+    })
   end
 
   # a sample at the anchor offset by (dx, dy) metres, at source time `src`
@@ -39,7 +46,8 @@ defmodule GlacierRelay.Motion.DestinationTest do
   end
 
   defp pos2(dx, dy \\ 0.0),
-    do: TransformWords.encode([TransformWords.to_word(@ax + dx), TransformWords.to_word(@ay + dy)])
+    do:
+      TransformWords.encode([TransformWords.to_word(@ax + dx), TransformWords.to_word(@ay + dy)])
 
   defp sent(actions), do: for({:send_target, t} <- actions, do: t.seq)
   defp closes(actions), do: for({:send_close, r} <- actions, do: r)
@@ -48,7 +56,15 @@ defmodule GlacierRelay.Motion.DestinationTest do
     do:
       Destination.applied(
         st,
-        %{seq: seq, outcome: "applied", reason: nil, post: pos, exact: true, frame: 1, native_mono_ms: 1},
+        %{
+          seq: seq,
+          outcome: "applied",
+          reason: nil,
+          post: pos,
+          exact: true,
+          frame: 1,
+          native_mono_ms: 1
+        },
         now
       )
 
@@ -56,7 +72,18 @@ defmodule GlacierRelay.Motion.DestinationTest do
     do:
       Destination.applied(
         st,
-        Map.merge(%{seq: seq, outcome: outcome, reason: nil, post: nil, exact: nil, frame: 1, native_mono_ms: 1}, extra),
+        Map.merge(
+          %{
+            seq: seq,
+            outcome: outcome,
+            reason: nil,
+            post: nil,
+            exact: nil,
+            frame: 1,
+            native_mono_ms: 1
+          },
+          extra
+        ),
         now
       )
 
@@ -84,7 +111,9 @@ defmodule GlacierRelay.Motion.DestinationTest do
       assert {:error, {:limit_out_of_range, :duration_ms, 300_001}} =
                Destination.limits(%{duration_ms: 300_001})
 
-      assert {:error, {:limit_out_of_range, :credit_ms, 1.0}} = Destination.limits(%{credit_ms: 1.0})
+      assert {:error, {:limit_out_of_range, :credit_ms, 1.0}} =
+               Destination.limits(%{credit_ms: 1.0})
+
       assert {:error, {:unknown_limits, [:catch_up]}} = Destination.limits(%{catch_up: true})
       assert {:ok, %{stall_ms: 100}} = Destination.limits(%{stall_ms: 100})
     end
@@ -199,7 +228,13 @@ defmodule GlacierRelay.Motion.DestinationTest do
     end
 
     test "a sample of another stream is refused" do
-      {st, a} = Destination.sample(new(), s(1, 0, 0.0, 0.0, stream: "00000000-0000-4000-8000-000000000000"), 60)
+      {st, a} =
+        Destination.sample(
+          new(),
+          s(1, 0, 0.0, 0.0, stream: "00000000-0000-4000-8000-000000000000"),
+          60
+        )
+
       assert sent(a) == [] and st.counts.refused.foreign_stream == 1
     end
 
@@ -254,7 +289,9 @@ defmodule GlacierRelay.Motion.DestinationTest do
       %{st: st}
     end
 
-    test "an uncertain post-call result closes; the target stays unresolved; not restorable", %{st: st} do
+    test "an uncertain post-call result closes; the target stays unresolved; not restorable", %{
+      st: st
+    } do
       {st, a} = ack(st, 1, "uncertain", 70, %{reason: "read_back_unavailable"})
       assert closes(a) == [{:uncertain, "read_back_unavailable"}]
       assert st.counts.uncertain == 1 and st.unresolved.seq == 1
@@ -269,7 +306,21 @@ defmodule GlacierRelay.Motion.DestinationTest do
     end
 
     test "an inexact applied answer closes", %{st: st} do
-      {_st, a} = Destination.applied(st, %{seq: 1, outcome: "applied", reason: nil, post: pos2(0.0), exact: false, frame: 1, native_mono_ms: 1}, 70)
+      {_st, a} =
+        Destination.applied(
+          st,
+          %{
+            seq: 1,
+            outcome: "applied",
+            reason: nil,
+            post: pos2(0.0),
+            exact: false,
+            frame: 1,
+            native_mono_ms: 1
+          },
+          70
+        )
+
       assert closes(a) == [:postimage_mismatch]
     end
 
@@ -295,7 +346,9 @@ defmodule GlacierRelay.Motion.DestinationTest do
 
     test "skipped_identical keeps the position and confirms the sequence", %{st: st} do
       {st, a} = ack(st, 1, "skipped_identical", 70)
-      assert closes(a) == [] and st.ref.seq == 1 and st.ref.pos == pos2(0.0) and st.counts.skipped == 1
+
+      assert closes(a) == [] and st.ref.seq == 1 and st.ref.pos == pos2(0.0) and
+               st.counts.skipped == 1
     end
   end
 
@@ -331,7 +384,18 @@ defmodule GlacierRelay.Motion.DestinationTest do
     defp rep(seq, applied, received, extra \\ %{}),
       do:
         Map.merge(
-          %{report_seq: seq, native_mono_ms: 1, frame: 1, received: received, applied: applied, skipped: 0, refused: 0, uncertain: 0, superseded: 0, last_applied_seq: 1},
+          %{
+            report_seq: seq,
+            native_mono_ms: 1,
+            frame: 1,
+            received: received,
+            applied: applied,
+            skipped: 0,
+            refused: 0,
+            uncertain: 0,
+            superseded: 0,
+            last_applied_seq: 1
+          },
           extra
         )
 
@@ -354,7 +418,14 @@ defmodule GlacierRelay.Motion.DestinationTest do
   end
 
   defp closed(clean),
-    do: %{reason: "beam:operator", native_mono_ms: 1, clean: clean, final_world: @pre, last_applied_seq: 1, applied: 1}
+    do: %{
+      reason: "beam:operator",
+      native_mono_ms: 1,
+      clean: clean,
+      final_world: @pre,
+      last_applied_seq: 1,
+      applied: 1
+    }
 
   describe "close states" do
     test "requested → transmitted → confirmed; a clean confirmed close is restorable" do
@@ -393,7 +464,9 @@ defmodule GlacierRelay.Motion.DestinationTest do
     end
 
     test "a native-initiated close is confirmed with the native's reason" do
-      {_st, a} = Destination.native_closed(new(), %{closed(true) | reason: "target_silence"}, 1_000)
+      {_st, a} =
+        Destination.native_closed(new(), %{closed(true) | reason: "target_silence"}, 1_000)
+
       assert [{:closed, summary}] = for({:closed, _} = c <- a, do: c)
       assert summary.close.by == :native and summary.close.state == :confirmed
       assert summary.close.reason == "native:target_silence"

@@ -112,7 +112,13 @@ defmodule GlacierRelay.Motion.Destination do
   (the native-confirmed opening snapshot, 12 words as text) and `:opened_at` (receiver time of the
   confirmation).
   """
-  def new(%{session_id: sid, stream_id: stream, limits: limits, opening_world: world, opened_at: t}) do
+  def new(%{
+        session_id: sid,
+        stream_id: stream,
+        limits: limits,
+        opening_world: world,
+        opened_at: t
+      }) do
     {:ok, words} = TransformWords.decode_world(world)
     xw = Enum.at(words, 9)
     yw = Enum.at(words, 10)
@@ -372,7 +378,11 @@ defmodule GlacierRelay.Motion.Destination do
   # an acknowledgement for a target that is not the one in flight is a control failure; a late
   # answer for the unresolved target is recorded beside it, never as a resolution
   defp record_late_ack(st, ack),
-    do: %{st | counts: Map.update(st.counts, :mismatched_acks, 1, &(&1 + 1)), unresolved: st.unresolved || %{seq: ack.seq}}
+    do: %{
+      st
+      | counts: Map.update(st.counts, :mismatched_acks, 1, &(&1 + 1)),
+        unresolved: st.unresolved || %{seq: ack.seq}
+    }
 
   defp ack_fields(ack),
     do: %{

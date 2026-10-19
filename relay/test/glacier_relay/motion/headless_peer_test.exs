@@ -50,7 +50,9 @@ defmodule GlacierRelay.Motion.HeadlessPeerTest do
     # without a connected game host the source starts nothing
     assert {:error, :no_peer} =
              GlacierRelay.HeadlessPeer.Driver.start_course(
-               GlacierRelay.Motion.Course.out_and_back(GlacierRelay.Test.FakeMotionNative.anchor_words())
+               GlacierRelay.Motion.Course.out_and_back(
+                 GlacierRelay.Test.FakeMotionNative.anchor_words()
+               )
              )
   end
 end

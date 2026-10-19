@@ -73,7 +73,8 @@ defmodule GlacierRelay.Motion.Hub do
     do: GenServer.cast(__MODULE__, {:session_result, session_id, status, facts})
 
   @doc false
-  def command_link_lost(generation), do: GenServer.cast(__MODULE__, {:command_link_lost, generation})
+  def command_link_lost(generation),
+    do: GenServer.cast(__MODULE__, {:command_link_lost, generation})
 
   @doc false
   def audit_degraded, do: GenServer.cast(__MODULE__, :audit_degraded)
@@ -126,11 +127,18 @@ defmodule GlacierRelay.Motion.Hub do
     state = if state.link, do: lose_link(state, :replaced), else: state
     ref = Process.monitor(info.pid)
     link = Map.put(info, :ref, ref)
-    state = trace(state, [%{"event" => "hub.link_bound", "motion_link_generation" => info.generation}])
+
+    state =
+      trace(state, [%{"event" => "hub.link_bound", "motion_link_generation" => info.generation}])
+
     {:reply, :ok, %{state | link: link}}
   end
 
-  def handle_call({:native, generation, message}, _from, %{link: %{generation: generation}} = state) do
+  def handle_call(
+        {:native, generation, message},
+        _from,
+        %{link: %{generation: generation}} = state
+      ) do
     state = bump(state, :native_messages)
     {:reply, :ok, native(message, state) |> reschedule()}
   end
@@ -140,12 +148,24 @@ defmodule GlacierRelay.Motion.Hub do
 
   def handle_call({:prepare_share, st}, _from, state) do
     cond do
-      not state.trace_ok -> {:reply, {:error, :trace_unhealthy}, state}
-      state.share != nil and state.share.status != :done -> {:reply, {:error, :share_exists}, state}
-      state.link == nil -> {:reply, {:error, :no_bound_motion_link}, state}
-      st.motion_link_generation != state.link.generation -> {:reply, {:error, :motion_link_not_current}, state}
-      not peer_matches?(state, st.peer) -> {:reply, {:error, :peer_not_current}, state}
-      true -> {:reply, {:ok, st}, %{state | share: %{id: st.share_id, statement: st, status: :pending, src: nil}}}
+      not state.trace_ok ->
+        {:reply, {:error, :trace_unhealthy}, state}
+
+      state.share != nil and state.share.status != :done ->
+        {:reply, {:error, :share_exists}, state}
+
+      state.link == nil ->
+        {:reply, {:error, :no_bound_motion_link}, state}
+
+      st.motion_link_generation != state.link.generation ->
+        {:reply, {:error, :motion_link_not_current}, state}
+
+      not peer_matches?(state, st.peer) ->
+        {:reply, {:error, :peer_not_current}, state}
+
+      true ->
+        {:reply, {:ok, st},
+         %{state | share: %{id: st.share_id, statement: st, status: :pending, src: nil}}}
     end
   end
 
@@ -183,10 +203,10 @@ defmodule GlacierRelay.Motion.Hub do
   def handle_call({:abandon, id}, _from, state) do
     state =
       cond do
-        state.session && state.session.id == id and state.session.status == :pending ->
+        (state.session && state.session.id == id) and state.session.status == :pending ->
           %{state | session: nil}
 
-        state.share && state.share.id == id and state.share.status == :pending ->
+        (state.share && state.share.id == id) and state.share.status == :pending ->
           %{state | share: nil}
 
         true ->
@@ -216,7 +236,10 @@ defmodule GlacierRelay.Motion.Hub do
   end
 
   @impl true
-  def handle_cast({:share_result, id, status, facts}, %{share: %{id: id, status: :pending}} = state) do
+  def handle_cast(
+        {:share_result, id, status, facts},
+        %{share: %{id: id, status: :pending}} = state
+      ) do
     st = state.share.statement
 
     state =
@@ -246,7 +269,11 @@ defmodule GlacierRelay.Motion.Hub do
 
         other ->
           state
-          |> event(%{"event" => "motion.share.not_opened", "share_id" => id, "status" => to_string(other)})
+          |> event(%{
+            "event" => "motion.share.not_opened",
+            "share_id" => id,
+            "status" => to_string(other)
+          })
           |> Map.put(:share, %{state.share | status: :done})
       end
 
@@ -257,10 +284,17 @@ defmodule GlacierRelay.Motion.Hub do
     {:noreply,
      state
      |> bump(:unknown_ids)
-     |> event(%{"event" => "motion.share.result_unmatched", "share_id" => id, "status" => to_string(status)})}
+     |> event(%{
+       "event" => "motion.share.result_unmatched",
+       "share_id" => id,
+       "status" => to_string(status)
+     })}
   end
 
-  def handle_cast({:session_result, id, status, facts}, %{session: %{id: id, status: :pending}} = state) do
+  def handle_cast(
+        {:session_result, id, status, facts},
+        %{session: %{id: id, status: :pending}} = state
+      ) do
     ap = state.session.approval
 
     state =
@@ -287,7 +321,8 @@ defmodule GlacierRelay.Motion.Hub do
 
           stream = state.peer && Map.get(state.peer.streams, ap.stream_id)
 
-          if peer_matches?(state, ap.peer) and stream != nil and stream.source_kind == ap.source_kind and
+          if peer_matches?(state, ap.peer) and stream != nil and
+               stream.source_kind == ap.source_kind and
                state.link != nil and state.link.generation == ap.motion_link_generation do
             state
           else
@@ -296,7 +331,11 @@ defmodule GlacierRelay.Motion.Hub do
 
         other ->
           state
-          |> event(%{"event" => "motion.session.not_opened", "session_id" => id, "status" => to_string(other)})
+          |> event(%{
+            "event" => "motion.session.not_opened",
+            "session_id" => id,
+            "status" => to_string(other)
+          })
           |> Map.put(:session, %{state.session | status: :done})
       end
 
@@ -307,7 +346,11 @@ defmodule GlacierRelay.Motion.Hub do
     {:noreply,
      state
      |> bump(:unknown_ids)
-     |> event(%{"event" => "motion.session.result_unmatched", "session_id" => id, "status" => to_string(status)})}
+     |> event(%{
+       "event" => "motion.session.result_unmatched",
+       "session_id" => id,
+       "status" => to_string(status)
+     })}
   end
 
   def handle_cast({:command_link_lost, _generation}, state) do
@@ -352,11 +395,15 @@ defmodule GlacierRelay.Motion.Hub do
   end
 
   def handle_info({:DOWN, ref, :process, _pid, reason}, %{link: %{ref: ref}} = state) do
-    {:noreply, %{state | link: Map.put(state.link, :ref, nil)} |> lose_link({:link_down, reason}) |> reschedule()}
+    {:noreply,
+     %{state | link: Map.put(state.link, :ref, nil)}
+     |> lose_link({:link_down, reason})
+     |> reschedule()}
   end
 
   def handle_info({:DOWN, ref, :process, _pid, reason}, %{peer: %{ref: ref}} = state) do
-    {:noreply, state |> peer_lost(state.peer.info.generation, {:connection_down, reason}) |> reschedule()}
+    {:noreply,
+     state |> peer_lost(state.peer.info.generation, {:connection_down, reason}) |> reschedule()}
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
@@ -365,8 +412,11 @@ defmodule GlacierRelay.Motion.Hub do
 
   defp native({:hero_sample, hs}, state) do
     case state.share do
-      %{id: id, status: :active} when id == hs.share_id -> src(state, &Source.hero_sample(&1, hs, now()))
-      _ -> unknown_id(state, "hero.sample", hs.share_id)
+      %{id: id, status: :active} when id == hs.share_id ->
+        src(state, &Source.hero_sample(&1, hs, now()))
+
+      _ ->
+        unknown_id(state, "hero.sample", hs.share_id)
     end
   end
 
@@ -375,7 +425,12 @@ defmodule GlacierRelay.Motion.Hub do
       %{id: id, status: s} when id == c.share_id and s in [:active, :pending] ->
         if s == :active,
           do: src(state, &Source.native_closed(&1, c, now())),
-          else: event(state, %{"event" => "motion.share.closed_before_activation", "share_id" => id, "reason" => c.reason})
+          else:
+            event(state, %{
+              "event" => "motion.share.closed_before_activation",
+              "share_id" => id,
+              "reason" => c.reason
+            })
 
       _ ->
         unknown_id(state, "share.closed", c.share_id)
@@ -394,7 +449,11 @@ defmodule GlacierRelay.Motion.Hub do
         end
 
       %{id: id, status: :pending} when id == m.session_id and kind == :ghost_closed ->
-        event(state, %{"event" => "motion.session.closed_before_activation", "session_id" => id, "reason" => m.reason})
+        event(state, %{
+          "event" => "motion.session.closed_before_activation",
+          "session_id" => id,
+          "reason" => m.reason
+        })
 
       _ ->
         unknown_id(state, Atom.to_string(kind), m.session_id)
@@ -410,7 +469,9 @@ defmodule GlacierRelay.Motion.Hub do
   # -- peer events ------------------------------------------------------------------------------------------
 
   defp peer({:up, info}, state) do
-    state = if state.peer, do: peer_lost(state, state.peer.info.generation, :replaced), else: state
+    state =
+      if state.peer, do: peer_lost(state, state.peer.info.generation, :replaced), else: state
+
     ref = Process.monitor(info.connection)
 
     state =
@@ -527,7 +588,9 @@ defmodule GlacierRelay.Motion.Hub do
 
     state
     |> Map.put(:peer, nil)
-    |> trace([%{"event" => "peer.down", "connection_generation" => g, "reason" => inspect(reason)}])
+    |> trace([
+      %{"event" => "peer.down", "connection_generation" => g, "reason" => inspect(reason)}
+    ])
     |> dest(&Destination.close(&1, :peer_link_lost, now()))
     |> src(&Source.close(&1, :peer_link_lost, now()))
   end
@@ -543,7 +606,13 @@ defmodule GlacierRelay.Motion.Hub do
     t = now()
 
     %{state | link: nil}
-    |> trace([%{"event" => "hub.link_lost", "motion_link_generation" => link.generation, "reason" => inspect(reason)}])
+    |> trace([
+      %{
+        "event" => "hub.link_lost",
+        "motion_link_generation" => link.generation,
+        "reason" => inspect(reason)
+      }
+    ])
     |> dest(&Destination.link_lost(&1, t))
     |> src(&Source.link_lost(&1, t))
   end
@@ -611,8 +680,16 @@ defmodule GlacierRelay.Motion.Hub do
   defp act({:closed, summary}, state, :session) do
     session = %{state.session | status: :done}
 
-    %{state | session: session, history: Enum.take([{:session, summary} | state.history], @history)}
-    |> event(%{"event" => "motion.session.closed", "session_id" => summary.session_id, "summary" => summary})
+    %{
+      state
+      | session: session,
+        history: Enum.take([{:session, summary} | state.history], @history)
+    }
+    |> event(%{
+      "event" => "motion.session.closed",
+      "session_id" => summary.session_id,
+      "summary" => summary
+    })
   end
 
   defp act({:closed, summary}, state, :share) do
@@ -621,7 +698,11 @@ defmodule GlacierRelay.Motion.Hub do
       | share: %{state.share | status: :done},
         history: Enum.take([{:share, summary} | state.history], @history)
     }
-    |> event(%{"event" => "motion.share.closed", "share_id" => summary.share_id, "summary" => summary})
+    |> event(%{
+      "event" => "motion.share.closed",
+      "share_id" => summary.share_id,
+      "summary" => summary
+    })
   end
 
   defp send_peer_control(state, kind, fields) do
@@ -647,7 +728,10 @@ defmodule GlacierRelay.Motion.Hub do
         state
 
       {:error, health} ->
-        Logger.error("motion hub: trace unhealthy (#{inspect(health)}); closing share and session")
+        Logger.error(
+          "motion hub: trace unhealthy (#{inspect(health)}); closing share and session"
+        )
+
         t = now()
 
         if state.trace_ok do
@@ -677,7 +761,8 @@ defmodule GlacierRelay.Motion.Hub do
 
     next =
       [
-        state.session && state.session.status == :active && Destination.next_deadline(state.session.dest),
+        state.session && state.session.status == :active &&
+          Destination.next_deadline(state.session.dest),
         state.share && state.share.status == :active && Source.next_deadline(state.share.src)
       ]
       |> Enum.filter(&is_integer/1)
@@ -703,7 +788,10 @@ defmodule GlacierRelay.Motion.Hub do
             client_kind: state.peer.info.client_kind,
             boot_id: state.peer.info.boot_id,
             pin: state.peer.info.pin,
-            streams: Map.new(state.peer.streams, fn {id, s} -> {id, Map.take(s, [:source_kind, :src_clock, :label, :course])} end)
+            streams:
+              Map.new(state.peer.streams, fn {id, s} ->
+                {id, Map.take(s, [:source_kind, :src_clock, :label, :course])}
+              end)
           },
       share:
         state.share &&

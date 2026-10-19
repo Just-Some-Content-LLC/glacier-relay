@@ -20,7 +20,12 @@ defmodule GlacierRelay.Motion.LinkBindingTest do
   defp wait(fun), do: FixturePlayer.wait_until(fun, 300, 10)
 
   setup context do
-    dir = Path.join(System.tmp_dir!(), "glacier-relay-m7b1-bind-#{System.unique_integer([:positive])}")
+    dir =
+      Path.join(
+        System.tmp_dir!(),
+        "glacier-relay-m7b1-bind-#{System.unique_integer([:positive])}"
+      )
+
     on_exit(fn -> File.rm_rf(dir) end)
 
     start_supervised!(
@@ -30,7 +35,11 @@ defmodule GlacierRelay.Motion.LinkBindingTest do
        hello_timeout_ms: 1_000,
        effectful: true,
        token: @token,
-       motion: [enabled: Map.get(context, :motion, true), port: 0, trace_dir: Path.join(dir, "trace")]}
+       motion: [
+         enabled: Map.get(context, :motion, true),
+         port: 0,
+         trace_dir: Path.join(dir, "trace")
+       ]}
     )
 
     %{port: Listener.port()}
@@ -54,7 +63,8 @@ defmodule GlacierRelay.Motion.LinkBindingTest do
 
   defp closed?(m), do: match?({:error, :closed}, :gen_tcp.recv(m, 0, 1_500))
 
-  test "the binding: hello for the current link, welcome with a nonce, attest; then the hub has it", %{port: port} do
+  test "the binding: hello for the current link, welcome with a nonce, attest; then the hub has it",
+       %{port: port} do
     {_c, adapter, gen} = command_link(port)
     m = FakeMotionNative.connect_line(motion_port())
     {:ok, w} = hello(m, adapter, gen)
@@ -63,7 +73,10 @@ defmodule GlacierRelay.Motion.LinkBindingTest do
     refute attest =~ @token
     :ok = :gen_tcp.send(m, attest)
     wait(fn -> Hub.status().link != nil end)
-    assert %{generation: 1, adapter_instance_id: ^adapter, command_link_generation: ^gen} = Hub.status().link
+
+    assert %{generation: 1, adapter_instance_id: ^adapter, command_link_generation: ^gen} =
+             Hub.status().link
+
     assert %{bound: true, generation: 1} = Command.status().motion.link
     journal = Command.Journal.status().path |> File.read!()
     assert journal =~ "motion.link.bound"
@@ -71,7 +84,8 @@ defmodule GlacierRelay.Motion.LinkBindingTest do
     refute journal =~ w["nonce"] <> "x"
   end
 
-  test "a wrong adapter, a wrong command-link generation or an unattested command link is refused", %{port: port} do
+  test "a wrong adapter, a wrong command-link generation or an unattested command link is refused",
+       %{port: port} do
     {_c, adapter, gen} = command_link(port)
 
     for {a, g, reason} <- [
@@ -89,15 +103,25 @@ defmodule GlacierRelay.Motion.LinkBindingTest do
   test "before the command link is token-verified nothing binds", %{port: port} do
     {_c, adapter, gen} = command_link(port, false)
     m = FakeMotionNative.connect_line(motion_port())
-    assert {:ok, %{"kind" => "motion.refused", "reason" => "command_link_not_token_verified"}} = hello(m, adapter, gen)
+
+    assert {:ok, %{"kind" => "motion.refused", "reason" => "command_link_not_token_verified"}} =
+             hello(m, adapter, gen)
   end
 
-  test "a wrong MAC, a MAC for other generations or the command link's own MAC is refused; one attempt", %{port: port} do
+  test "a wrong MAC, a MAC for other generations or the command link's own MAC is refused; one attempt",
+       %{port: port} do
     {_c, adapter, gen} = command_link(port)
 
     for make <- [
           fn w -> FakeMotionNative.motion_attest(String.duplicate("f", 64), w, gen, adapter) end,
-          fn w -> FakeMotionNative.motion_attest(@token, Map.put(w, "motion_link_generation", w["motion_link_generation"] + 7), gen, adapter) end,
+          fn w ->
+            FakeMotionNative.motion_attest(
+              @token,
+              Map.put(w, "motion_link_generation", w["motion_link_generation"] + 7),
+              gen,
+              adapter
+            )
+          end,
           # the command link's attestation formula over the same nonce: domain-separated, refused
           fn w ->
             Codec.encode_from_native("motion.attest", %{
@@ -116,10 +140,15 @@ defmodule GlacierRelay.Motion.LinkBindingTest do
     end
 
     assert Hub.status().link == nil
-    assert Command.Journal.status().path |> File.read!() |> String.contains?("motion.link.attest_failed")
+
+    assert Command.Journal.status().path
+           |> File.read!()
+           |> String.contains?("motion.link.attest_failed")
   end
 
-  test "messages before the binding, a second attest and a second motion link are refused", %{port: port} do
+  test "messages before the binding, a second attest and a second motion link are refused", %{
+    port: port
+  } do
     {_c, adapter, gen} = command_link(port)
 
     # data before the binding
@@ -128,7 +157,13 @@ defmodule GlacierRelay.Motion.LinkBindingTest do
     :ok =
       :gen_tcp.send(
         m0,
-        Codec.encode_from_native("ghost.closed", %{"session_id" => Schema.uuid4(), "reason" => "x", "native_mono_ms" => 1, "clean" => true, "applied" => 0})
+        Codec.encode_from_native("ghost.closed", %{
+          "session_id" => Schema.uuid4(),
+          "reason" => "x",
+          "native_mono_ms" => 1,
+          "clean" => true,
+          "applied" => 0
+        })
       )
 
     assert closed?(m0)
@@ -169,7 +204,15 @@ defmodule GlacierRelay.Motion.LinkBindingTest do
     :ok =
       :gen_tcp.send(
         m,
-        Codec.encode_from_native("ghost.applied", %{"session_id" => Schema.uuid4(), "seq" => 1, "frame" => 1, "native_mono_ms" => 1, "outcome" => "applied", "post" => "c2b2fae1,416d47ae", "exact" => true})
+        Codec.encode_from_native("ghost.applied", %{
+          "session_id" => Schema.uuid4(),
+          "seq" => 1,
+          "frame" => 1,
+          "native_mono_ms" => 1,
+          "outcome" => "applied",
+          "post" => "c2b2fae1,416d47ae",
+          "exact" => true
+        })
       )
 
     wait(fn -> Hub.status().counts.unknown_ids == 1 end)
@@ -177,7 +220,13 @@ defmodule GlacierRelay.Motion.LinkBindingTest do
   end
 
   test "an M6 peer that does not advertise the motion entries sees the welcome it saw before" do
-    caps = ["relay.probe/1", "relay.inspect.candidate_transform/1", "candidate.transform.set/1", "candidate.transform.set/2"]
+    caps = [
+      "relay.probe/1",
+      "relay.inspect.candidate_transform/1",
+      "candidate.transform.set/1",
+      "candidate.transform.set/2"
+    ]
+
     assert Schema.issuable_for(2, caps, true, true) == Schema.issuable_for(2, caps, true)
     assert Schema.issuable_for(1, @caps, true, true) == Schema.issuable()
 
@@ -190,10 +239,18 @@ defmodule GlacierRelay.Motion.LinkBindingTest do
              {"relay.probe", 1}
            ]
 
-    motion = Schema.issuable_for(2, @caps, true, true) -- Schema.issuable_for(2, @caps, true, false)
-    assert Enum.sort(Enum.map(motion, & &1["name"])) == ["candidate.motion.session", "player.pose.share"]
+    motion =
+      Schema.issuable_for(2, @caps, true, true) -- Schema.issuable_for(2, @caps, true, false)
+
+    assert Enum.sort(Enum.map(motion, & &1["name"])) == [
+             "candidate.motion.session",
+             "player.pose.share"
+           ]
+
     # with the effectful setting off only the inert motion entry can be listed
-    assert Schema.issuable_for(2, @caps, false, true) -- Schema.issuable() == [%{"name" => "player.pose.share", "version" => 1}]
+    assert Schema.issuable_for(2, @caps, false, true) -- Schema.issuable() == [
+             %{"name" => "player.pose.share", "version" => 1}
+           ]
   end
 
   @tag motion: false
@@ -204,7 +261,11 @@ defmodule GlacierRelay.Motion.LinkBindingTest do
     {_c, adapter, gen} = command_link(port)
     assert {:error, :motion_disabled} = Authority.motion_hello(self(), adapter, gen)
     # a motion entry is never listed nor issuable with motion off
-    refute Enum.any?(Command.status().link.advertised, &(&1["name"] in ["player.pose.share", "candidate.motion.session"]))
+    refute Enum.any?(
+             Command.status().link.advertised,
+             &(&1["name"] in ["player.pose.share", "candidate.motion.session"])
+           )
+
     :ok = Command.arm()
     assert {:error, :motion_disabled} = Authority.issue("player.pose.share", 1, %{}, [])
   end

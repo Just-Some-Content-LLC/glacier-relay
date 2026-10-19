@@ -70,7 +70,8 @@ defmodule GlacierRelay.Motion.Source do
         {bump(st, :not_open), []}
 
       hs.seq == st.last_seq ->
-        {bump(st, :duplicate), [trace(st, now, "refused", %{"seq" => hs.seq, "why" => "duplicate"})]}
+        {bump(st, :duplicate),
+         [trace(st, now, "refused", %{"seq" => hs.seq, "why" => "duplicate"})]}
 
       hs.seq < st.last_seq ->
         {bump(st, :older), [trace(st, now, "refused", %{"seq" => hs.seq, "why" => "older"})]}

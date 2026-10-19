@@ -197,7 +197,9 @@ defmodule GlacierRelay.Motion.Codec do
     |> String.replace_invalid()
     |> String.codepoints()
     |> Enum.reduce_while({0, []}, fn cp, {n, acc} ->
-      if n + byte_size(cp) <= 64, do: {:cont, {n + byte_size(cp), [cp | acc]}}, else: {:halt, {n, acc}}
+      if n + byte_size(cp) <= 64,
+        do: {:cont, {n + byte_size(cp), [cp | acc]}},
+        else: {:halt, {n, acc}}
     end)
     |> then(fn {_n, acc} -> acc |> Enum.reverse() |> IO.iodata_to_binary() end)
   end

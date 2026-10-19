@@ -26,13 +26,20 @@ defmodule GlacierRelay.Motion.SessionTest do
   defp done?, do: match?(%{status: :done}, session())
   defp summary, do: session().summary
   defp registry(sid), do: Enum.find(Command.status().motion.sessions, &(&1.session_id == sid))
-  defp applies(fake), do: for({:applied, seq, _frame, pos} <- FakeMotionNative.events(fake), do: {seq, pos})
+
+  defp applies(fake),
+    do: for({:applied, seq, _frame, pos} <- FakeMotionNative.events(fake), do: {seq, pos})
+
   defp journal_events(name), do: Enum.filter(MotionStack.journal(), &(&1["event"] == name))
 
   # a course that ends 0.2 m from the anchor (so the candidate is displaced at the close)
   defp away_course do
     {ax, ay} = {TransformWords.to_float(elem(@p, 0)), TransformWords.to_float(elem(@p, 1))}
-    Course.build([{:hold, 1_000}, {:line, {ax + 0.2, ay}}, {:hold, 300}], origin_words: @p, speed_mps: 0.5)
+
+    Course.build([{:hold, 1_000}, {:line, {ax + 0.2, ay}}, {:hold, 300}],
+      origin_words: @p,
+      speed_mps: 0.5
+    )
   end
 
   describe "lifecycle" do
@@ -41,15 +48,25 @@ defmodule GlacierRelay.Motion.SessionTest do
       :ok = MotionStack.arm()
 
       {:ok, %{share_id: share}} =
-        Motion.open_share(duration_ms: 1_000, expected_generation: @gen, label: "B1 fake native — not a game")
+        Motion.open_share(
+          duration_ms: 1_000,
+          expected_generation: @gen,
+          label: "B1 fake native — not a game"
+        )
 
       wait(fn -> Driver.status().sink_done != [] end, 500)
       [done | _] = Driver.status().sink_done
-      assert done.stream_id == share and done.source_kind == "game" and done.label =~ "fake native"
+
+      assert done.stream_id == share and done.source_kind == "game" and
+               done.label =~ "fake native"
+
       # nothing relayed was lost on the peer link; a native sample that reached the hub before the
       # authority's confirmation activated the share is dropped there (counted) and shows as a gap
       r = done.reconciliation
-      assert r["received"] == r["source_sent"] and r["last_seq_received"] == r["source_last_seq"], inspect(done)
+
+      assert r["received"] == r["source_sent"] and r["last_seq_received"] == r["source_last_seq"],
+             inspect(done)
+
       assert r["gaps"] == r["source_last_seq"] - r["source_sent"] and r["gaps"] <= 2
       assert done.received > 10 and done.unqualified == 0
 
@@ -68,9 +85,16 @@ defmodule GlacierRelay.Motion.SessionTest do
 
       # the journal holds the approval, the binding and the native-confirmed close
       [accepted] = Enum.filter(journal_events("command.accepted"), &(&1["command_id"] == cid))
-      assert accepted["motion"]["kind"] == "session_open" and accepted["motion"]["source_kind"] == "synthetic"
-      assert accepted["motion"]["stream_id"] == stream and accepted["inspection_binding"]["verified_by"] == "authority"
-      assert accepted["params"]["silence_close_ms"] == 1_000 and accepted["params"]["max_speed_mmps"] == 2_000
+
+      assert accepted["motion"]["kind"] == "session_open" and
+               accepted["motion"]["source_kind"] == "synthetic"
+
+      assert accepted["motion"]["stream_id"] == stream and
+               accepted["inspection_binding"]["verified_by"] == "authority"
+
+      assert accepted["params"]["silence_close_ms"] == 1_000 and
+               accepted["params"]["max_speed_mmps"] == 2_000
+
       assert [%{"summary" => %{"restorable" => true}}] = journal_events("motion.session.closed")
 
       # exclusivity until released: the course returned to the anchor, so the release is a baseline
@@ -84,7 +108,12 @@ defmodule GlacierRelay.Motion.SessionTest do
       assert {:error, :already_at_baseline} =
                Motion.restore_session(sid, inspection_command_id: insp, expected_generation: @gen)
 
-      assert :ok = Motion.confirm_baseline(sid, inspection_command_id: insp, expected_generation: @gen)
+      assert :ok =
+               Motion.confirm_baseline(sid,
+                 inspection_command_id: insp,
+                 expected_generation: @gen
+               )
+
       assert registry(sid).state == :at_baseline
       assert [_] = journal_events("motion.session.at_baseline")
       assert Command.status().motion.exclusivity == :ok
@@ -100,16 +129,26 @@ defmodule GlacierRelay.Motion.SessionTest do
       assert displaced != FakeMotionNative.pre()
 
       # an inspection from BEFORE the close does not qualify
-      early = Command.status().commands |> Enum.filter(&(&1.name == "relay.inspect.candidate_transform")) |> List.last()
+      early =
+        Command.status().commands
+        |> Enum.filter(&(&1.name == "relay.inspect.candidate_transform"))
+        |> List.last()
+
       :ok = MotionStack.arm_effectful(st.adapter)
 
       assert {:error, :inspection_not_after_close} =
-               Motion.restore_session(sid, inspection_command_id: early.id, expected_generation: @gen)
+               Motion.restore_session(sid,
+                 inspection_command_id: early.id,
+                 expected_generation: @gen
+               )
 
       insp = MotionStack.inspect_exact()
       # the arming was consumed by the refused attempt (fail closed): arm again
       _ = MotionStack.arm_effectful(st.adapter)
-      {:ok, rid} = Motion.restore_session(sid, inspection_command_id: insp, expected_generation: @gen)
+
+      {:ok, rid} =
+        Motion.restore_session(sid, inspection_command_id: insp, expected_generation: @gen)
+
       wait(fn -> Command.command(rid).status == :applied end)
       assert registry(sid).state == :restored
       assert FakeMotionNative.status(st.fake).world == FakeMotionNative.pre()
@@ -122,7 +161,10 @@ defmodule GlacierRelay.Motion.SessionTest do
       _ = MotionStack.arm_effectful(st.adapter)
 
       assert {:error, {:session_not_restorable, :restored}} =
-               Motion.restore_session(sid, inspection_command_id: insp2, expected_generation: @gen)
+               Motion.restore_session(sid,
+                 inspection_command_id: insp2,
+                 expected_generation: @gen
+               )
 
       assert {:error, {:motion_session_budget_exhausted, 1}} =
                Motion.open_session(
@@ -143,7 +185,12 @@ defmodule GlacierRelay.Motion.SessionTest do
       {sid, _} = MotionStack.open_session(st.adapter, stream)
       wait(&done?/0, 800)
       # the 'engine' moves the candidate after the close
-      :ok = FakeMotionNative.set_world(st.fake, String.replace(FakeMotionNative.status(st.fake).world, "416d47ae", "416d47b0"))
+      :ok =
+        FakeMotionNative.set_world(
+          st.fake,
+          String.replace(FakeMotionNative.status(st.fake).world, "416d47ae", "416d47b0")
+        )
+
       insp = MotionStack.inspect_exact()
       :ok = MotionStack.arm_effectful(st.adapter)
 
@@ -158,7 +205,12 @@ defmodule GlacierRelay.Motion.SessionTest do
       _stream = MotionStack.start_course(MotionStack.short_course(prefix_ms: 300))
       Process.sleep(1_500)
       assert applies(st.fake) == []
-      refute Enum.any?(FakeMotionNative.events(st.fake), &match?({:target_without_session, _, _}, &1))
+
+      refute Enum.any?(
+               FakeMotionNative.events(st.fake),
+               &match?({:target_without_session, _, _}, &1)
+             )
+
       assert Hub.status().counts.unrouted_samples > 10
       assert Hub.status().session == nil
     end
@@ -169,10 +221,19 @@ defmodule GlacierRelay.Motion.SessionTest do
       insp = MotionStack.inspect_exact()
 
       assert {:error, :not_armed_effectful} =
-               Motion.open_session(inspection_command_id: insp, expected_generation: @gen, stream_id: stream, source_kind: "synthetic")
+               Motion.open_session(
+                 inspection_command_id: insp,
+                 expected_generation: @gen,
+                 stream_id: stream,
+                 source_kind: "synthetic"
+               )
 
       assert Hub.status().session == nil
-      refute Enum.any?(FakeMotionNative.events(st.fake), &match?({:command, "candidate.motion.session", _, _, _}, &1))
+
+      refute Enum.any?(
+               FakeMotionNative.events(st.fake),
+               &match?({:command, "candidate.motion.session", _, _, _}, &1)
+             )
     end
 
     test "the approval must match the stream: a wrong source kind or an unknown stream is refused locally" do
@@ -182,7 +243,12 @@ defmodule GlacierRelay.Motion.SessionTest do
       :ok = MotionStack.arm_effectful(st.adapter)
 
       assert {:error, {:source_kind_mismatch, "synthetic"}} =
-               Motion.open_session(inspection_command_id: insp, expected_generation: @gen, stream_id: stream, source_kind: "game")
+               Motion.open_session(
+                 inspection_command_id: insp,
+                 expected_generation: @gen,
+                 stream_id: stream,
+                 source_kind: "game"
+               )
 
       assert {:error, :stream_not_open} =
                Motion.open_session(
@@ -223,7 +289,12 @@ defmodule GlacierRelay.Motion.SessionTest do
       :ok = MotionStack.arm_effectful(st.adapter)
 
       assert {:error, :no_bound_motion_link} =
-               Motion.open_session(inspection_command_id: insp, expected_generation: @gen, stream_id: stream, source_kind: "synthetic")
+               Motion.open_session(
+                 inspection_command_id: insp,
+                 expected_generation: @gen,
+                 stream_id: stream,
+                 source_kind: "synthetic"
+               )
     end
   end
 
@@ -253,7 +324,11 @@ defmodule GlacierRelay.Motion.SessionTest do
       {st, _sid} = failing_run({:uncertain_from_seq, 15})
       assert summary().close.reason =~ "uncertain"
       assert summary().counts.uncertain == 1 and summary().unresolved_seq >= 15
-      assert applies(st.fake) |> Enum.map(&elem(&1, 0)) |> Enum.all?(&(&1 < summary().unresolved_seq))
+
+      assert applies(st.fake)
+             |> Enum.map(&elem(&1, 0))
+             |> Enum.all?(&(&1 < summary().unresolved_seq))
+
       refute summary().restorable
     end
 
@@ -266,7 +341,9 @@ defmodule GlacierRelay.Motion.SessionTest do
       wait(&done?/0, 800)
       assert summary().close.reason =~ "untouched_field_changed"
       # the drifted z is still there: nothing wrote it back
-      [_, _, _, _, _, _, _, _, _, _, _, z] = String.split(FakeMotionNative.status(st.fake).world, ",")
+      [_, _, _, _, _, _, _, _, _, _, _, z] =
+        String.split(FakeMotionNative.status(st.fake).world, ",")
+
       assert z != "bfc2d6ba"
     end
 
@@ -294,7 +371,12 @@ defmodule GlacierRelay.Motion.SessionTest do
   describe "freshness: stalls and delayed traffic" do
     test "delayed traffic held in the transport is never played out after a stall" do
       st = MotionStack.start()
-      stream = MotionStack.start_course(MotionStack.short_course(prefix_ms: 300, distance_m: 0.4, hold_ms: 1_500))
+
+      stream =
+        MotionStack.start_course(
+          MotionStack.short_course(prefix_ms: 300, distance_m: 0.4, hold_ms: 1_500)
+        )
+
       {_sid, _} = MotionStack.open_session(st.adapter, stream)
       Process.sleep(300)
       # the game host's peer connection stops reading: samples pile up in the TLS and socket
@@ -317,10 +399,19 @@ defmodule GlacierRelay.Motion.SessionTest do
       {sid, _} = MotionStack.open_session(st.adapter, stream)
       Process.sleep(200)
       :sys.suspend(Process.whereis(Hub))
+
       # with the hub suspended no target is sent; the motion link's reader then gives up on the hub
       # (500 ms) and drops the link, and the fake closes on that loss — or on target silence
-      wait(fn -> Enum.any?(FakeMotionNative.events(st.fake), &match?({:session_closed, ^sid, _, _}, &1)) end, 300)
-      [{:session_closed, ^sid, reason, _}] = for {:session_closed, ^sid, _, _} = e <- FakeMotionNative.events(st.fake), do: e
+      wait(
+        fn ->
+          Enum.any?(FakeMotionNative.events(st.fake), &match?({:session_closed, ^sid, _, _}, &1))
+        end,
+        300
+      )
+
+      [{:session_closed, ^sid, reason, _}] =
+        for {:session_closed, ^sid, _, _} = e <- FakeMotionNative.events(st.fake), do: e
+
       assert reason in ["motion_link_lost", "target_silence"]
       :sys.resume(Process.whereis(Hub))
     end
@@ -330,7 +421,12 @@ defmodule GlacierRelay.Motion.SessionTest do
       stream = MotionStack.start_course(MotionStack.short_course(prefix_ms: 5_000))
       {sid, _} = MotionStack.open_session(st.adapter, stream, limits: %{duration_ms: 1_000})
       wait(&done?/0, 400)
-      assert Enum.any?(FakeMotionNative.events(st.fake), &match?({:session_closed, ^sid, _, _}, &1))
+
+      assert Enum.any?(
+               FakeMotionNative.events(st.fake),
+               &match?({:session_closed, ^sid, _, _}, &1)
+             )
+
       assert summary().close.state == :confirmed
     end
   end
@@ -354,6 +450,7 @@ defmodule GlacierRelay.Motion.SessionTest do
       stream = MotionStack.start_course(MotionStack.short_course(prefix_ms: 5_000))
       {sid, _} = MotionStack.open_session(st.adapter, stream)
       CountingWriter.fail_after(agent, 0)
+
       # the next journal entry (the hub's next event, an inspection's acceptance) degrades the audit
       _ = Command.inspect_candidate_transform()
       wait(&done?/0, 400)
@@ -394,7 +491,12 @@ defmodule GlacierRelay.Motion.SessionTest do
       :ok = FakeMotionNative.drop_command(st.fake)
       wait(&done?/0)
       assert summary().close.state == :unknown
-      assert Enum.any?(FakeMotionNative.events(st.fake), &match?({:session_closed, ^sid, _, _}, &1))
+
+      assert Enum.any?(
+               FakeMotionNative.events(st.fake),
+               &match?({:session_closed, ^sid, _, _}, &1)
+             )
+
       wait(fn -> registry(sid).state == :close_unknown end)
       assert Command.status().motion.link == nil
     end
@@ -406,13 +508,21 @@ defmodule GlacierRelay.Motion.SessionTest do
       stream = MotionStack.start_course(MotionStack.short_course(prefix_ms: 5_000))
       insp = MotionStack.inspect_exact()
       :ok = MotionStack.arm_effectful(st.adapter)
-      {:ok, step} = Command.step_candidate(%{}, inspection_command_id: insp, expected_generation: @gen)
+
+      {:ok, step} =
+        Command.step_candidate(%{}, inspection_command_id: insp, expected_generation: @gen)
+
       wait(fn -> Command.command(step).status == :applied end)
       insp2 = MotionStack.inspect_exact()
       :ok = MotionStack.arm_effectful(st.adapter)
 
       assert {:error, {:m6_forward_unrestored, ^step}} =
-               Motion.open_session(inspection_command_id: insp2, expected_generation: @gen, stream_id: stream, source_kind: "synthetic")
+               Motion.open_session(
+                 inspection_command_id: insp2,
+                 expected_generation: @gen,
+                 stream_id: stream,
+                 source_kind: "synthetic"
+               )
     end
 
     test "an open session refuses M6 forwards and restores; two sessions need the first restored" do
@@ -431,9 +541,14 @@ defmodule GlacierRelay.Motion.SessionTest do
                  expected_generation: @gen
                )
                |> then(fn
-                 {:error, {:restore_of_unknown, _}} -> {:error, {:motion_session_not_restored, sid, :open}}
-                 {:error, :command_not_in_journal} -> {:error, {:motion_session_not_restored, sid, :open}}
-                 other -> other
+                 {:error, {:restore_of_unknown, _}} ->
+                   {:error, {:motion_session_not_restored, sid, :open}}
+
+                 {:error, :command_not_in_journal} ->
+                   {:error, {:motion_session_not_restored, sid, :open}}
+
+                 other ->
+                   other
                end)
 
       wait(&done?/0, 800)
@@ -442,7 +557,12 @@ defmodule GlacierRelay.Motion.SessionTest do
       _ = MotionStack.arm_effectful(st.adapter)
 
       assert {:error, {:earlier_session_not_restored, ^sid, :closed_clean}} =
-               Motion.open_session(inspection_command_id: insp2, expected_generation: @gen, stream_id: stream2, source_kind: "synthetic")
+               Motion.open_session(
+                 inspection_command_id: insp2,
+                 expected_generation: @gen,
+                 stream_id: stream2,
+                 source_kind: "synthetic"
+               )
     end
 
     test "an authority restart ends the run's motion commands: the old session is unknown to it" do
@@ -459,7 +579,12 @@ defmodule GlacierRelay.Motion.SessionTest do
           :exit, _ -> false
         end
       end)
-      assert {:error, _} = Motion.restore_session(sid, inspection_command_id: "00000000-0000-4000-8000-000000000000", expected_generation: @gen)
+
+      assert {:error, _} =
+               Motion.restore_session(sid,
+                 inspection_command_id: "00000000-0000-4000-8000-000000000000",
+                 expected_generation: @gen
+               )
     end
   end
 

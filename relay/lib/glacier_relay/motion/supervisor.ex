@@ -23,14 +23,14 @@ defmodule GlacierRelay.Motion.Supervisor do
   @impl true
   def init(opts) do
     trace_opts =
-      [name: Trace, role: "host", dir: Keyword.get(opts, :trace_dir)] ++
-        Keyword.take(opts, [:trace_max_records, :trace_max_bytes, :trace_flush_ms])
-        |> Enum.map(fn
-          {:trace_max_records, v} -> {:max_records, v}
-          {:trace_max_bytes, v} -> {:max_bytes, v}
-          {:trace_flush_ms, v} -> {:flush_ms, v}
-          other -> other
-        end)
+      ([name: Trace, role: "host", dir: Keyword.get(opts, :trace_dir)] ++
+         Keyword.take(opts, [:trace_max_records, :trace_max_bytes, :trace_flush_ms]))
+      |> Enum.map(fn
+        {:trace_max_records, v} -> {:max_records, v}
+        {:trace_max_bytes, v} -> {:max_bytes, v}
+        {:trace_flush_ms, v} -> {:flush_ms, v}
+        other -> other
+      end)
 
     peer =
       case Keyword.get(opts, :peer) do

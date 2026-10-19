@@ -60,7 +60,9 @@ defmodule GlacierRelay.HeadlessPeer.Driver do
   def handle_call(:status, _from, state) do
     {:reply,
      %{
-       peer: state.peer && Map.take(state.peer.info, [:generation, :label, :client_kind, :boot_id, :pin]),
+       peer:
+         state.peer &&
+           Map.take(state.peer.info, [:generation, :label, :client_kind, :boot_id, :pin]),
        source: state.source && source_view(state.source),
        sources_done: state.sources_done,
        sink: Map.new(state.streams, fn {id, s} -> {id, sink_view(s)} end),
@@ -292,16 +294,26 @@ defmodule GlacierRelay.HeadlessPeer.Driver do
 
     {verdict, s} =
       cond do
-        f.seq == s.last_seq -> {"duplicate", %{s | duplicate: s.duplicate + 1}}
-        f.seq < s.last_seq -> {"older", %{s | older: s.older + 1}}
-        true -> {"recorded", %{s | gaps: s.gaps + max(f.seq - s.last_seq - 1, 0), last_seq: f.seq}}
+        f.seq == s.last_seq ->
+          {"duplicate", %{s | duplicate: s.duplicate + 1}}
+
+        f.seq < s.last_seq ->
+          {"older", %{s | older: s.older + 1}}
+
+        true ->
+          {"recorded", %{s | gaps: s.gaps + max(f.seq - s.last_seq - 1, 0), last_seq: f.seq}}
       end
 
     {checks, s} = bounds_checks(state.bounds, f, s, now)
 
     s =
       %{s | received: s.received + 1, last_r: now}
-      |> then(&if(f.qualified, do: %{&1 | qualified: &1.qualified + 1}, else: %{&1 | unqualified: &1.unqualified + 1}))
+      |> then(
+        &if(f.qualified,
+          do: %{&1 | qualified: &1.qualified + 1},
+          else: %{&1 | unqualified: &1.unqualified + 1}
+        )
+      )
 
     state =
       trace(%{state | streams: Map.put(state.streams, f.stream_id, s)}, [
@@ -335,12 +347,25 @@ defmodule GlacierRelay.HeadlessPeer.Driver do
       "complete" => f.sent == s.received and f.last_seq == s.last_seq and s.gaps == 0
     }
 
-    done = Map.merge(sink_view(s), %{stream_id: f.stream_id, reason: f.reason, reconciliation: reconciliation})
+    done =
+      Map.merge(sink_view(s), %{
+        stream_id: f.stream_id,
+        reason: f.reason,
+        reconciliation: reconciliation
+      })
 
     state =
-      %{state | streams: Map.delete(state.streams, f.stream_id), done: Enum.take([done | state.done], 16)}
+      %{
+        state
+        | streams: Map.delete(state.streams, f.stream_id),
+          done: Enum.take([done | state.done], 16)
+      }
       |> trace([
-        Map.merge(reconciliation, %{"event" => "sink.stream_end", "stream_id" => f.stream_id, "reason" => f.reason})
+        Map.merge(reconciliation, %{
+          "event" => "sink.stream_end",
+          "stream_id" => f.stream_id,
+          "reason" => f.reason
+        })
       ])
 
     {:ok, state}
@@ -356,7 +381,10 @@ defmodule GlacierRelay.HeadlessPeer.Driver do
     outside = abs(x - cx) > b.half_extent_m or abs(y - cy) > b.half_extent_m
     fast = s.last_r != nil and now - s.last_r < b.min_interval_ms
 
-    {Enum.reject([outside && "outside_declared_area", fast && "faster_than_declared"], &(&1 == false)),
+    {Enum.reject(
+       [outside && "outside_declared_area", fast && "faster_than_declared"],
+       &(&1 == false)
+     ),
      %{
        s
        | outside_bounds: s.outside_bounds + if(outside, do: 1, else: 0),
@@ -370,7 +398,9 @@ defmodule GlacierRelay.HeadlessPeer.Driver do
     state
     |> end_source(:peer_link_lost)
     |> Map.put(:peer, nil)
-    |> trace([%{"event" => "peer.down", "connection_generation" => g, "reason" => inspect(reason)}])
+    |> trace([
+      %{"event" => "peer.down", "connection_generation" => g, "reason" => inspect(reason)}
+    ])
   end
 
   defp peer_lost(state, _g, _reason), do: state
