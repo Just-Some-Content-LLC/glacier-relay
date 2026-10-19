@@ -15,7 +15,7 @@ defmodule GlacierRelay.Command.TokenHolder do
   heir, no transfer); a restarted authority opens a new holder and reads the file again under the
   same policy. The holder carries no arming and no command state.
 
-  Operations: `open/1` (in the owner), `available?/1`, `verify/5`. There is no read operation:
+  Operations: `open/1` (in the owner), `available?/1`, `verify/5`, `verify_motion/6` (M7-B1). There is no read operation:
   the token leaves the table only inside `verify/5`, where every exception of the lookup or the
   MAC computation is contained and reported as a fixed, non-secret error — never success and
   never a stacktrace whose arguments could hold the token.
@@ -75,6 +75,36 @@ defmodule GlacierRelay.Command.TokenHolder do
     end
   end
 
+  @doc """
+  M7-B1: verifies a native motion link's attestation MAC over
+  `motion|nonce|motion_generation|command_generation|adapter_id` with the held token
+  (`Schema.motion_attest_mac/5`; design section 15.5). The same contained failures as `verify/5`.
+  """
+  @spec verify_motion(t(), term(), term(), term(), term(), term()) :: :ok | {:error, atom()}
+  def verify_motion(nil, _nonce, _mg, _cg, _adapter_id, _presented),
+    do: {:error, :no_token_configured}
+
+  def verify_motion(holder, nonce, motion_generation, command_generation, adapter_id, presented) do
+    case lookup(holder) do
+      {:ok, token} ->
+        compare_with(
+          fn ->
+            Schema.motion_attest_mac(
+              token,
+              nonce,
+              motion_generation,
+              command_generation,
+              adapter_id
+            )
+          end,
+          presented
+        )
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
   defp lookup(holder) do
     case :ets.lookup(holder, :token) do
       [{:token, token}] -> {:ok, token}
@@ -88,6 +118,16 @@ defmodule GlacierRelay.Command.TokenHolder do
 
   defp compare(token, nonce, generation, adapter_id, presented) do
     if Schema.mac_equal?(Schema.attest_mac(token, nonce, generation, adapter_id), presented),
+      do: :ok,
+      else: {:error, :mac_mismatch}
+  rescue
+    _ -> {:error, :token_operation_failed}
+  catch
+    _, _ -> {:error, :token_operation_failed}
+  end
+
+  defp compare_with(expected_fun, presented) do
+    if Schema.mac_equal?(expected_fun.(), presented),
       do: :ok,
       else: {:error, :mac_mismatch}
   rescue

@@ -158,6 +158,7 @@ defmodule GlacierRelay.Command.TokenHolderTest do
 
   test "the holder offers no read operation" do
     exported = TokenHolder.__info__(:functions)
-    assert Enum.sort(exported) == [available?: 1, open: 1, verify: 5]
+    # M7-B1 adds one more verification (the motion link's attestation), still no read operation
+    assert Enum.sort(exported) == [available?: 1, open: 1, verify: 5, verify_motion: 6]
   end
 end

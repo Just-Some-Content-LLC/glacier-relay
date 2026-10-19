@@ -80,6 +80,23 @@ config :glacier_relay, :command,
   # relay.inspect.outfit received within this many ms (an attended local research experiment).
   reversal_inspection_max_age_ms: 60_000
 
+# M7-B1 (docs/design/M7_NETWORK_GHOST.md section 15; ADR 0010 as amended): the optional motion
+# subtree, inside the command subtree. Disabled by default in every environment; when disabled the
+# command subtree is exactly M6's and no motion or peer port is bound. Nothing here enables it at
+# runtime: B1 is exercised offline only (tests start it explicitly). The motion link is a fourth
+# loopback port; the peer link, when configured, only connects out (loopback only in B1).
+config :glacier_relay, :motion,
+  enabled: false,
+  ip: {127, 0, 0, 1},
+  port: 4750,
+  # destination sessions per authority process; a new one also needs every earlier one restored
+  max_sessions: 1,
+  # absolute motion-trace directory; nil means $XDG_STATE_HOME/glacier-relay/motion or
+  # ~/.local/state/glacier-relay/motion (the WSL2 filesystem)
+  trace_dir: nil,
+  # the one allowlisted peer (Peer.Endpoint options); nil: no peer link
+  peer: nil
+
 # The HTTP endpoint. Loopback only, a different port from the wire listener (4747), never
 # conflated with it. Bandit serves it. No sockets, LiveViews or static assets are mounted in M3-A.
 config :glacier_relay, GlacierRelayWeb.Endpoint,

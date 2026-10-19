@@ -88,6 +88,15 @@ defmodule GlacierRelay.Command.Schema do
   v1 lift), v2 is `step_y` | `restore` (a v2 restore restores only a v2 step); neither version's
   forward takes a target, axis or distance. One forward budget — a v1 lift or a v2 step — per
   authority process.
+
+  M7-B1 adds two **motion-gated** entries (`docs/design/M7_NETWORK_GHOST.md` section 15; ADR 0010
+  as amended): `player.pose.share` v1 (inert arming; opens the native's read-only sampling of the
+  local hero onto the bound motion link) and `candidate.motion.session` v1 (`:effectful`; `open`
+  a bounded destination session on the compiled candidate, or `restore` a closed one to its
+  journaled opening preimage). A gated entry is listed in a welcome only to a version-2 peer that
+  advertised it while the authority's motion configuration is on (the session entry also needs
+  the effectful configuration); a peer that does not advertise them sees exactly the welcome it
+  saw before. Close is not a command: it travels on the motion link (`Motion.Codec`).
   """
 
   @protocol_versions [1, 2]
@@ -230,6 +239,54 @@ defmodule GlacierRelay.Command.Schema do
       doc:
         "M6-G1: the one bounded horizontal transform change of the compiled candidate — mode step_y: the compiled +0.25 world-y displacement computed natively from the freshly validated snapshot (every other world word copied; no target, axis or distance may be supplied; world y is not a model-relative direction); mode restore: the journaled preimage world group of one earlier v2 step, bound to it; both carry the exact expectation groups and parent of a recent exact inspection and the mandatory mission_generation precondition; one SetObjectToWorldMatrixFromEditor call behind the applying-frame gate; ONE forward per process natively and per authority here, shared with the v1 lift; issuable only on a token-verified version-2 link that advertised candidate.transform.set/2, under one-shot effectful arming"
     },
+    {"player.pose.share", 1} => %{
+      name: "player.pose.share",
+      version: 1,
+      effect: :share,
+      issuable: true,
+      gate: :motion,
+      trust: :token_verified,
+      params: %{
+        "mode" => {:enum, ["open"]},
+        "share_id" => :uuid,
+        "motion_link_generation" => {:integer, 1, 2_147_483_647},
+        "duration_ms" => {:integer, 1_000, 300_000},
+        "interval_ms" => {:integer, 50, 1_000}
+      },
+      preconditions: [:mission_generation],
+      reversal: :none,
+      doc:
+        "M7-B1: opens the native's read-only sampling of the local hero (registry slot 0's stored transform) onto the bound motion link, one hero.sample per interval_ms for at most duration_ms; inert arming plus an operator share statement; no engine write; the share closes natively on its duration, on either link's loss or on a generation change, and by a share.close on the motion link"
+    },
+    {"candidate.motion.session", 1} => %{
+      name: "candidate.motion.session",
+      version: 1,
+      effect: :motion,
+      issuable: :effectful,
+      gate: :motion,
+      trust: :token_verified,
+      params: %{
+        "mode" => {:enum, ["open", "restore"]},
+        "session_id" => :uuid,
+        "motion_link_generation" => {:optional, {:integer, 1, 2_147_483_647}},
+        "expect_world" => :words12,
+        "expect_local" => :words7,
+        "expect_parent" => :parent_id,
+        "duration_ms" => {:optional, {:integer, 1_000, 300_000}},
+        "half_extent_mm" => {:optional, {:integer, 100, 8_000}},
+        "max_speed_mmps" => {:optional, {:integer, 100, 3_000}},
+        "credit_ms" => {:optional, {:integer, 50, 200}},
+        "min_apply_interval_ms" => {:optional, {:integer, 40, 1_000}},
+        "silence_close_ms" => {:optional, {:integer, 250, 2_000}},
+        "target_world" => {:optional, :words12},
+        "restore_of" => {:optional, :uuid}
+      },
+      preconditions: [:mission_generation],
+      reversal:
+        "a separate candidate.motion.session v1 in mode restore whose target_world is the session's journaled opening preimage, issued only after a native-confirmed clean close, against a fresh later exact inspection equal to the session's final words, under fresh effectful arming; never automatic",
+      doc:
+        "M7-B1: mode open — a bounded destination session on the compiled candidate bound to one motion link generation, with the exact expectation groups of a fresh exact inspection, the duration, area, speed, credit, apply-interval and silence limits; the native applies horizontal targets from the motion link through the one setter site under section 15.5's per-frame checks and closes on its own; mode restore — the journaled opening preimage of one closed session; both under one-shot effectful arming on a token-verified version-2 link that advertised candidate.motion.session/1; close is not a command"
+    },
     {"player.outfit.set", 1} => %{
       name: "player.outfit.set",
       version: 1,
@@ -292,9 +349,16 @@ defmodule GlacierRelay.Command.Schema do
   @doc "The allowlist entry for a name and version, or nil."
   def entry(name, version), do: Map.get(@allowlist, {name, version})
 
-  @doc "The inert issuable entries (sorted by name and version): the version-1 welcome's allowlist."
+  @doc """
+  The inert issuable entries (sorted by name and version): the version-1 welcome's allowlist. A
+  motion-gated entry (M7-B1) is never among them.
+  """
   def issuable do
-    for({{n, v}, e} <- @allowlist, e.issuable == true, do: %{"name" => n, "version" => v})
+    for(
+      {{n, v}, e} <- @allowlist,
+      e.issuable == true and Map.get(e, :gate) == nil,
+      do: %{"name" => n, "version" => v}
+    )
     |> Enum.sort_by(&{&1["name"], &1["version"]})
   end
 
@@ -303,17 +367,33 @@ defmodule GlacierRelay.Command.Schema do
   when the peer negotiated version 2, advertised `name/version` among its capabilities, and the
   authority's effectful configuration is on. A version-1 peer never sees an effectful entry.
   """
-  def issuable_for(2, capabilities, true) when is_list(capabilities) do
-    effectful =
+  def issuable_for(version, capabilities, effectful_enabled),
+    do: issuable_for(version, capabilities, effectful_enabled, false)
+
+  @doc """
+  M7-B1: as `issuable_for/3`, with the motion configuration. A motion-gated entry is listed only
+  to a version-2 peer that advertised it while `motion_enabled` is true; the gated effectful
+  entry also needs `effectful_enabled`. With `motion_enabled` false the result is exactly
+  `issuable_for/3`'s.
+  """
+  def issuable_for(2, capabilities, effectful_enabled, motion_enabled)
+      when is_list(capabilities) do
+    extra =
       for {{n, v}, e} <- @allowlist,
-          e.issuable == :effectful,
+          e.issuable == :effectful or Map.get(e, :gate) == :motion,
+          gate_open?(e, effectful_enabled, motion_enabled),
           "#{n}/#{v}" in capabilities,
           do: %{"name" => n, "version" => v}
 
-    Enum.sort_by(issuable() ++ effectful, &{&1["name"], &1["version"]})
+    Enum.sort_by(issuable() ++ extra, &{&1["name"], &1["version"]})
   end
 
-  def issuable_for(_version, _capabilities, _effectful_enabled), do: issuable()
+  def issuable_for(_version, _capabilities, _effectful_enabled, _motion_enabled), do: issuable()
+
+  defp gate_open?(e, effectful, motion) do
+    (e.issuable != :effectful or effectful == true) and
+      (Map.get(e, :gate) != :motion or motion == true)
+  end
 
   @doc "A random UUID version 4 as text."
   def uuid4 do
@@ -363,6 +443,24 @@ defmodule GlacierRelay.Command.Schema do
              is_binary(adapter_id) do
     :hmac
     |> :crypto.mac(:sha256, token, "#{nonce}|#{generation}|#{adapter_id}")
+    |> Base.encode16(case: :lower)
+  end
+
+  @doc """
+  M7-B1: the motion-link attestation MAC (design section 15.5): HMAC-SHA256 with the run token over
+  `motion|nonce|motion_link_generation|command_link_generation|adapter_id` (lowercase hex). The
+  `motion|` prefix separates it from the command link's attestation, so neither MAC answers the
+  other's challenge.
+  """
+  def motion_attest_mac(token, nonce, motion_generation, command_generation, adapter_id)
+      when is_binary(token) and is_binary(nonce) and is_integer(motion_generation) and
+             is_integer(command_generation) and is_binary(adapter_id) do
+    :hmac
+    |> :crypto.mac(
+      :sha256,
+      token,
+      "motion|#{nonce}|#{motion_generation}|#{command_generation}|#{adapter_id}"
+    )
     |> Base.encode16(case: :lower)
   end
 

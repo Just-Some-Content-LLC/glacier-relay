@@ -64,6 +64,15 @@ defmodule GlacierRelay.Command.Authority do
   journaled as `command.unknown_refined` and recorded beside the status, which stays `unknown`;
   a contradictory refinement is an anomaly; a late `applied` only marks `late_applied_claim`.
   Timeouts use the monotonic clock only.
+
+  M7-B1 (`docs/design/M7_NETWORK_GHOST.md` section 15; ADR 0010 as amended): with the `motion`
+  configuration on, the authority also owns the local motion link's **binding** (`motion_hello/3`,
+  `motion_attest/2`: the current token-verified command link's adapter and generation, then a
+  run-token HMAC over a fresh nonce and both link generations), issues the two motion-gated entries
+  under the rules of `Command.MotionControl`, refuses `candidate.transform.set` while a motion
+  session is not restored, journals the motion hub's events (`motion_event/1`, a cast) and tells the
+  hub — by casts only — about confirmed opens, command-link loss and audit degradation. A peer
+  never reaches the authority.
   """
 
   use GenServer
@@ -73,12 +82,15 @@ defmodule GlacierRelay.Command.Authority do
     Correlation,
     Journal,
     Link,
+    MotionControl,
     Schema,
     TokenHolder,
     TransformBinding,
     TransformReadback,
     TransformWords
   }
+
+  alias GlacierRelay.Motion.Hub
 
   @defaults [
     ack_timeout_ms: 2_000,
@@ -93,7 +105,9 @@ defmodule GlacierRelay.Command.Authority do
     effectful_ttl_max_ms: 120_000,
     evidence_max_age_ms: 120_000,
     evidence_clock_skew_ms: 5_000,
-    reversal_inspection_max_age_ms: 60_000
+    reversal_inspection_max_age_ms: 60_000,
+    motion: false,
+    max_motion_sessions: 1
   ]
 
   @observation_types ~w(visual_confirmation visual_no_change later_frame_read_back engine_consistent note)
@@ -176,6 +190,30 @@ defmodule GlacierRelay.Command.Authority do
   def link_closed(generation, reason),
     do: GenServer.cast(__MODULE__, {:link_closed, generation, reason})
 
+  # -- motion-link-facing API (M7-B1; called by Motion.Link and Motion.Hub only) -------------------------
+
+  @doc false
+  def motion_hello(pid, adapter_id, command_generation),
+    do: GenServer.call(__MODULE__, {:motion_hello, pid, adapter_id, command_generation})
+
+  @doc false
+  def motion_attest(generation, attest),
+    do: GenServer.call(__MODULE__, {:motion_attest, generation, attest})
+
+  @doc false
+  # M7-B1: releases a cleanly closed session already at its preimage (Command.MotionControl)
+  def motion_confirm_baseline(session_id, opts),
+    do: GenServer.call(__MODULE__, {:motion_confirm_baseline, session_id, opts})
+
+  @doc false
+  def motion_link_closed(generation, reason),
+    do: GenServer.cast(__MODULE__, {:motion_link_closed, generation, reason})
+
+  @doc false
+  # a motion hub event to journal (a cast: the hub never waits for the journal)
+  def motion_event(%{"event" => "motion." <> _} = entry),
+    do: GenServer.cast(__MODULE__, {:motion_event, entry})
+
   # -- state -------------------------------------------------------------------------------------
 
   @impl true
@@ -201,6 +239,7 @@ defmodule GlacierRelay.Command.Authority do
        in_flight: nil,
        commands: %{},
        order: [],
+       motion: MotionControl.initial(config),
        counters: %{
          issued: 0,
          refused: 0,
@@ -288,7 +327,14 @@ defmodule GlacierRelay.Command.Authority do
       ) do
     version = hello.protocol_version
     nonce = if version == 2, do: Schema.nonce(), else: nil
-    advertised = Schema.issuable_for(version, hello.capabilities, state.config[:effectful])
+
+    advertised =
+      Schema.issuable_for(
+        version,
+        hello.capabilities,
+        state.config[:effectful],
+        state.motion.enabled
+      )
 
     link = %{
       link
@@ -425,6 +471,131 @@ defmodule GlacierRelay.Command.Authority do
       })
 
     {:reply, {:error, :unknown_link}, state}
+  end
+
+  def handle_call({:motion_hello, pid, adapter, command_generation}, _from, state) do
+    case MotionControl.hello_verdict(state, adapter, command_generation) do
+      :ok ->
+        generation = state.motion.next_generation
+        nonce = Schema.nonce()
+
+        case audit(state, %{
+               "event" => "motion.link.hello",
+               "motion_link_generation" => generation,
+               "command_link_generation" => command_generation,
+               "adapter_instance_id" => adapter,
+               "trust" =>
+                 "identified against the current token-verified command link; not yet bound"
+             }) do
+          {state, :ok} ->
+            ref = Process.monitor(pid)
+
+            link = %{
+              pid: pid,
+              ref: ref,
+              generation: generation,
+              nonce: nonce,
+              command_generation: command_generation,
+              adapter: adapter,
+              bound: false,
+              attempted: false
+            }
+
+            m = %{state.motion | link: link, next_generation: generation + 1}
+            {:reply, {:ok, generation, nonce}, %{state | motion: m}}
+
+          {state, {:error, reason}} ->
+            {:reply, {:error, {:journal_unavailable, reason}}, state}
+        end
+
+      {:error, reason} = error ->
+        {state, _} =
+          audit(state, %{
+            "event" => "motion.link.refused",
+            "command_link_generation" => command_generation,
+            "adapter_instance_id" => adapter,
+            "reason" => inspect(reason)
+          })
+
+        {:reply, error, state}
+    end
+  end
+
+  def handle_call({:motion_attest, generation, a}, _from, state) do
+    verdict =
+      with :ok <- MotionControl.attest_verdict(state, generation, a) do
+        ml = state.motion.link
+
+        TokenHolder.verify_motion(
+          state.credential,
+          ml.nonce,
+          generation,
+          ml.command_generation,
+          ml.adapter,
+          a.mac
+        )
+      end
+
+    state =
+      if state.motion.link && state.motion.link.generation == generation,
+        do: put_in(state.motion.link.attempted, true),
+        else: state
+
+    case verdict do
+      :ok ->
+        case audit(state, %{
+               "event" => "motion.link.bound",
+               "motion_link_generation" => generation,
+               "command_link_generation" => state.motion.link.command_generation,
+               "adapter_instance_id" => state.motion.link.adapter,
+               "trust" =>
+                 "bound: the run token's HMAC over this link's nonce and both link generations; not process identity"
+             }) do
+          {state, :ok} -> {:reply, :ok, put_in(state.motion.link.bound, true)}
+          {state, {:error, reason}} -> {:reply, {:error, {:journal_unavailable, reason}}, state}
+        end
+
+      {:error, reason} = error ->
+        {state, _} =
+          audit(state, %{
+            "event" => "motion.link.attest_failed",
+            "motion_link_generation" => generation,
+            "reason" => to_string(reason)
+          })
+
+        {:reply, error, %{state | counters: bump(state.counters, :attest_failures)}}
+    end
+  end
+
+  def handle_call({:motion_confirm_baseline, sid, opts}, _from, state) do
+    ctx_fun = fn ->
+      binding_context(state, %{"mission_generation" => Keyword.get(opts, :expected_generation)})
+    end
+
+    with true <- state.audit == :intact or {:error, :audit_degraded},
+         {:ok, b} <-
+           MotionControl.confirm_baseline(
+             state,
+             sid,
+             Keyword.get(opts, :inspection_command_id),
+             ctx_fun
+           ) do
+      case audit(state, %{
+             "event" => "motion.session.at_baseline",
+             "session_id" => sid,
+             "inspection_binding" => b,
+             "label" =>
+               "the candidate's exact words equal the session's opening preimage at the inspection's frame; nothing submitted"
+           }) do
+        {state, :ok} ->
+          {:reply, :ok, put_in(state.motion.sessions[sid].state, :at_baseline)}
+
+        {state, {:error, reason}} ->
+          {:reply, {:error, {:journal_unavailable, reason}}, state}
+      end
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
   end
 
   def handle_call(:arm, _from, state) do
@@ -603,6 +774,7 @@ defmodule GlacierRelay.Command.Authority do
                      "reversal_inspection" => cmd.reversal_inspection
                    }
                    |> put_binding(cmd.binding)
+                   |> put_motion(cmd.motion)
                  )
                ) do
           transmit(state, cmd)
@@ -664,6 +836,23 @@ defmodule GlacierRelay.Command.Authority do
     {:noreply, lose_link(state, reason)}
   end
 
+  def handle_cast(
+        {:motion_link_closed, generation, reason},
+        %{motion: %{link: %{generation: generation}}} = state
+      ),
+      do: {:noreply, drop_motion_link(state, reason)}
+
+  def handle_cast({:motion_link_closed, _generation, _reason}, state), do: {:noreply, state}
+
+  def handle_cast({:motion_event, entry}, state) do
+    # journaled first; a failed entry degrades the audit (which closes the hub's session) and the
+    # registry transition is not taken — lost history is never restorable
+    case audit(state, entry) do
+      {state, :ok} -> {:noreply, MotionControl.on_event(state, entry)}
+      {state, {:error, _}} -> {:noreply, state}
+    end
+  end
+
   def handle_cast({:link_closed, generation, reason}, state) do
     # A close reported for a link that is no longer the current one: evidence, not an error.
     {state, _} =
@@ -679,6 +868,9 @@ defmodule GlacierRelay.Command.Authority do
   @impl true
   def handle_info({:DOWN, ref, :process, _pid, reason}, %{link: %{ref: ref}} = state),
     do: {:noreply, lose_link(state, {:down, reason})}
+
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %{motion: %{link: %{ref: ref}}} = state),
+    do: {:noreply, drop_motion_link(state, {:down, reason})}
 
   def handle_info({:DOWN, _ref, :process, _pid, _reason}, state), do: {:noreply, state}
 
@@ -948,6 +1140,18 @@ defmodule GlacierRelay.Command.Authority do
       entry.trust == :authenticated and not link.authenticated ->
         {:error, :peer_not_authenticated}
 
+      Map.get(entry, :gate) == :motion and not state.motion.enabled ->
+        {:error, :motion_disabled}
+
+      Map.get(entry, :gate) == :motion and
+          %{"name" => name, "version" => version} not in link.advertised ->
+        {:error, :entry_not_advertised_to_peer}
+
+      # M7-B1: an inert entry that needs a token-verified link (the share); an effectful entry keeps
+      # its own order of checks below, unchanged since M6
+      not effectful and entry.trust == :token_verified and not link.token_verified ->
+        {:error, :peer_not_token_verified}
+
       effectful and not state.config[:effectful] ->
         {:error, :effectful_disabled}
 
@@ -987,6 +1191,9 @@ defmodule GlacierRelay.Command.Authority do
 
       entry.effect == :transform ->
         prepare_transform(state, entry, params, id, ttl, preconditions, effectful, opts)
+
+      entry.effect in [:motion, :share] ->
+        prepare_motion(state, entry, params, id, ttl, preconditions, effectful, opts)
 
       true ->
         with {:ok, valid} <- Schema.validate_params(entry, params),
@@ -1034,7 +1241,9 @@ defmodule GlacierRelay.Command.Authority do
   # the same check however it is reached. Order: the supplied shape, the no-op, the structural
   # rules and the one-lift budget, the binding, the complete parameter set.
   defp prepare_transform(state, entry, params, id, ttl, preconditions, effectful, opts) do
-    with {:ok, supplied} <- Schema.validate_supplied(entry, params),
+    # M7-B1: no transform command — forward or restore — while a motion session holds the candidate
+    with :ok <- MotionControl.transform_allowed(state),
+         {:ok, supplied} <- Schema.validate_supplied(entry, params),
          :ok <- check_not_a_noop(entry, supplied),
          :ok <- check_transform(state, entry, supplied, opts),
          {:ok, canonical, binding} <- bind_transform(state, entry, supplied, preconditions, opts),
@@ -1201,6 +1410,11 @@ defmodule GlacierRelay.Command.Authority do
   defp put_binding(fields, nil), do: fields
   defp put_binding(fields, binding), do: Map.put(fields, "inspection_binding", binding)
 
+  defp put_motion(fields, nil), do: fields
+
+  defp put_motion(fields, meta),
+    do: Map.put(fields, "motion", Map.put(meta.record, "kind", Atom.to_string(meta.kind)))
+
   # The final issuance point (the M6-F1a binding correction): the binding was judged moments ago
   # inside this same callback, but an expired arming, a changed link or an inspection that aged
   # past its bound is never excused by it. The inspection's age is measured again on the journal's
@@ -1230,6 +1444,35 @@ defmodule GlacierRelay.Command.Authority do
         else
           {:error, reason} -> {:error, state, reason}
         end
+    end
+  end
+
+  # M7-B1: the motion entries (Command.MotionControl): the canonical parameters from the operator's
+  # statement or approval and, for a session, from one exact inspection verified from the journal.
+  defp prepare_motion(state, entry, params, id, ttl, preconditions, effectful, opts) do
+    ctx_fun = fn -> binding_context(state, preconditions) end
+
+    with {:ok, valid, meta} <-
+           MotionControl.prepare(state, entry, params, opts, ctx_fun, m6_unrestored(state)) do
+      cmd = build(state, entry, valid, id, ttl, preconditions, effectful, nil, nil)
+      {:ok, %{cmd | binding: meta[:binding], motion: meta}}
+    end
+  end
+
+  # the M6 forward that consumed the budget, when no restoration of it was confirmed
+  defp m6_unrestored(state) do
+    case forward_consumer(state) do
+      nil ->
+        nil
+
+      id ->
+        restored =
+          Enum.any?(state.commands, fn {_, c} ->
+            c.name == "candidate.transform.set" and c.reversal_of == id and
+              c.restored == :native_same_frame
+          end)
+
+        if restored, do: nil, else: id
     end
   end
 
@@ -1304,6 +1547,7 @@ defmodule GlacierRelay.Command.Authority do
       late_applied_claim: false,
       unknown_reason: nil,
       audit: :intact,
+      motion: nil,
       ack_timer: nil,
       terminal_timer: nil
     }
@@ -1347,7 +1591,9 @@ defmodule GlacierRelay.Command.Authority do
           )
 
         state =
-          %{state | in_flight: cmd, counters: bump(state.counters, :issued)} |> remember(cmd)
+          %{state | in_flight: cmd, counters: bump(state.counters, :issued)}
+          |> remember(cmd)
+          |> MotionControl.on_transmitted(cmd)
 
         {:reply, {:ok, cmd.id}, state}
 
@@ -1362,7 +1608,10 @@ defmodule GlacierRelay.Command.Authority do
           )
 
         state =
-          %{state | counters: state.counters |> bump(:issued) |> bump(:unknown)} |> remember(cmd)
+          %{state | counters: state.counters |> bump(:issued) |> bump(:unknown)}
+          |> remember(cmd)
+          |> MotionControl.on_transmitted(cmd)
+          |> motion_unknown(cmd)
 
         {:reply, {:error, {:send_failed, reason}}, state}
     end
@@ -1698,9 +1947,30 @@ defmodule GlacierRelay.Command.Authority do
             })
           )
 
-        %{state | in_flight: nil} |> remember(cmd)
+        %{state | in_flight: nil} |> remember(cmd) |> motion_terminal(cmd, result)
     end
   end
+
+  # M7-B1: the registry transition of a motion command's terminal, and the hub's notification
+  defp motion_terminal(state, %{motion: nil}, _result), do: state
+
+  defp motion_terminal(state, cmd, result) do
+    {state, notify} = MotionControl.on_terminal(state, cmd, result)
+    notify_hub(notify)
+    state
+  end
+
+  defp motion_unknown(state, %{motion: nil}), do: state
+
+  defp motion_unknown(state, cmd) do
+    {state, notify} = MotionControl.on_unknown(state, cmd)
+    notify_hub(notify)
+    state
+  end
+
+  defp notify_hub({:share, id, status, facts}), do: Hub.share_result(id, status, facts)
+  defp notify_hub({:session, id, status, facts}), do: Hub.session_result(id, status, facts)
+  defp notify_hub(nil), do: :ok
 
   # A result for a command that already reached its end on this link: evidence of the peer's
   # behaviour, never a status change. One additive refinement (M5 C-2A, research section 8): a
@@ -1867,7 +2137,9 @@ defmodule GlacierRelay.Command.Authority do
         })
       )
 
-    %{state | in_flight: nil, counters: bump(state.counters, :unknown)} |> remember(cmd)
+    %{state | in_flight: nil, counters: bump(state.counters, :unknown)}
+    |> remember(cmd)
+    |> motion_unknown(cmd)
   end
 
   defp lose_link(state, reason) do
@@ -1896,7 +2168,27 @@ defmodule GlacierRelay.Command.Authority do
           }),
         else: {state, :ok}
 
+    state = drop_motion_link(state, :command_link_lost)
+    if state.motion.enabled, do: Hub.command_link_lost(link.generation)
     %{clear_effectful(state) | link: nil, armed: false, corroboration: nil}
+  end
+
+  # M7-B1: the motion link's binding ends with its command link (the native closes on the loss)
+  defp drop_motion_link(%{motion: %{link: nil}} = state, _reason), do: state
+
+  defp drop_motion_link(%{motion: %{link: ml}} = state, reason) do
+    Process.demonitor(ml.ref, [:flush])
+    if Process.alive?(ml.pid), do: Process.exit(ml.pid, {:shutdown, reason})
+
+    {state, _} =
+      audit(state, %{
+        "event" => "motion.link.closed",
+        "motion_link_generation" => ml.generation,
+        "reason" => inspect(reason),
+        "was_bound" => ml.bound
+      })
+
+    put_in(state.motion.link, nil)
   end
 
   # -- audit ---------------------------------------------------------------------------------------
@@ -1917,6 +2209,7 @@ defmodule GlacierRelay.Command.Authority do
         state =
           case state.audit do
             :intact ->
+              if state.motion.enabled, do: Hub.audit_degraded()
               %{state | audit: {:degraded, entry["event"], reason, mono()}}
 
             degraded ->
@@ -2094,6 +2387,7 @@ defmodule GlacierRelay.Command.Authority do
           ])
         ),
       counters: state.counters,
+      motion: MotionControl.status(state),
       journal: journal_status,
       allowlist:
         Enum.map(Schema.allowlist(), fn {{n, v}, e} ->
