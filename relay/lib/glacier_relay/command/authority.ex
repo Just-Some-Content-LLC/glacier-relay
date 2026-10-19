@@ -1995,9 +1995,23 @@ defmodule GlacierRelay.Command.Authority do
   defp motion_terminal(state, %{motion: nil}, _result), do: state
 
   defp motion_terminal(state, cmd, result) do
-    {state, notify} = MotionControl.on_terminal(state, cmd, result)
-    notify_hub(notify)
-    state
+    case MotionControl.on_terminal(state, cmd, result) do
+      {state, {:restore_judged, sid, judgement}} ->
+        judge_restore(state, cmd, sid, judgement)
+
+      {state, notify} ->
+        notify_hub(notify)
+        state
+    end
+  end
+
+  # M7-B1 correction B: a restore's judgement is journaled before it takes effect; when the entry
+  # cannot be written the session stays `restoring` (non-releasing) — lost history never releases
+  defp judge_restore(state, cmd, sid, judgement) do
+    case audit(state, MotionControl.restore_entry(cmd, sid, judgement)) do
+      {state, :ok} -> put_in(state.motion.sessions[sid].state, judgement.state)
+      {state, {:error, _}} -> state
+    end
   end
 
   defp motion_unknown(state, %{motion: nil}), do: state

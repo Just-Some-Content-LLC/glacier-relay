@@ -28,9 +28,32 @@ defmodule GlacierRelay.Command.MotionControl do
 
   Session states: `accepted` → `open` | `not_opened` | `open_failed` | `open_unknown` |
   `open_unverified`; `open` → `closed_clean` | `closed_unclean` | `close_unknown`; `closed_clean` →
-  `restoring` → `restored` | `restore_not_exact` | `restore_unknown` (a verified non-application
-  returns it to `closed_clean`); `closed_clean` → `at_baseline`. Only `not_opened`, `restored` and
-  `at_baseline` release the exclusivity.
+  `restoring` → `restored` | `restore_not_exact` | `restore_unqualified` | `restore_unknown` (a
+  verified non-application returns it to `closed_clean`); `closed_clean` → `at_baseline`. Only
+  `not_opened`, `restored` and `at_baseline` release the exclusivity.
+
+  **The restoration result (M7-B1 correction B; design section 15.4).** A restore's terminal is
+  judged by `judge_restore/2` and the judgement is journaled (`motion.session.restore_judged`)
+  before it takes effect. `restored` — the only releasing outcome — needs status `applied` and
+  every one of these read-back facts, each strictly decoded (`TransformReadback.decode_apply/1`)
+  and kept separate:
+  - the requested world words (`requested_world_words`) equal to the restore's target;
+  - the observed world words (`postimage_world_words`) equal to the requested words, bit for bit;
+  - the observed parent-relative words (`postimage_local_words`) present — recorded, never
+    required equal (the world setter does not promise them);
+  - the parent (`postimage_parent`) equal to the restore's expected parent;
+  - a clean post cache (`postimage_dirty` false);
+  - the same entity (`post_same_entity` true) and the session's mission generation
+    (`generation_post`);
+  - the local hero's control unchanged (`hero_control`, the native's same-frame comparison, under
+    the accepted M6 policy: `unchanged` only);
+  - a reported invocation and a changed effect (the authority's own classification of
+    `setter_called` / `effect`).
+  An `applied` result whose observed world words differ is `restore_not_exact`; any other missing,
+  dirty, contradictory or uncertain fact is `restore_unqualified`. A non-application status
+  returns the session to `closed_clean` only when no invocation and no change or uncertain effect
+  is reported; otherwise it is `restore_unqualified` too. All three are terminal for the session:
+  non-releasing, never retried, no second restore and no baseline release.
   """
 
   alias GlacierRelay.Command.{Schema, TransformBinding, TransformReadback, TransformWords}
@@ -482,30 +505,159 @@ defmodule GlacierRelay.Command.MotionControl do
         {%{state | motion: put_in(m.sessions[id].state, new)}, {:session, id, notify, facts}}
 
       :session_restore ->
-        target = cmd.params["target_world"]
-
-        post =
-          case TransformReadback.words(
-                 result.observed && result.observed["postimage_world_words"],
-                 :world
-               ) do
-            {:ok, words} -> TransformWords.encode(words)
-            _ -> nil
-          end
-
-        new =
-          cond do
-            status == :applied and post == target -> :restored
-            status == :applied -> :restore_not_exact
-            nonapplication -> :closed_clean
-            true -> :restore_unknown
-          end
-
-        {%{state | motion: put_in(m.sessions[id].state, new)}, nil}
+        # judged here, journaled and applied by the authority (an unjournaled judgement leaves
+        # the session restoring: non-releasing)
+        {state, {:restore_judged, id, judge_restore(cmd, result)}}
     end
   end
 
   def on_terminal(state, _cmd, _result), do: {state, nil}
+
+  @doc """
+  The restoration-result contract (see the module doc): `%{state, reasons, facts}` for one
+  `candidate.motion.session` `restore` terminal. `cmd` is the authority's record of the restore
+  (its parameters, its authority-verified binding and the authority's classification of the
+  reported effect, `cmd.effect`); `result` the decoded result. `reasons` is the closed list of
+  unmet requirements, in a fixed order; `facts` keeps every read-back fact apart, for the journal.
+  Pure.
+  """
+  def judge_restore(cmd, result) do
+    d = TransformReadback.decode_apply(result.observed || %{})
+    effect = Map.get(cmd, :effect) || %{}
+    invocation = Map.get(effect, :invocation, :not_reported)
+    eff = Map.get(effect, :effect, :unreported)
+    target = cmd.params["target_world"]
+    parent = cmd.params["expect_parent"]
+    generation = cmd.binding && cmd.binding["mission_generation"]
+    status = Schema.status_atom(result.status)
+
+    {state, reasons} =
+      cond do
+        status == :applied ->
+          reasons = restore_failures(d, invocation, eff, target, parent, generation)
+
+          state =
+            cond do
+              reasons == [] -> :restored
+              :postimage_not_target in reasons -> :restore_not_exact
+              true -> :restore_unqualified
+            end
+
+          {state, reasons}
+
+        Schema.nonapplication?(result.status) ->
+          reasons =
+            Enum.reject(
+              [
+                invocation == :reported && :nonapplication_reports_invocation,
+                eff in [:changed, :uncertain] && {:nonapplication_reports_effect, eff}
+              ],
+              &(&1 == false)
+            )
+
+          {if(reasons == [], do: :closed_clean, else: :restore_unqualified), reasons}
+
+        true ->
+          {:restore_unknown, [{:status, status}]}
+      end
+
+    %{
+      state: state,
+      reasons: reasons,
+      facts: %{
+        "status" => result.status,
+        "target_world" => target,
+        "requested_world" => fact(d.requested_world_words),
+        "observed_world" => fact(d.postimage.world_words),
+        "observed_local" => fact(d.postimage.local_words),
+        "local_match" => fact(d.local_match),
+        "parent" => fact(d.postimage.parent),
+        "expected_parent" => parent,
+        "dirty" => fact(d.postimage.dirty),
+        "same_entity" => fact(d.post_same_entity),
+        "generation_post" => fact(d.generation_post),
+        "expected_generation" => generation,
+        "control" => fact(d.hero_control),
+        "invocation" => Atom.to_string(invocation),
+        "effect" => Atom.to_string(eff)
+      }
+    }
+  end
+
+  # the unmet requirements of an applied restore, in a fixed order (an empty list releases)
+  defp restore_failures(d, invocation, eff, target, parent, generation) do
+    requested = words_text(d.requested_world_words)
+    observed = words_text(d.postimage.world_words)
+
+    [
+      requested == nil && :requested_world_unobserved,
+      (requested != nil and requested != target) && :requested_not_target,
+      observed == nil && :postimage_world_unobserved,
+      (observed != nil and observed != target) && :postimage_not_target,
+      (observed != nil and requested != nil and observed != requested) && :postimage_not_requested,
+      not match?({:ok, _}, d.postimage.local_words) && :postimage_local_unobserved,
+      parent_failure(d.postimage.parent, parent),
+      flag_failure(d.postimage.dirty, false, :postimage_dirty_unobserved, :postimage_dirty),
+      flag_failure(d.post_same_entity, true, :post_entity_unobserved, :post_entity_changed),
+      text_failure(
+        d.generation_post,
+        generation,
+        :generation_post_unobserved,
+        :generation_changed
+      ),
+      control_failure(d.hero_control),
+      invocation != :reported && :invocation_not_reported,
+      eff != :changed && {:effect, eff}
+    ]
+    |> Enum.reject(&(&1 == false))
+  end
+
+  defp words_text({:ok, words}), do: TransformWords.encode(words)
+  defp words_text(_), do: nil
+
+  defp parent_failure({:ok, observed}, expected) do
+    if parent_text(observed) == expected, do: false, else: :parent_changed
+  end
+
+  defp parent_failure(_, _), do: :postimage_parent_unobserved
+
+  defp parent_text(:none), do: "none"
+  defp parent_text(hex), do: hex
+
+  defp flag_failure({:ok, want}, want, _unobserved, _wrong), do: false
+  defp flag_failure({:ok, _}, _want, _unobserved, wrong), do: wrong
+  defp flag_failure(_, _want, unobserved, _wrong), do: unobserved
+
+  defp text_failure({:ok, v}, expected, _unobserved, wrong),
+    do: if(is_binary(expected) and v == expected, do: false, else: wrong)
+
+  defp text_failure(_, _expected, unobserved, _wrong), do: unobserved
+
+  defp control_failure({:ok, "unchanged"}), do: false
+  defp control_failure({:ok, other}), do: {:hero_control, other}
+  defp control_failure(_), do: :hero_control_unobserved
+
+  # a read-back fact as journal text: the value, or its status — never a default
+  defp fact({:ok, words}) when is_list(words), do: TransformWords.encode(words)
+  defp fact({:ok, :none}), do: "none"
+  defp fact({:ok, v}), do: v
+  defp fact({:unobserved, status}), do: "unobserved:" <> status
+  defp fact({:invalid, _}), do: "invalid"
+  defp fact(:missing), do: nil
+
+  @doc "The journal entry of a restore's judgement (`judge_restore/2`)."
+  def restore_entry(cmd, sid, j),
+    do: %{
+      "event" => "motion.session.restore_judged",
+      "session_id" => sid,
+      "command_id" => cmd.id,
+      "state" => Atom.to_string(j.state),
+      "releases" => j.state == :restored,
+      "reasons" => Enum.map(j.reasons, &Destination.reason_text/1),
+      "facts" => j.facts,
+      "label" =>
+        "the native's same-frame restoration result judged against the restoration-result contract (design section 15.4); native or fake-native evidence, not an independent observation"
+    }
 
   @doc "An unknown outcome for a motion command (possible effect): never released."
   def on_unknown(state, %{motion: %{kind: kind, id: id}} = cmd) do

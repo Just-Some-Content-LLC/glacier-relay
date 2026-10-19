@@ -152,6 +152,10 @@ defmodule GlacierRelay.Motion.SessionTest do
       wait(fn -> Command.command(rid).status == :applied end)
       assert registry(sid).state == :restored
       assert FakeMotionNative.status(st.fake).world == FakeMotionNative.pre()
+      # M7-B1 correction B: the judgement against the restoration-result contract is journaled
+      assert [%{"state" => "restored", "releases" => true, "reasons" => []}] =
+               journal_events("motion.session.restore_judged")
+
       [acc] = Enum.filter(journal_events("command.accepted"), &(&1["command_id"] == rid))
       assert acc["params"]["target_world"] == FakeMotionNative.pre()
       assert acc["params"]["restore_of"] == cid
