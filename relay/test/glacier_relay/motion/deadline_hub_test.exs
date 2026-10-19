@@ -231,6 +231,9 @@ defmodule GlacierRelay.Motion.DeadlineHubTest do
 
   test "H-A5: a forward decided before the duration bound whose trace write crosses it sends no bytes" do
     st = MotionStack.start()
+    # the fake's own duration close (on its clock, opened before BEAM activated the session) must
+    # not end the session before the crossing (gate attempt 1, run 2: it could under load)
+    :ok = FakeMotionNative.fault(st.fake, {:session_overrun_ms, 600})
     stream = inject_stream()
     {_sid, _} = open(st, stream, %{duration_ms: 1_000, stall_ms: 1_000})
     proxy = start_supervised!({TraceProxy, real: GlacierRelay.Motion.Trace, notify: self()})
@@ -252,6 +255,7 @@ defmodule GlacierRelay.Motion.DeadlineHubTest do
 
     # the decision is made before the bound; its required trace write is released after it
     sleep_until(deadline - 60)
+    assert dest().phase == :open, inspect(summary())
     :ok = TraceProxy.hold_next(proxy, "destination.forward")
     t2 = Task.async(fn -> inject(sample(stream, 2, 0.02)) end)
     assert_receive {:held, recs, held_at}, 1_000

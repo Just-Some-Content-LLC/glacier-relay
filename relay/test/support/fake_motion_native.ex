@@ -20,7 +20,8 @@ defmodule GlacierRelay.Test.FakeMotionNative do
   logged (`{:target_line, session_id, seq, fake_ms}`), so a test can show which target bytes
   reached the native; `:hold_motion_out` queues every line the fake would write on the motion link
   until `release_motion_out/1` (in order); `{:share_overrun_ms, ms}` keeps the fake's share
-  sampling past its own duration (a native whose own close comes late).
+  sampling past its own duration, and `{:session_overrun_ms, ms}` its session open past its own
+  duration (a native whose own close comes late).
 
   It is test tooling only and **never evidence of native game execution**: every result it
   writes is fake-native evidence, and that its timers close a session says nothing about the DLL
@@ -712,8 +713,14 @@ defmodule GlacierRelay.Test.FakeMotionNative do
     p = s.params
     t = now(state)
 
+    overrun =
+      Enum.find_value(state.faults, 0, fn
+        {:session_overrun_ms, ms} -> ms
+        _ -> nil
+      end)
+
     cond do
-      t >= s.opened + p["duration_ms"] ->
+      t >= s.opened + p["duration_ms"] + overrun ->
         close_session(state, "duration")
 
       t >= s.last_target + p["silence_close_ms"] ->
