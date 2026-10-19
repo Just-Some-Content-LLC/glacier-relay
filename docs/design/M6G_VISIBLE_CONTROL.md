@@ -1,6 +1,6 @@
 # M6-G — One bounded, observable external action on the visible Agent48 (design, 2026-10-18)
 
-**Status:** sections 1–5 are the design, from read-only source examination. Section 6 is the reviewed M6-G1 contract. Section 7 records M6-G1: `candidate.transform.set` v2 `step_y` implemented and validated **offline** (build of record native5 `f271d129…`, not installed; evidence `m6g1-offline\`, sealed `b65c87ff…`). Section 8 records the review's bounded acceptance of M6-G1 and its three qualifications. Section 9 records **M6-G2 run 1** (2026-10-19; evidence `m6g2-run1\`, sealed `86901008…`): native5 installed once, ONE v2 `step_y` applied exactly (y 14.83 → 15.08), six samples held over 10 s, the operator saw an instantaneous, animation-free shift that the retained continuous recording covers, ONE approved v2 restoration returned the stored transform bit-exactly to P, and the game was restored byte-for-byte. M6 is not complete; nothing is tagged.
+**Status:** sections 1–5 are the design, from read-only source examination. Section 6 is the reviewed M6-G1 contract. Section 7 records M6-G1: `candidate.transform.set` v2 `step_y` implemented and validated **offline** (build of record native5 `f271d129…`, not installed; evidence `m6g1-offline\`, sealed `b65c87ff…`). Section 8 records the review's bounded acceptance of M6-G1 and its three qualifications. Section 9 records **M6-G2 run 1** (2026-10-19; evidence `m6g2-run1\`, sealed `86901008…`): native5 installed once, ONE v2 `step_y` applied exactly (y 14.83 → 15.08), six samples held over 10 s, the operator saw an instantaneous, animation-free shift that the retained continuous recording covers, ONE approved v2 restoration returned the stored transform bit-exactly to P, and the game was restored byte-for-byte. Section 10 records the review's bounded acceptance of run 1, the one-time review of the retained footage (it corroborates a lateral shift against fixed scenery) and two scope clarifications. M6 is closed for its defined experimental scope (`M6_SECOND_HITMAN.md` section 20).
 
 **Authorization:** "M6-E3 Acceptance and Bounded Visible-Control Design". The acceptance addendum is `M6E_VISUAL_PLACEMENT.md` section 13.
 
@@ -516,3 +516,53 @@ The operator exited normally ("Closed"): `mission.playing` fell 03:31:53Z, `cont
 - **Established, for this run:** native5 loads and advertises both setter versions in HITMAN; ONE compiled +0.25f world-y write through the one setter applied exactly on its frame; the stored transform agreed with it at six sampled frames over 10 s and again about 4.5 min later; the operator saw and the recording retains an instantaneous, animation-free shift of the visible Agent48 with the camera unmoved; ONE evidence-bound v2 restoration returned the stored transform bit-exactly to P; the game was restored byte-for-byte.
 - **Not established:** continuous persistence between samples; what the render did between the reported frames, beyond the operator's report and the retained video; any writer or mechanism behind the M6-F z return versus this held y step (different axis, location, content and run: no causal comparison is made); clearance, collision or NPC effects at P + 0.25 y; any gameplay consequence; walking, animation, control or multiplayer behaviour.
 - **Hard stop.** One step and one restoration were the run's whole effectful budget; no repeat, second deployment, activation, pathing, input injection, registry / physics / controller change, collision test, writer tracing, networking expansion or tag. M6 is not complete. Next: review of this record.
+
+## 10. M6-G2 run 1 accepted (bounded) — acceptance addendum (2026-10-19)
+
+**Authorization:** "Glacier Relay — M6-G2 acceptance and scoped M6 completion". Sections 8 and 9 are kept as written: their raw values, the operator's words, the gate exceptions and the deviations stand. This section adds the review's decision, the existing-media accounting and two scope clarifications. Closure evidence: `%TEMP%\glacier-m0\hitmen\m6-closure\` (claimed 2026-10-19T04:36:17Z; sealed at the end of the closure pass, its manifest hash recorded in HANDOFF).
+
+### 10.1 Decision
+
+> **M6-G2 run 1 is accepted for its demonstrated, attended runtime scope.** The demonstrated external drive is one compiled +0.25f world-y displacement of the separately identified, visible candidate, followed by a separately authorized, inspection-bound restoration. It is not animated walking, a general movement controller, continuous control or multiplayer.
+
+### 10.2 Existing-media accounting
+
+The run record (9.4, item 4) retained and hashed the step recording but did not open it. For this addendum it was inspected **once**, with built-in Windows tools only (the WinRT `Windows.Media.Editing` thumbnail API from Windows PowerShell and `System.Drawing`; nothing installed, nothing uploaded), from the operator's original file (the sealed copy was not opened). Its hash is unchanged before and after: `b959fc534cc3004a5edbb31f38a71c2d13e60f4ad8fbdfdbe03329ff51c7051e`, 220,254,716 B. The notes, eleven stills and one crop pair are in `m6-closure\media-review\` (`README.txt`, `README-NOTE.txt`), never in the sealed run root and never in Git. Two preliminary extraction attempts failed on a PowerShell / WinRT collection projection before any frame was written; both are kept.
+
+- **The file opens:** H.264, 1920 × 1080, nominal 10000000/364217 fps (about 27.5), 182.165 s.
+- **Visible:** Agent 47 from behind in the foreground; a second suited, bald figure standing on the carpet in front of the central fountain; fixed scenery (the four lit planters and their birch trees, the fountain and basin, the carpet edges, the facade) and the HUD / minimap at the same screen positions in every viewed still. The camera is not seen to move.
+- **Displacement discernible:** yes. At 5, 105, 110 and 112 s the figure stands at one screen position; at 114, 118 and 170 s it stands further right, in front of the fountain's central pedestal, with the surrounding scenery unchanged and the same standing pose (`crop-t112-vs-t114.png`). The change falls between the 112 s and 114 s stills.
+- **Qualifications:** a screen-space observation; no world-space distance is derived from pixels; the stills are 2 s apart, so the "instantaneous" quality remains the operator's testimony. No native frame is inferred from the footage. The duration-based start estimate (last write minus duration: 03:23:38.4Z) places the native step time at about 113.4 s, inside the 112–114 s interval; the file-name time would place it at about 110.8 s, where the stills show no change yet, so the file name is not an exact start. No contradiction with the operator's report or the stored-transform samples was observed.
+- **Not existing and not manufactured:** footage of the restoration, and F12 stills before and after the step. Restoration acceptance rests on its invocation, exact read-backs, later inspection and journal evidence.
+
+So the record can now say: **the operator reported an instantaneous shift, and the retained footage, reviewed as stills, corroborates a lateral shift of the visible figure against fixed scenery between two stills 2 s apart.**
+
+### 10.3 The accepted facts and their sources
+
+Evidence classes: **native observation** (the adapter's frame-thread reads, postimages and log lines), **BEAM journal / authority** (the append-only command journal and the authority's verified binding), **operator testimony** (verbatim), **media review** (10.2), **file-system verification** (the cleanup and post-run checks), **inference** (labelled).
+
+| # | Accepted fact | Evidence class | Where |
+|---|---|---|---|
+| 1 | The candidate (Agent48 `feede715906f747f`, brick `007c57a6ea581f8c`) resolved at P, distinct from the local hero `69bdf7f855ea15e0` and absent from the four registry slots (slot 0 local, 1–3 empty). | native observation | 9.3; `r3-ct`, `r3-entity`, `r3-players`, `pl-r3-ct.out` |
+| 2 | One v2 step was issued with a fresh, authority-verified inspection binding (`d188354b`, 28.3 s of 60 s) and one-shot authority (one arming, consumed by `2448303c`). | BEAM journal / authority; native observation | 9.4 (1); journal seq 37–38 |
+| 3 | On frame 97990, world word 10 changed `416d47ae` → `417147ae`; the other eleven world words were preserved and the postimage equalled the requested bits. | native observation | 9.4 (2); `r4-step-decoded.txt` |
+| 4 | Six later inspections found the target, from +52 ms to about +10.06 s native; one inspection about 4.5 min later (frame 124377) also found it. Sampled agreements, not proof of a continuous state. | native observation | 9.4 (3); `r4-step-s0..s5`, `r6-jit-ct` |
+| 5 | The operator reported an immediate, animation-free displacement with the camera stationary; the stills of the retained footage show a lateral shift against fixed scenery. A transform setter requests no gait, so the absence of a walking animation is not a failed step. | operator testimony; media review | 9.4 (4); 10.2 |
+| 6 | One separately approved v2 restoration, bound to a fresh inspection (`712e3492`) and to the original journaled preimage, returned the observed candidate snapshot to P; its later exact inspection matched, with world, parent-relative, parent and dirty-state facts reported separately. | native observation; BEAM journal / authority | 9.5; `r6-post-compare.txt` |
+| 7 | The local player's translation words stayed bit-identical; his rotation words changed by 1–2 ULP between sets, recorded within the declared tolerance, not as equality, and not attributed to the setter. | native observation | 9.4 (5) |
+| 8 | One step, one restoration, zero v1 lifts, zero outfit commands, zero refusals / unknowns / anomalies; the 92-entry journal is contiguous. | BEAM journal | 9.6 counts; `verify-after-attempt1` |
+| 9 | The final capture and the closed recording share the boundary r=8; the three-way reconciliation and the fresh-node replay comparisons held. | BEAM + recorder + native, compared externally | 9.6; `compare-replay.out` |
+| 10 | The rollback restored the complete bytes-and-timestamps baseline, M0 26/26, with the recorded cleanup checks; re-verified at closure (`m6-closure\closure-checks.txt`). | file-system verification | 9.6; `cleanup-attempt1`, `game-verify.txt` |
+
+### 10.4 Two scope clarifications (9.4 item 4 and 9.7 are kept as written)
+
+1. **"Control" in 9.7.** The 9.7 list "Not established: … walking, animation, control or multiplayer behaviour" used "control" as a blanket word. Clarified: **demonstrated** — externally commanded, bounded spatial control of the identified candidate in this run (one compiled world-y displacement and its inspection-bound restoration). **Not demonstrated** — continuous locomotion, walking or strafe animation, arbitrary input control, a second playable local player, networked control, or general multiplayer behaviour.
+2. **The visual record.** 9.4 item 4 and 9.7 say the recording "retains" the shift; at the time it was retained but unreviewed. After 10.2 the footage has been reviewed as stills and corroborates a lateral shift. The frame-level timing and the "instantaneous" quality remain the operator's testimony.
+
+### 10.5 Not inferred
+
+The earlier z experiments (M6-F1b: the lift found back at the stored baseline at +23 s and +40 s, the return time not established; M6-F2b: back at every sample from +6 frames / +58 ms) and this y step (held at every sample) differ in axis, location, content and run context. No return writer and no general axis rule is inferred from the different outcomes.
+
+### 10.6 Carried qualifications (by reference)
+
+The test-warning exception and the at-p FAKE tolerance (section 8); the stale kit messages (9.6); the missing restoration footage and stills (10.2); the residuals named in `M6F_TRANSFORM_CONTROL.md` (the M5 outfit-reversal residual, token possession not process identity, the link-generation collision after an authority restart, the engine's own crash reporting not established); the historical evidence exceptions of the M6-D and M6-E records. None is reopened here.

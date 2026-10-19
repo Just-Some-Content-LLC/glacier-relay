@@ -620,3 +620,60 @@ The review accepted M6-B2 for its demonstrated read-only runtime scope (section 
 **What M6-C1 recommends (summary; the record is authoritative):** option B1 — the historical brick unchanged, the unreferenced two-hero file excluded, the patch retargeted to the Paris scene, deployed through the framework into its own `Output\` folder (`outputToSeparateDirectory`, `skipIntro: false`) so that the installation's entire content surface is exactly `Runtime\chunk0patch300.rpkg` (new), `Runtime\chunk27patch300.rpkg` (new) and `Runtime\packagedefinition.txt` (replaced: 31 patch levels → 310 plus one inserted line; the pre-deployment copy restored byte-for-byte), `thumbs.dat` untouched; the accepted M6-B2 native artefact already performs the candidate lookup (48-entry read-back at the cap), so phases R1–R6 of the proposed run need no new native capability; a registry-membership verdict by identity needs the specified read-only `relay.inspect.candidate/1` extension (M6-C2n, not implemented); the two success criteria — content presence and entity instantiation — stay separate; the smallest next authorization is **M6-C2**, the offline content build and deployment rehearsal with no game change.
 
 Not authorized by this record: deploying or modifying `hitmen.brick`; installing or rebuilding the historical Hitmen DLL; installing a new Relay DLL; launching HITMAN; creating Agent48; writing transforms; sending character input; mutating the player registry; enabling effectful commands; adding native hooks or setters; reintroducing historical networking; M6-D or later; M7–M9; declaring M6 complete. M5 stays accepted and closed; the native branch stays at `655b2870`; the game is at M0 26/26.
+
+## 20. M6 — Second Hitman: acceptance decision and milestone closure (2026-10-19; documentation and checkpoint only; nothing built, installed or launched)
+
+**Authorization:** "Glacier Relay — M6-G2 acceptance and scoped M6 completion". The review accepted M6-G2 run 1 for its demonstrated, attended runtime scope (`M6G_VISIBLE_CONTROL.md` section 10) and authorized the formal M6 completion documentation, the preservation of the accepted checkpoint and annotated checkpoint tags. This section records the decision, how the stages satisfy the milestone, the scope, the non-claims, the carried limitations, the next milestone and the checkpoint. Closure evidence: `%TEMP%\glacier-m0\hitmen\m6-closure\` (`closure-checks.txt` PASS; `media-review\`).
+
+### 20.1 Decision
+
+The roadmap's M6, recorded as written: goal "Reproduce and stabilize the upstream experimental `Hitmen` second-player entity on the current game."; exit "one game instance contains a controllable local player and a distinct externally driven Hitman representation."
+
+> **M6 — Second Hitman is COMPLETE for its defined experimental scope.** The exit criterion is met within the scope of 20.3: in one HITMAN instance, with the operator's Agent 47 as the local player in registry slot 0, the separately identified, visible Agent48 was driven by BEAM through one compiled +0.25f world-y displacement (`candidate.transform.set` v2 `step_y`), held at every sample, seen by the operator and corroborated by the retained footage, then returned by one separately authorized, inspection-bound restoration. This is bounded external spatial control. It is not animated walking, a general movement controller, continuous control or multiplayer, and the exit criterion is not extended retroactively to require path following, animation, networking or a second registered player.
+
+### 20.2 How the stages satisfy the milestone
+
+| Stage | What it contributed | Record |
+|---|---|---|
+| M6-A | Architecture and evidence plan: identity = owning brick + authored entity id, re-resolved on the frame, qualified by the attempt's generation, never a pointer; eight capabilities kept apart. | this record, sections 1–15 |
+| M6-B1 / B2 | Typed, read-only, journaled inspections of the player registry, the loaded bricks and the local hero; the first runtime blueprint-factory round trip (`same_entity`); the local hero in slot 0. | sections 16–18 |
+| M6-C1 – C3 | Bounded content deployment: the historical brick byte-identical, retargeted to the Paris scene, installed through gated scripts and rolled back byte-for-byte; **the first observation of Agent48 as a distinct engine entity** (resolved, `ZHitman5`, authored guid, distinct on the same frame, not in the registry). | section 19; `M6C_CONTENT_DEPLOYMENT.md` sections 16–18 |
+| M6-D, D1a, D1b, D2 | Candidate inspection (`relay.inspect.candidate/1`): Agent48 indistinguishable from the local hero in members, controllers, outfit and flags, referenced by a `ZHeroSpawn` with player id 2, in no registry slot — the complete-but-unspawned-hero hypothesis; the decision for one bounded transform change. | `M6D_ENTITY_SEMANTICS.md` sections 12–15; `M6D2_NEXT_STEP_DESIGN.md` |
+| M6-F1a – F2b | The versioned command / restoration path: `candidate.transform.set` v1 and `relay.inspect.candidate_transform` v1 with exact word snapshots, the authority-verified inspection binding, the one-forward budget, the journal-planned restoration and the token guard; at runtime the lift applied exactly on its frame but the stored transform was found back at the baseline (M6-F1b at +23 s and +40 s; M6-F2b from +6 frames). | `M6F_TRANSFORM_CONTROL.md` sections 1–17 |
+| M6-E1 – E3 | Visual placement: one added `m_mTransform` on Agent48 put it at P bit-for-bit at five sampled frames, and the operator saw a second Agent 47 there. | `M6E_VISUAL_PLACEMENT.md` sections 1–13 |
+| M6-G, G1, G2 | `candidate.transform.set` v2 `step_y` beside the unchanged v1 (native5); the ONE attended visible step and its restoration (run 1); the bounded acceptance with the existing-media review. | `M6G_VISIBLE_CONTROL.md` sections 1–10 |
+
+The exit criterion's parts, with where each is demonstrated:
+- **One game instance:** every run used one `HITMAN3.exe` process; M6-G2 one process, one link generation, one adapter instance.
+- **A controllable local player:** Agent 47, registry slot 0 `local` in every Paris set, driven by the operator's own input (the mission entry, the camera, the exit); in M6-G2 his world translation stayed bit-identical through the external commands.
+- **A distinct Hitman representation:** Agent48 resolved as a distinct `ZHitman5` entity (M6-C3, M6-D1b, M6-E3, M6-G2) and visible (M6-E3, M6-G2).
+- **Externally driven:** the BEAM-issued v2 step and the v2 restoration of M6-G2, under the M5 effectful contract (token-verified link, operator arming with telemetry attestation and socket-ownership evidence, the journal).
+
+M6-G2 run 1 demonstrated these four parts together, in one instance. The earlier stages established different portions of the evidence (for example the re-creation under a new generation after a restart in M6-C3, the member and controller comparison in M6-D1b, the returned z lifts in M6-F); they are not claimed to have been demonstrated together with the G2 step.
+
+### 20.3 Scope of the decision
+
+HITMAN World of Assassination 3.280.0.0 (Steam build 24833614; the installation equal to its M0 hashes, read again at closure), ZHMModSDK 4.1.1; the Paris route and entry used in M6-C3 through M6-G2; the accepted visual-placement content (`chunk0patch300` `5ac64848…`, `chunk27patch300` `58e9a10f…`, `packagedefinition.txt` `9433888b…`); the native5 binary `f271d1292096bbcdfed41a89f0162d430944042789f1975ea69a80883d5e4280` built from ZHMModSDK `relay/m2` `76c407f3` (production change `06a2c48c`); the BEAM and tooling source of glacier-relay `874d404c` (unchanged in `relay/` and `tools/` through the documentation commits after it); one finite world-y operation and its restoration, one stationary attempt.
+
+### 20.4 Explicit non-claims
+
+Not established, and not claimed by this closure: continuous persistence of the stored or rendered transform between samples; compatibility with other HITMAN builds, locations, routes or content; collision clearance at P or P + 0.25 y; NPC perception or reaction; the reversal of gameplay consequences by a restoration; animation, gait, locomotion or path following; Agent48's membership in the player registry as a player; the writer behind the M6-F z returns or any general axis rule; multi-PC synchronization; shared-world convergence; constrained co-op completion.
+
+### 20.5 Carried limitations (by reference; no cleanup campaign within closure)
+
+- The M6-G1 test-warning exception and the at-p FAKE tolerance (`M6G_VISIBLE_CONTROL.md` section 8); the stale kit messages (9.6); the missing restoration footage and stills (10.2).
+- The historical evidence exceptions and lost-evidence disclosures of the M6-D and M6-E records (the overwritten `m6d1a-offline` tests25 outputs, disclosed in `M6D_ENTITY_SEMANTICS.md` section 13 and inventoried in `incident-inventory.tsv`, section 14; `manifest-exceptions.tsv`, section 15; the sealed stray `.pyc` of M6-E2, `M6E_VISUAL_PLACEMENT.md` section 11).
+- The M5 outfit-reversal residual; token possession is not process identity; the link-generation collision after an authority restart (fail closed); SDK crash reporting off for the runs and the engine's own reporting not established (`M6F_TRANSFORM_CONTROL.md` sections 12–17; `M5_COMMAND_CHANNEL.md` section 36.3).
+
+### 20.6 The next milestone and future capability work
+
+M7 — Network ghost is unchanged: "Two PCs, same mission. Each instance renders the other player's externally driven Hitman." Exit: "bidirectional movement/input representation survives a bounded test session." This single-instance experiment does not satisfy it. Animated locomotion and geometric path following are recorded as potential future capability work, not as M6 requirements; neither is designed here. Any M7 research or implementation needs its own authorization.
+
+### 20.7 Checkpoint and preservation
+
+- **glacier-relay:** the M6 closure commit (this section, `M6G_VISIBLE_CONTROL.md` section 10, the roadmap status, HANDOFF), tagged `research/m6-second-hitman` (annotated; the exact target and tag object recorded in HANDOFF after tagging, as for M5).
+- **ZHMModSDK:** the accepted native5 source `76c407f38ea7028b962313fe4c75eebb7b68d0a6` on `relay/m2` (the tests-only probe commit on the production change `06a2c48c2c988e43f61b3ebcb79c75b262928c5e`), tagged `research/m6-second-hitman` there too; not rebuilt. The DLL `f271d129…` (11,069,952 B) and its PDB, tests and probes are preserved in `m6g1-offline\native5\` (`artifacts.sha256`).
+- **Evidence preserved (sealed; manifest prefixes read at closure):** `m6b1-offline` `6e582360`, `m6b1-hardening` `bff32eff`, `m6b2-run1` `6cd6762f`, `m6c1-research` `6374473b`, `m6c2-offline` `e81e7248`, `m6c3-run1` `7d8b52be`, `m6d-offline` `cda4b03c`, `m6d1a-offline` `ec6e5943`, `m6d1a-review` `77808aa8`, `m6d1b-run1` `ccd2f423`, `m6d2-design` `5c02f7f4`, `m6e1-design` `8dab580a`, `m6e2-offline` `2ef6a0a8`, `m6e3-run1` `5121856e`, `m6f1a-offline` `30c3de68`, `m6f1a-binding` `c5fc2797`, `m6f1a-token-guard` `99f972e0`, `m6f1b-run1` `d6dbd502`, `m6f2a-offline` `a557f2c6`, `m6f2b-run1` `05fd0a4e`, `m6g-design` `cd1e7856`, `m6g1-offline` `b65c87ff`, `m6g2-run1` `86901008`; and `m6-closure` (sealed last in this pass). At closure the contents of `m6g1-offline`, `m6g2-run1` and `m6e2-offline` were re-verified in full and the M6-G2 relied-on references (35) unchanged; the other manifests were not re-verified (no integrity trigger). The step recording `b959fc53…` stays in the operator's folder and in `m6g2-run1\operator-media\`; generated packages, proprietary extracts and the video are not in Git.
+- **Game:** at its complete baseline (sizes, exact timestamps, every hash), M0 26/26, no Relay file, no token, no run process or port (`m6-closure\closure-checks.txt`).
+
+**M6 — Second Hitman is complete for the scope of 20.3 with the non-claims of 20.4 and the limitations of 20.5. No new runtime work — no launch, installation, live token, engine command or further transform experiment — is authorized by this closure; M7 needs its own authorization.**
