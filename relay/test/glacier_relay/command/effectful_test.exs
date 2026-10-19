@@ -213,7 +213,7 @@ defmodule GlacierRelay.Command.EffectfulTest do
          FakeNative.attest(w, a, @token, %{"link_generation" => w["link_generation"] + 1})
        end, "generation_mismatch"},
       {"wrong identity",
-       fn w, a ->
+       fn w, _a ->
          FakeNative.attest(
            Map.put(w, "link_generation", w["link_generation"]),
            Schema.uuid4(),

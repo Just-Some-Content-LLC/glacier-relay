@@ -49,7 +49,7 @@ defmodule GlacierRelay.Command.PlayersInspectionTest do
 
   defp wait(fun), do: FixturePlayer.wait_until(fun, 100, 10)
 
-  defp field(status, value \\ nil, reason \\ nil) do
+  defp field(status, value, reason \\ nil) do
     %{"status" => status}
     |> then(&if(value != nil, do: Map.put(&1, "value", value), else: &1))
     |> then(&if(reason, do: Map.put(&1, "reason", reason), else: &1))

@@ -169,19 +169,19 @@ defmodule GlacierRelay.Command.CandidateInspectionTest do
   end
 
   test "the read-back grammar decodes strictly and refuses what does not match it" do
-    assert {:ok, {0.0, 0.0, -1.539356}} =
+    assert {:ok, {+0.0, +0.0, -1.539356}} =
              CandidateReadback.field(field("observed", "0,0,-1.539356"), :vec3)
 
     assert {:ok, {-40.99882, -24.29366, 0.4925565}} =
              CandidateReadback.field(field("observed", "-40.99882,-24.29366,0.4925565"), :vec3)
 
-    assert {:ok, {1.0e10, 0.0, -1.0}} =
+    assert {:ok, {1.0e10, +0.0, -1.0}} =
              CandidateReadback.field(field("observed", "1e+10,0,-1"), :vec3)
 
     assert {:invalid, "0,0"} = CandidateReadback.field(field("observed", "0,0"), :vec3)
     assert {:invalid, "a,b,c"} = CandidateReadback.field(field("observed", "a,b,c"), :vec3)
 
-    assert {:ok, %{translation: {0.0, 0.0, 0.0}, rotation: {0.0, 0.0, 0.0, 1.0}}} =
+    assert {:ok, %{translation: {+0.0, +0.0, +0.0}, rotation: {+0.0, +0.0, +0.0, 1.0}}} =
              CandidateReadback.field(field("observed", "0,0,0|0,0,0,1"), :local)
 
     assert {:invalid, _} = CandidateReadback.field(field("observed", "0,0,0|0,0,0"), :local)

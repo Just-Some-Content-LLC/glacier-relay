@@ -68,7 +68,7 @@ defmodule GlacierRelay.Command.TransformBindingTest do
 
   defp wait(fun), do: FixturePlayer.wait_until(fun, 100, 10)
   defp now, do: DateTime.utc_now() |> DateTime.to_iso8601()
-  defp field(status, value \\ nil, reason \\ nil), do: FakeNative.field(status, value, reason)
+  defp field(status, value, reason \\ nil), do: FakeNative.field(status, value, reason)
 
   defp journal_entries do
     %{path: path} = Journal.status()
