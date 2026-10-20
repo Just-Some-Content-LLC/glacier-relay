@@ -801,6 +801,10 @@ Under the operator's option B (a separate OTP 28 / Elixir 1.19 runtime inside th
 
 It establishes cross-machine transport and accounting only: no game, native, latency or multiplayer claim. Nothing in sections 15–24 changes. M7 is not complete.
 
+## 26. M7-L2 accepted; M7-L3 preparation authorized (pointer; 2026-10-20)
+
+M7-L2 run 1 is accepted for its demonstrated transport scope (`M7L2_LAN_TRANSPORT_RECORD.md` section 17). The listener-observation limitation stays: the failed reconciliation check is kept as failed, and "the connector listens on nothing" is supported, not established. One offline, tooling- and documentation-only preparation pass is authorized for a later one-game LAN integration experiment (working label **M7-L3**): the Windows game host with native6, and the MacBook as a headless peer. It runs M7-C's two sequential phases across the LAN: a finite real-player share to a Mac sink, then the exact M7-C synthetic out-and-back course from the Mac to Agent48. The pass corrects the kit's socket observation and prepares and rehearses the operator sequence locally. No game, Mac contact or LAN socket is involved. Sections 15–25 are unchanged. M7 is not complete.
+
 ## 13. Sources
 
 | Claim area | Source (blobs in `source-facts.txt`) |

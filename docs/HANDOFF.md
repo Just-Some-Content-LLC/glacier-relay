@@ -1,5 +1,19 @@
 # Handoff checkpoint
 
+Updated: 2026-10-20, after **M7-L2's acceptance** (authorization "Glacier Relay — M7-L2 acceptance and bounded one-game LAN preparation"; record `docs/design/M7L2_LAN_TRANSPORT_RECORD.md` section 17; pointer `docs/design/M7_NETWORK_GHOST.md` section 26). No code changed by the acceptance. No tag. M7 stays open.
+- **Accepted for its transport scope:**
+  - one mutually authenticated TLS 1.3 connection between the real Windows/WSL host and the arm64 MacBook, with exact per-run pins;
+  - 201 generated / sent / received per direction, contents matching;
+  - the Mac on its isolated OTP 28.4.2 / Elixir 1.19.6 (option B and the clean-boot amendment as approved);
+  - the RTTs as same-node-clock observations only (Windows 7 / 11 / 22 ms, Mac 9 / 11 / 23 ms);
+  - the scans, credential disposal, verified return and cleanup. The Mac firewall was off, so this is not a firewall-on qualification.
+- **Kept:**
+  - the failed no-listener check, with its limitation;
+  - the kit-recorded (not shell-captured) Mac exit status;
+  - the addresses, as valid for that run only;
+  - the review basis: the record and kit code read, the evidence not re-hashed by the reviewer.
+- **Authorized:** one offline preparation pass for a later one-game LAN experiment (working label M7-L3). It corrects the kit's socket observation and prepares and rehearses the PC game host / Mac headless sequence locally. No game, Mac contact or LAN socket.
+
 Updated: 2026-10-20, after **M7-L2 run 1, one transport-only exchange between the Windows/WSL host and the MacBook** (record `docs/design/M7L2_LAN_TRANSPORT_RECORD.md` sections 9–16; pointer `docs/design/M7_NETWORK_GHOST.md` section 25; evidence `m7l2-run1\`, sealed, 242 entries, manifest `ecc8d118287246625c4738a5f8c89d92fe9b5ffa975873db128e5caa2131d6d8`). No game. No tag. M7 stays open; awaiting review.
 - **Option B:** a separate Erlang/OTP 28.4.2 + Elixir 1.19.6 on the Mac (arm64), inside its run directory.
   - OTP from `erlef/otp_builds`; the Elixir zip is the build host's own; both verified against two sources on the PC and carried by USB stick.

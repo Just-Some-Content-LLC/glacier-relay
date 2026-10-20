@@ -6,7 +6,7 @@
 
 This is not a game experiment: no HITMAN, no "Ready" and no screen recording. The procedure is the M7-L1 record's section 12, with SASL reports kept off (14.12). It uses the committed kit `tools/peer-transport/` and its schemas, and no second launch, approval, credential or evidence system.
 
-**Status: run 1 DONE (2026-10-20); awaiting review.** One bounded, transport-only exchange ran between the Windows/WSL host and the MacBook, after one combined approval ("Go ahead").
+**Status: run 1 DONE (2026-10-20); accepted for its demonstrated transport scope, with the listener-observation limitation (section 17, 2026-10-20).** One bounded, transport-only exchange ran between the Windows/WSL host and the MacBook, after one combined approval ("Go ahead").
 - Both peers ended by themselves, exit 0, outcome complete.
 - 201 of 201 synthetic samples were received in each direction, in order, with identical content, no gaps and no connection drops.
 - There was one mutually authenticated TLS 1.3 connection, from 192.168.1.11 (WSL through NAT) to 192.168.1.17:4760, with exact per-run pins, generation 1, no refused address and no failed handshake.
@@ -304,3 +304,30 @@ Both directions also pass these checks:
 - behaviour under loss, congestion, a firewall that is on, or another network;
 - that the Windows connector had no listener on any port: supported, not independently established (section 13);
 - that memory, tracing or OS dumps hold no key material (finding 4 of M7-L1 stands).
+
+## 17. Bounded acceptance (2026-10-20)
+
+**Authorization:** "Glacier Relay — M7-L2 acceptance and bounded one-game LAN preparation". M7-L2 run 1 is **accepted for its demonstrated transport scope**, with the listener-observation limitation below. Sections 1–16 and their verdicts are kept as run; the failed reconciliation check (section 13) stays failed. M7 stays open; M6 stays closed; no tag was created or moved.
+
+**What is accepted:**
+- **One connection.** One mutually authenticated TLS 1.3 connection between the real Windows/WSL host and the arm64 MacBook, under explicit addresses and exact per-run certificate pins.
+- **Two independent synthetic streams.** Per direction: 201 generated, 201 sent and 201 received; the contents match sequence by sequence. In this run there were no skipped samples, duplicates, out-of-order samples or connection drops.
+- **A separate runtime qualification.** The same bundle ran on the Mac's isolated OTP 28.4.2 / Elixir 1.19.6 inside the run directory, not on its newer Homebrew runtime. Option B and the clean-boot amendment were each separately approved, as recorded (section 9). No global runtime was downgraded or changed, and OTP 29 / Elixir 1.20 were not qualified.
+- **Addresses for this run only.** The Mac's declared listener (`192.168.1.17:4760`) and the Windows source address (`192.168.1.11`, WSL through NAT) were observed for this run. They are not permanently valid; a later run re-derives and re-approves them.
+- **Round-trip probes.** Twelve per side: Windows minimum / median / maximum 7 / 11 / 22 ms, Mac 9 / 11 / 23 ms. Each is measured on one node's own clock. They are not one-way delays, nor motion-to-display or game latency.
+- **The Mac's exit status 0 is kit-recorded** (its summary and console FINISHED line). The shell's own exit code was not captured independently (disclosure 14).
+- **Close-out.** Both machines scanned their outputs with their own key known (0 hits) and then removed their credentials. The return files were verified on arrival (18:58:02Z) before the Mac run directory was removed, and the cleanup was reported. Each deletion was logical, not secure erasure. No OS permission was added. The Mac firewall was off throughout, so this is **not** a qualification with the Mac firewall enabled.
+
+**The listener limitation.** The kit's Windows no-listener check failed (section 13).
+- Its heuristic, `PeerKit.listeners()`, classifies any TCP socket without a peer as a listener, and a client socket that is still connecting has none.
+- The address it reported matches the connector's own outbound socket.
+- No independent all-port, process-owned listener snapshot covered the run.
+
+Transport and accounting are accepted with this limitation. The check is **not** rewritten as PASS, and the record does not claim continuous proof that the connector had no listener. The heuristic is corrected for later runs as a tooling change (M7-L3 preparation, `M7L3_LAN_GAME_PREPARATION.md`). Changing this historical verdict needs no repeat of L2.
+
+**Review basis.** The architectural review read the pushed record, the runtime amendment and the relevant kit code. It did not rehash the PC or Mac evidence, inspect the USB stick, or run the exchange independently; that qualification stands. For this acceptance, the inputs it relies on were verified locally (`m7l3-prep\checkpoint-attempt1`, 43 / 43 ok):
+- this seal re-hashed in full (242 / 242), including the preserved Mac runtime archives;
+- the qualified bundle's archive and sealed copy;
+- the heads, trees and tags.
+
+**Not established by M7-L2:** native motion across the LAN, real-player mirroring, a second game, multiplayer, behaviour with the Mac firewall on or under loss, or M7 completion.
