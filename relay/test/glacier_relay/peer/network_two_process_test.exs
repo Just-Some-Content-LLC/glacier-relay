@@ -84,7 +84,11 @@ defmodule GlacierRelay.Peer.NetworkTwoProcessTest do
     )
 
     [done] = Enum.filter(child_status(child)["sink_done"], &(&1["stream_id"] == share))
-    assert done["reconciliation"]["complete"] == true
+    r = done["reconciliation"]
+    c = Hub.status().share.summary.counts
+    # everything the host handed arrived; every missing number is one the host withheld itself
+    assert r["received"] == r["source_sent"] and r["source_sent"] == c.handed
+    assert r["gaps"] + (r["source_last_seq"] - r["last_seq_received"]) == c.native - c.handed
 
     {ax, ay} = FakeMotionNative.anchor_words()
 
@@ -175,18 +179,29 @@ defmodule GlacierRelay.Peer.NetworkTwoProcessTest do
       600
     )
 
-    [here] = Enum.filter(Driver.status().sink_done, &(&1.stream_id == out))
-    assert here.source_kind == "synthetic" and here.reconciliation["complete"] == true
-    assert here.reconciliation["received"] == n_out and here.duplicate == 0 and here.older == 0
-
-    [there] = Enum.filter(child_status(child)["sink_done"], &(&1["stream_id"] == back))
-    assert there["source_kind"] == "synthetic" and there["reconciliation"]["complete"] == true
-
     # the sinks only recorded: each side sent exactly one stream of its own
     [mine] = Driver.status().sources_done
-    assert mine.stream_id == back and mine.reason == "course_complete" and mine.dropped == 0
+    assert mine.stream_id == back and mine.reason == "course_complete"
     [theirs] = child_status(child)["sources_done"]
-    assert theirs["stream_id"] == out and theirs["sent"] == n_out
+    assert theirs["stream_id"] == out and theirs["total"] == n_out
+
+    # each sink received exactly what the other side sent, in order, nothing duplicated; every missing
+    # sequence number (inside the stream, or after its last sent sample) is one that source itself
+    # skipped (its 45 ms spacing) or could not queue
+    [here] = Enum.filter(Driver.status().sink_done, &(&1.stream_id == out))
+    hr = here.reconciliation
+    assert here.source_kind == "synthetic" and here.duplicate == 0 and here.older == 0
+    assert hr["received"] == theirs["sent"] and hr["source_sent"] == theirs["sent"]
+    assert hr["last_seq_received"] == hr["source_last_seq"]
+
+    assert hr["gaps"] + (theirs["total"] - hr["source_last_seq"]) ==
+             theirs["spaced"] + theirs["dropped"]
+
+    [there] = Enum.filter(child_status(child)["sink_done"], &(&1["stream_id"] == back))
+    tr = there["reconciliation"]
+    assert there["source_kind"] == "synthetic" and there["duplicate"] == 0 and there["older"] == 0
+    assert tr["received"] == mine.sent and tr["last_seq_received"] == tr["source_last_seq"]
+    assert tr["gaps"] + (mine.total - tr["source_last_seq"]) == mine.spaced + mine.dropped
     assert Endpoint.status(HeadlessPeer.endpoint()).counts.connections == 1
   end
 end

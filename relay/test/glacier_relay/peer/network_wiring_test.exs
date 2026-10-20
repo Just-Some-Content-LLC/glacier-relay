@@ -52,7 +52,14 @@ defmodule GlacierRelay.Peer.NetworkWiringTest do
     )
 
     [done] = Enum.filter(Driver.status().sink_done, &(&1.stream_id == share))
-    assert done.reconciliation["complete"] and done.source_kind == "game"
+    r = done.reconciliation
+    c = Hub.status().share.summary.counts
+
+    # every sample the host handed arrived, in order; every missing sequence number is one the host
+    # itself withheld (its receiver-time rate floor, as in M7-C) — never a transport loss
+    assert done.source_kind == "game" and done.duplicate == 0 and done.older == 0
+    assert r["received"] == r["source_sent"] and r["source_sent"] == c.handed
+    assert r["gaps"] + (r["source_last_seq"] - r["last_seq_received"]) == c.native - c.handed
 
     # in: the headless peer's synthetic course drives the fake native inside a session
     stream = MotionStack.start_course()
