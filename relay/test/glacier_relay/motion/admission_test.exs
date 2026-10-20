@@ -267,8 +267,10 @@ defmodule GlacierRelay.Motion.AdmissionTest do
       wait(fn -> Command.command(cid).status == :applied end)
       wait(&done?/0)
 
-      assert summary().close.reason == "admission_not_met:progress_beyond:62>61"
+      # the behaviour first: never activated, no target bytes; then the reason
+      assert journal("motion.session.activated") == []
       assert targets(st.fake) == []
+      assert summary().close.reason == "admission_not_met:progress_beyond:62>61"
       # the open was issued and applied natively; the budget is not refunded
       assert session_commands(st.fake) == [{"open", "applied"}]
       assert registry(sid).state not in [:not_opened, :accepted]
@@ -319,10 +321,15 @@ defmodule GlacierRelay.Motion.AdmissionTest do
       :ok = send_seq(stream, 83)
       wait(&done?/0)
 
+      # the behaviour first: no target bytes reached the native; then the reason
       s = summary()
+
+      assert targets(st.fake) == [],
+             "target bytes #{inspect(targets(st.fake))}; #{inspect(s.counts)}"
+
+      assert s.counts.forwarded == 0 and s.counts.applied == 0
       assert s.close.reason == "acquisition_missed:past_prefix:83"
       assert %{state: :missed, seq: 83} = s.acquisition
-      assert targets(st.fake) == [] and s.counts.forwarded == 0 and s.counts.applied == 0
       assert s.native_close.clean and s.native_close.final_world == FakeMotionNative.pre()
     end
   end
