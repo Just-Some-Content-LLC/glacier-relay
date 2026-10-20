@@ -160,8 +160,9 @@ defmodule GlacierRelay.Peer.TLS do
 
   @doc """
   The endpoint's listeners (both plans since the M7-L1 correction): the server-side TLS options for
-  `:ssl.handshake/3` on an admitted TCP socket — the same policy as `listen_options/2` (TLS 1.3, `verify_peer`, the one trusted CA,
-  the pin callback, `fail_if_no_peer_cert`), without the socket options the TCP socket already has.
+  `:ssl.handshake/3` on an admitted TCP socket — the same policy as `listen_options/2` (TLS 1.3,
+  `verify_peer`, the one trusted CA, the pin callback, `fail_if_no_peer_cert`), without the socket
+  options the TCP socket already has.
   """
   def upgrade_options(creds),
     do:

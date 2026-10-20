@@ -68,8 +68,8 @@ defmodule GlacierRelay.Peer.Endpoint do
         port: plan.port,
         network: plan,
         # test seam only (M7-L1): the module whose listen/connect calls the endpoint makes (default
-        # :ssl, and :gen_tcp for a profile listener); an injected one lets a test see the exact
-        # non-loopback call without touching the network
+        # :gen_tcp for the listener of either plan, :ssl for the connector); an injected one lets a
+        # test see the exact non-loopback call without touching the network
         sock: Keyword.get(opts, :socket_module),
         creds: creds,
         local: local,
