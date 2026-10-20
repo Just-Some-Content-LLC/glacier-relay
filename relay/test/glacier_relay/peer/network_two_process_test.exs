@@ -18,7 +18,7 @@ defmodule GlacierRelay.Peer.NetworkTwoProcessTest do
   alias GlacierRelay.{HeadlessPeer, Motion}
   alias GlacierRelay.HeadlessPeer.Driver
   alias GlacierRelay.Motion.{Course, Hub}
-  alias GlacierRelay.Peer.Endpoint
+  alias GlacierRelay.Peer.{Connection, Endpoint}
   alias GlacierRelay.Test.{FakeMotionNative, HeadlessHarness, MotionStack, PeerCredentials}
 
   @moduletag :two_process
@@ -85,10 +85,9 @@ defmodule GlacierRelay.Peer.NetworkTwoProcessTest do
 
     [done] = Enum.filter(child_status(child)["sink_done"], &(&1["stream_id"] == share))
     r = done["reconciliation"]
-    c = Hub.status().share.summary.counts
-    # everything the host handed arrived; every missing number is one the host withheld itself
-    assert r["received"] == r["source_sent"] and r["source_sent"] == c.handed
-    assert r["gaps"] + (r["source_last_seq"] - r["last_seq_received"]) == c.native - c.handed
+    # flow, in order (the exact accounting is the next test's; see network_wiring_test)
+    assert done["source_kind"] == "game" and done["duplicate"] == 0 and done["older"] == 0
+    assert r["received"] >= 10 and r["received"] <= r["source_sent"]
 
     {ax, ay} = FakeMotionNative.anchor_words()
 
@@ -185,23 +184,28 @@ defmodule GlacierRelay.Peer.NetworkTwoProcessTest do
     [theirs] = child_status(child)["sources_done"]
     assert theirs["stream_id"] == out and theirs["total"] == n_out
 
-    # each sink received exactly what the other side sent, in order, nothing duplicated; every missing
-    # sequence number (inside the stream, or after its last sent sample) is one that source itself
-    # skipped (its 45 ms spacing) or could not queue
+    # exact accounting, both ends controlled: each of a course's samples is exactly one of sent,
+    # spaced (its source's 45 ms rule) or dropped (no queue room); of the sent ones, the sender's
+    # connection may drop one that waited past 100 ms (stale) or its bound (expired), counted there;
+    # every other one arrives, in order, once
+    {:ok, %{"connection" => cc}} = HeadlessHarness.request(child, %{"op" => "connection"})
+    child_drops = cc["counts"]["samples_stale"] + cc["counts"]["samples_expired"]
+    %{counts: vc} = Connection.status(Endpoint.status(HeadlessPeer.endpoint()).connection.pid)
+    vm_drops = vc.samples_stale + vc.samples_expired
+
     [here] = Enum.filter(Driver.status().sink_done, &(&1.stream_id == out))
     hr = here.reconciliation
     assert here.source_kind == "synthetic" and here.duplicate == 0 and here.older == 0
-    assert hr["received"] == theirs["sent"] and hr["source_sent"] == theirs["sent"]
-    assert hr["last_seq_received"] == hr["source_last_seq"]
-
-    assert hr["gaps"] + (theirs["total"] - hr["source_last_seq"]) ==
-             theirs["spaced"] + theirs["dropped"]
+    assert theirs["total"] == theirs["sent"] + theirs["spaced"] + theirs["dropped"]
+    assert hr["source_sent"] == theirs["sent"] and hr["received"] == theirs["sent"] - child_drops
+    assert theirs["total"] - hr["received"] == theirs["spaced"] + theirs["dropped"] + child_drops
 
     [there] = Enum.filter(child_status(child)["sink_done"], &(&1["stream_id"] == back))
     tr = there["reconciliation"]
     assert there["source_kind"] == "synthetic" and there["duplicate"] == 0 and there["older"] == 0
-    assert tr["received"] == mine.sent and tr["last_seq_received"] == tr["source_last_seq"]
-    assert tr["gaps"] + (mine.total - tr["source_last_seq"]) == mine.spaced + mine.dropped
+    assert mine.total == mine.sent + mine.spaced + mine.dropped
+    assert tr["source_sent"] == mine.sent and tr["received"] == mine.sent - vm_drops
+    assert mine.total - tr["received"] == mine.spaced + mine.dropped + vm_drops
     assert Endpoint.status(HeadlessPeer.endpoint()).counts.connections == 1
   end
 end
