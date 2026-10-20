@@ -1,6 +1,6 @@
 # M7-B2 — the native side of the motion contract, offline (record)
 
-**Status:** DONE offline (2026-10-19), awaiting architectural review.
+**Status:** DONE offline (2026-10-19); **accepted** for its demonstrated offline scope (section 13, 2026-10-20).
 - Native6 is a **build of record only**: never installed, never loaded in HITMAN, not an accepted runtime artefact. No tag was created or moved.
 - Every engine answer in this stage came from the FAKE transform world of the native tests and the command probe. That is FAKE-engine evidence: it shows what the native code does with the values it reads, never what the engine does with the call.
 - M7 is not complete. A synthetic headless peer is not a second game, a numeric box is not a cleared route, and a compiled DLL is not proof that it loads or runs correctly in HITMAN.
@@ -221,3 +221,15 @@ M7-L (the MacBook) and M7-D (two real instances) remain later, each with its own
 - **`verifier-disposition.txt`** names its development matrix `matrix-attempt9`; it was `matrix-attempt8` (`verifier-disposition-NOTE.txt`; the capture was not rewritten).
 - **Unbuilt commits:** the intermediate commits were never built individually, and `3bf1d72c` alone does not build the test targets (section 1).
 - **Where the native differs from the B1 fake:** two behaviours, inside the contract (section 4).
+
+## 13. Bounded acceptance (2026-10-20)
+
+**Authorization:** "Glacier Relay — M7-B2 acceptance and M7-C attended motion experiment".
+
+M7-B2 is **accepted for its demonstrated offline scope**: the real native protocol, motion link, controller and restoration implementation (ZHMModSDK `relay/m2` `8129d721`; the build of record native6 `91a7098f…`), tested against an injected FAKE engine, the real B1 BEAM host and a local headless peer in a second OS process. Sections 1–12 stay exactly as recorded; the evidence `m7b2-offline` (sealed, 506 entries, `16e38abe…`) is not rewritten, and its failed first seal and the guard-metadata limitation of its claim record stay as disclosed.
+
+The acceptance establishes **no** native6 behaviour inside HITMAN: not the plugin wiring (section 9), not any engine answer to a setter call, not the frame cost, not the sampler on a moving hero. Those are M7-C's to observe, under its own record. M7 is not complete; its goal and exit are unchanged.
+
+Review basis (as the authorization states it): the pushed source, tests and records were inspected by the architectural review; the local artefact hashing, the executed gate results and the Windows baseline checks are this record's evidence, re-verified by M7-C where M7-C relies on them (`m7c-run1\checkpoint.txt`: native6's five artefacts and its manifest, the B2 seal in full, the relay tree `da39d5e4…` and tools tree `26f03fe1…` at the current head).
+
+M7-C run 1 (2026-10-20), native6's first and only load in HITMAN so far, is recorded separately in `M7C_ATTENDED_RECORD.md`; it does not amend this record.
