@@ -3,9 +3,10 @@
 Operator tooling for **one transport-only test of the peer link between two machines**, with no game. Two headless peers, each one non-distributed BEAM process: one **listens** (the MacBook in M7-L2), the other **connects out** (the Windows/WSL host). Once identified over mutual TLS 1.3 with pinned leaves, each sends **one finite synthetic course** and records the other's. Nothing received is ever sent on, and the run ends by itself.
 
 - Boundary: `docs/design/M7_NETWORK_GHOST.md` section 20 (the opt-in `lan_ipv4` profile).
-- Record: `docs/design/M7L1_PEER_NETWORK_RECORD.md`.
+- Record: `docs/design/M7L1_PEER_NETWORK_RECORD.md`; its first LAN use, `docs/design/M7L2_LAN_TRANSPORT_RECORD.md`.
+- **M7-L3** (`docs/design/M7L3_LAN_GAME_PREPARATION.md`) added the socket observation (`sockets.exs`), which replaces M7-L1's listener heuristic; qualified on loopback only.
 
-**Status.** Prepared and qualified in M7-L1 on the Windows/WSL host only, on owned loopback sockets. **Nothing here has been run on the MacBook, and no LAN socket has been opened.** Doing either needs its own authorization. A loopback rehearsal is not proof of Mac or LAN compatibility.
+**Status.** Prepared and qualified in M7-L1 on the Windows/WSL host only, on owned loopback sockets. M7-L2 then ran the transport-only peer once between the Windows/WSL host and the MacBook, under its own authorization. The M7-L3 socket observation has run on loopback only, never on a Mac or a LAN. Each such use needs its own authorization. A loopback rehearsal is not proof of Mac or LAN compatibility.
 
 **What it never does:**
 - start the relay application, the command authority, a motion link, the dashboard or any game-facing listener;
@@ -22,11 +23,13 @@ Operator tooling for **one transport-only test of the peer link between two mach
 | `bundle.sh <commit> <new-dir>` | Windows/WSL | builds the bundle from one exact commit: the relay's compiled modules plus this kit, `BUNDLE.txt`, `MANIFEST.sha256`, a `.tar.gz` and its sha256 |
 | `compat-check.sh [<bundle>] [<port>]` | either | **read-only** compatibility report; ends with MISSING PREREQUISITES |
 | `creds.exs generate` / `import` | either | per-machine, per-run credentials; only public files cross between machines |
-| `peer.exs <config> <sha256>` | either | the peer: checks everything before any socket, then one bounded exchange |
+| `peer.exs <config> <sha256>` | either | the transport-only peer: checks everything before any socket, then one bounded exchange |
+| `sockets.exs` | either | M7-L3: `PeerKit.Sockets`, one observation of the VM's own TCP sockets (below); loaded by `peer.exs` after the bundle check |
 | `start.sh <bundle> <config> <sha256>` | either | prints and runs the one launch command (foreground) |
 | `stop.sh <out_dir>` | either | stops that run's own recorded process only |
 | `scan.exs <dir>... --known-key <key.pem>` / `--selftest <dir>` | either | material-based secret scan, with planted positive controls |
-| `tests/rehearsal.sh` | Windows/WSL | the M7-L1 loopback qualification of all of the above |
+| `tests/rehearsal.sh` | Windows/WSL | the loopback qualification of the transport kit (M7-L1; M7-L3 added the socket-record checks and the M7-L2 race) |
+| `tests/sockets_test.exs` | Windows/WSL | M7-L3: the socket observation's focused controls |
 
 ## Prerequisites (to be checked on the Mac under the L2 authorization, not assumed)
 
@@ -123,9 +126,9 @@ A configuration without an `approval` entry needs none. By convention only the s
 ## Outputs (`<O>`, created exclusively, 0700)
 
 - `peer.pid`: the OS process id and the configuration path, for `stop.sh`;
-- `events.ndjson`: the checks, the endpoint, the listeners, peer up and down, the course, the finish;
+- `events.ndjson`: the checks, the endpoint (with its socket observation), peer up and down, the course, the further socket observations, the finish;
 - `trace/`: the headless motion trace of every sample sent and received;
-- `summary.json`: the outcome, both identities and pins (public), the endpoint counts, the source and sink reconciliation.
+- `summary.json`: the outcome, both identities and pins (public), the endpoint counts, the source and sink reconciliation, and each socket observation's verdict.
 
 None of them holds a private key or a token.
 
@@ -135,3 +138,19 @@ None of them holds a private key or a token.
 - an EC key's private scalar in each of those forms.
 
 It walks directories without glob expansion and refuses a directory with nothing to scan. Its `--selftest` plants positive controls for every form, each of which must be found by its own class, plus negative controls (pattern text, a certificate, suggestive file names, random numbers). It then removes the planted key and the positives.
+
+## Socket observation (`sockets.exs`, M7-L3)
+
+M7-L1's `PeerKit.listeners()` counted every TCP socket without a peer as a listener. A client socket that is still connecting has no peer either, so M7-L2's connector record listed its own outbound socket as one (`M7L2_LAN_TRANSPORT_RECORD.md` section 13). `PeerKit.Sockets.observe/0` replaces it, and having no peer no longer means anything.
+
+**One observation** is taken at each reporting point: the endpoint start, the identification, the finish. It is printed and written from the same result. It holds two views, each with its own time; they are two queries, never presented as one atomic result:
+- **the VM's view:** every `tcp_inet` port of this VM, classified by its explicit inet-driver state (`:inet.info/1`: `listen`, `connecting`, `connected`), with its addresses and owning Erlang process. A socket that closes during the observation is counted, not classified.
+- **the kernel's view of this OS process:** on Linux `ss -tanpH` (this pid's lines only); on macOS `lsof -nP -a -p <pid> -iTCP -F pnT`. The macOS branch was tested through its parser only, never executed on a Mac; there, the operator's second-terminal `lsof` stays the runtime check.
+
+**The verdict:**
+- `observed`: the VM listing is complete, and the kernel's listening set (when available) is the same;
+- `ambiguous`: an entry is unclassified, or the kernel disagrees;
+- `unavailable`: the VM listing failed. A failed query is never an empty successful result.
+
+"Listens on nothing" (`no_listener?/1`) and "listens only on the declared socket" (`only_listener?/2`) are true only for an `observed` result. This is an operator measurement at those points, not continuous proof and not a monitor.
+

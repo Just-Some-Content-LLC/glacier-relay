@@ -33,6 +33,10 @@
 # destination every second only until a first connection is registered (within connect_window_s, counted by the endpoint itself);
 # after a connection ends — identified or not — the run ends and never reconnects.
 # No private key, CA key or certificate body is ever printed or written by this script.
+# M7-L3: the VM's sockets are recorded by kit/sockets.exs (PeerKit.Sockets; loaded after the bundle check): ONE observation at each
+# reporting point (the endpoint up, the peer identified, the finish), printed and written from the same result. It classifies each
+# socket by its explicit state (listen / connecting / connected) and never treats "no peer" as listening; M7-L1's
+# PeerKit.listeners() did, and listed M7-L2's connecting client socket as a listener (M7L2 record section 13).
 
 alias GlacierRelay.HeadlessPeer
 alias GlacierRelay.HeadlessPeer.Driver
@@ -136,6 +140,7 @@ defmodule PeerKit do
 
     unless bad == [], do: refuse("bundle files differ from the manifest: #{inspect(Enum.take(bad, 5))}")
     unless Enum.any?(entries, fn {_, rel} -> rel == "kit/peer.exs" end), do: refuse("the manifest does not list kit/peer.exs")
+    unless Enum.any?(entries, fn {_, rel} -> rel == "kit/sockets.exs" end), do: refuse("the manifest does not list kit/sockets.exs")
     present = walk(root, "") -- ["MANIFEST.sha256"]
     extra = present -- Enum.map(entries, &elem(&1, 1))
     unless extra == [], do: refuse("files in the bundle that its manifest does not list: #{inspect(Enum.take(extra, 5))}")
@@ -269,10 +274,11 @@ defmodule PeerKit do
     o
   end
 
-  # every TCP socket of this VM that listens, with its address (nothing is assumed)
-  def listeners do
-    for p <- :erlang.ports(), Port.info(p)[:name] == ~c"tcp_inet", match?({:error, :enotconn}, :inet.peername(p)),
-        {:ok, {ip, port}} <- [:inet.sockname(p)], do: "#{:inet.ntoa(ip)}:#{port}"
+  # one socket observation, compacted for the summary (the full one is in events.ndjson)
+  def compact(at, o) do
+    %{"at" => at, "utc" => o["vm"]["utc"], "status" => o["status"], "listening" => o["listening"], "kernel_agrees" => o["kernel_agrees"],
+      "connecting" => Enum.map(o["vm"]["connecting"] || [], & &1["local"]),
+      "connected" => Enum.map(o["vm"]["connected"] || [], &"#{&1["local"]}->#{&1["remote"]}")}
   end
 end
 
@@ -296,6 +302,8 @@ end)
 if Node.alive?(), do: PeerKit.refuse("this node is distributed (#{node()}); the peer must run without --sname / --name")
 bundle_root = __ENV__.file |> Path.dirname() |> Path.dirname()
 {manifest_sha, listed} = PeerKit.bundle(bundle_root)
+# the socket observation (PeerKit.Sockets): a bundle file verified just above, loaded only now
+Code.require_file(Path.join(bundle_root, "kit/sockets.exs"))
 {cfg, _bytes, role} = PeerKit.config(cfg_path, cfg_sha)
 _ = PeerKit.bundle_pin(cfg["bundle"], manifest_sha)
 local = %{label: cfg["label"], client_kind: "headless"}
@@ -365,8 +373,10 @@ sup =
   end
 
 ep = HeadlessPeer.endpoint()
-PeerKit.say("endpoint up: #{inspect(Endpoint.status(ep) |> Map.take([:role, :address, :network]))}; listening sockets of this VM: #{inspect(PeerKit.listeners())}")
-ev.("endpoint", %{"status" => inspect(Endpoint.status(ep) |> Map.take([:role, :address, :network, :counts])), "listeners" => PeerKit.listeners()})
+# ONE observation, printed and recorded from the same result (M7-L2's two back-to-back calls were reported as one record)
+obs0 = PeerKit.Sockets.observe()
+PeerKit.say("endpoint up: #{inspect(Endpoint.status(ep) |> Map.take([:role, :address, :network]))}; #{PeerKit.Sockets.describe(obs0)}")
+ev.("endpoint", %{"status" => inspect(Endpoint.status(ep) |> Map.take([:role, :address, :network, :counts])), "socket_observation" => obs0})
 
 t0 = System.monotonic_time(:millisecond)
 elapsed = fn -> System.monotonic_time(:millisecond) - t0 end
@@ -374,6 +384,9 @@ elapsed = fn -> System.monotonic_time(:millisecond) - t0 end
 finish = fn outcome, code, st ->
   ds = Driver.status()
   es = Endpoint.status(ep)
+  obs_end = PeerKit.Sockets.observe()
+  PeerKit.say("at the finish: #{PeerKit.Sockets.describe(obs_end)}")
+  ev.("socket_observation", %{"at" => "finish", "observation" => obs_end})
   summary = %{
     "schema" => "glacier-relay.peer-transport-summary/1",
     "run_id" => cfg["run_id"], "side" => cfg["side"], "role" => to_string(role), "network" => Network.describe(plan),
@@ -390,6 +403,7 @@ finish = fn outcome, code, st ->
         |> Map.put("transport_complete", PeerKit.transport_complete?(s))
       end),
     "sinks_open" => map_size(ds.sink),
+    "socket_observations" => Enum.reverse([PeerKit.compact("finish", obs_end) | st.obs]),
     "label" => "M7-L1 transport-only exchange of synthetic courses between two headless peers; no game, no native, no authority"
   }
   File.write!(Path.join(out, "summary.json"), JSON.encode!(summary) <> "\n", [:exclusive])
@@ -420,7 +434,10 @@ loop = fn loop, st ->
       PeerKit.say("peer identified: #{inspect(Map.take(ds.peer, [:label, :client_kind, :boot_id, :generation, :pin]))}")
       peer = Map.new(ds.peer, fn {k, v} -> {to_string(k), v} end)
       ev.("peer_up", %{"peer" => peer, "elapsed_ms" => t})
-      loop.(loop, %{st | up_at: t, peer: peer})
+      o = PeerKit.Sockets.observe()
+      PeerKit.say("at identification: #{PeerKit.Sockets.describe(o)}")
+      ev.("socket_observation", %{"at" => "peer_up", "observation" => o})
+      loop.(loop, %{st | up_at: t, peer: peer, obs: [PeerKit.compact("peer_up", o) | st.obs]})
 
     st.up_at == nil and seen and ds.peer == nil and es.connection == nil ->
       ev.("connection_ended", %{"elapsed_ms" => t, "identified" => false})
@@ -479,4 +496,4 @@ loop = fn loop, st ->
   end
 end
 
-loop.(loop, %{up_at: nil, peer: nil, started: false, done_at: nil, last_try: 0, conn_counts: nil})
+loop.(loop, %{up_at: nil, peer: nil, started: false, done_at: nil, last_try: 0, conn_counts: nil, obs: [PeerKit.compact("endpoint", obs0)]})

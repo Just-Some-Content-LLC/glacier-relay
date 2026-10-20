@@ -114,7 +114,7 @@ exchange() {
   echo "$port" > "$A/$c/port.txt"
   sh "$B/kit/start.sh" "$B" "$A/$c/con.json" "$(sha "$A/$c/con.json")" > "$A/$c/console-con.txt" 2>&1 &
   CBG=$!
-  wait_grep "$A/$c/out-con/events.ndjson" '"peer_up"' 200
+  wait_grep "$A/$c/out-con/events.ndjson" '"event":"peer_up"' 200
   LP=$(pid_of "$A/$c/out-lsn"); CP=$(pid_of "$A/$c/out-con")
   echo "listener pid $LP: $(listen_lines "$LP")| connector pid $CP: $(listen_lines "$CP")|" > "$A/$c/listeners-during.txt"
   wait $CBG; CRC=$?; wait $LBG; LRC=$?
@@ -127,6 +127,17 @@ for c in ok1 ok2; do
   [ "$LRC" = 0 ] && [ "$CRC" = 0 ]; ok $? "$c: both sides exit 0"
   port=$(cat "$A/$c/port.txt")
   grep -q "listener pid $LP: 127.0.0.1:$port | connector pid $CP: |" "$A/$c/listeners-during.txt"; ok $? "$c: the listener's only listening socket is 127.0.0.1:$port; the connector listens on nothing"
+  # M7-L3: the kit's own record (sockets.exs) agrees with that independent snapshot at every reporting point: the connector's
+  # observations are "observed" with no listener (its connecting / connected socket is never one), the listener's only its socket
+  python3 -I - "$A/$c/out-con/summary.json" "$A/$c/out-lsn/summary.json" "127.0.0.1:$port" > "$A/$c/kit-socket-record.txt" <<'PY'
+import json, sys
+con, lsn, addr = json.load(open(sys.argv[1])), json.load(open(sys.argv[2])), sys.argv[3]
+oc, ol = con.get("socket_observations") or [], lsn.get("socket_observations") or []
+good = (len(oc) == 3 and all(o["status"] == "observed" and o["listening"] == [] for o in oc)
+        and len(ol) == 3 and all(o["status"] == "observed" and o["listening"] == [addr] for o in ol))
+print("KIT SOCKET RECORD", "ok" if good else "NOT", [(o["at"], o["status"], o["listening"], o["connecting"], o["connected"]) for o in oc], [(o["at"], o["status"], o["listening"]) for o in ol])
+PY
+  grep -q "KIT SOCKET RECORD ok" "$A/$c/kit-socket-record.txt"; ok $? "$c: the kit's own socket record (sockets.exs) agrees: the connector never listened, the listener only on 127.0.0.1:$port ($(cut -c1-200 "$A/$c/kit-socket-record.txt"))"
   for s in lsn con; do
     o=$A/$c/out-$s
     [ "$(jget "$o/summary.json" outcome)" = complete ]; ok $? "$c/$s: outcome complete"
@@ -184,7 +195,7 @@ sh "$B/kit/stop.sh" "$A/$c/out-lsn" > "$A/$c/stop-lsn.txt" 2>&1; ok $? "disconne
 wait $CBG; CRC=$?; wait $LBG; LRC=$?
 echo "listener exit $LRC; connector exit $CRC" > "$A/$c/exits.txt"
 [ "$CRC" = 4 ] && [ "$(jget "$A/$c/out-con/summary.json" outcome)" = disconnected_before_completion ]; ok $? "disconnect: the connector ends with exit 4, disconnected before completion"
-[ "$(grep -c '"peer_up"' "$A/$c/out-con/events.ndjson")" = 1 ] && [ "$(jget "$A/$c/out-con/summary.json" endpoint_counts.connections)" = 1 ]; ok $? "disconnect: one identification, no reconnection"
+[ "$(grep -c '"event":"peer_up"' "$A/$c/out-con/events.ndjson")" = 1 ] && [ "$(jget "$A/$c/out-con/summary.json" endpoint_counts.connections)" = 1 ]; ok $? "disconnect: one identification, no reconnection"
 [ "$(jget "$A/$c/out-con/summary.json" sources_done.0.reason)" = peer_link_lost ]; ok $? "disconnect: the connector's own stream ended as peer_link_lost"
 [ "$LRC" = 6 ] && [ "$(jget "$A/$c/out-lsn/summary.json" outcome)" = stopped_by_signal ]; ok $? "disconnect: the stopped listener recorded stopped_by_signal (exit $LRC) before ending"
 sh "$B/kit/stop.sh" "$A/$c/out-con" > "$A/$c/stop-con-after.txt" 2>&1; grep -q "not running" "$A/$c/stop-con-after.txt"; ok $? "stop.sh on an ended run reports it, kills nothing"
@@ -284,6 +295,40 @@ cfg "$A/$c/lsn.json" mac listen "$port" "$A/$c/out-lsn"
 sh "$B/kit/start.sh" "$B" "$A/$c/lsn.json" "$(sha "$A/$c/lsn.json")" > "$A/$c/console-lsn.txt" 2>&1; LRC=$?
 kill "$HOLD"; wait "$HOLD" 2>/dev/null
 [ "$LRC" = 7 ] && [ "$(jget "$A/$c/out-lsn/summary.json" outcome)" = endpoint_failed ] && grep -q eaddrinuse "$A/$c/out-lsn/summary.json"; ok $? "port taken: exit 7, endpoint_failed (eaddrinuse) recorded ($LRC)"
+
+# ---- M7-L3: M7-L2's race replayed (record section 13): a connector whose destination never completes a handshake ---------------
+# An owned loopback listener whose accept queue is full and never served: Linux drops the connector's SYN, so its TLS connect sits
+# in SYN-SENT (no peer, :enotconn — what M7-L1's PeerKit.listeners() counted as a listener). The kit's record must list such a
+# socket as connecting, and no listener, at every observation; the run ends by its lifetime (exit 3), never identified. Each
+# attempt waits out the 5 s handshake deadline; with the connect window as long as the lifetime, one is in flight at the finish.
+c=l2-race; mkdir -p "$A/$c"; port=$(free_port)
+python3 -I -c '
+import socket, sys, time
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("127.0.0.1", int(sys.argv[1]))); s.listen(1)
+fill = []
+for _ in range(3):
+    c = socket.socket(); c.settimeout(0.3)
+    try: c.connect(("127.0.0.1", int(sys.argv[1])))
+    except OSError: pass
+    fill.append(c)
+print("blackhole ready", flush=True); time.sleep(float(sys.argv[2]))' "$port" 25 > "$A/$c/blackhole.txt" 2>&1 &
+BH=$!
+wait_grep "$A/$c/blackhole.txt" "blackhole ready" 50
+cfg "$A/$c/con.json" windows connect "$port" "$A/$c/out-con" 'limits={"lifetime_s":12,"connect_window_s":12,"start_after_up_ms":500,"drain_ms":500}'
+sh "$B/kit/start.sh" "$B" "$A/$c/con.json" "$(sha "$A/$c/con.json")" > "$A/$c/console-con.txt" 2>&1; CRC=$?
+kill "$BH" 2>/dev/null; wait "$BH" 2>/dev/null
+[ "$CRC" = 3 ] && [ "$(jget "$A/$c/out-con/summary.json" outcome)" = lifetime_expired_no_peer ]; ok $? "l2-race: the connector never identified anyone and ended by its lifetime (exit $CRC)"
+python3 -I - "$A/$c/out-con/summary.json" "$A/$c/out-con/events.ndjson" > "$A/$c/kit-socket-record.txt" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1])); ev = [json.loads(l) for l in open(sys.argv[2])]
+full = [e["socket_observation"] for e in ev if e.get("event") == "endpoint"] + [e["observation"] for e in ev if e.get("event") == "socket_observation"]
+caught = [c["local"] for o in full for c in o["vm"]["connecting"]]
+never = all(o["status"] == "observed" and o["listening"] == [] for o in full)
+# the regression reference: M7-L1's heuristic (no peer = listening) applied to the same observations' sockets
+old = [c["local"] for o in full for c in o["vm"]["connecting"] if c["remote"] is None]
+print("L2 RACE", "ok" if (never and caught) else "NOT", "observations %d; connecting sockets caught %s; listening in every observation %s; M7-L1's heuristic would have listed %s" % (len(full), caught, [o["listening"] for o in full], old))
+PY
+grep -q "L2 RACE ok" "$A/$c/kit-socket-record.txt"; ok $? "l2-race: the kit's record lists the connecting socket as connecting and never as a listener ($(cut -c1-220 "$A/$c/kit-socket-record.txt"))"
 
 # ---- scans: the self-test's planted controls, then every byte this rehearsal wrote ----------------------------------------------
 $EX "$B/kit/scan.exs" --selftest "$A/scan-selftest" > "$A/scan-selftest.txt" 2>&1; ok $? "scanner self-test (planted positives found by class, negatives clean)"

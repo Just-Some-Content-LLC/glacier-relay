@@ -7,7 +7,8 @@
 # equals the one those dependencies were fetched for, and assembles:
 #   <out>/peer-transport-<commit12>/ebin/glacier_relay/   the relay's compiled modules (BEAM bytecode: OS- and CPU-independent;
 #                                                          its OTP / Elixir pairing is recorded and checked at every start)
-#   <out>/peer-transport-<commit12>/kit/                  peer.exs creds.exs scan.exs start.sh stop.sh compat-check.sh README.md
+#   <out>/peer-transport-<commit12>/kit/                  peer.exs sockets.exs creds.exs scan.exs start.sh stop.sh compat-check.sh
+#                                                          README.md (M7-L3 added sockets.exs)
 #   <out>/peer-transport-<commit12>/BUNDLE.txt            commit, trees, lock, runtime, counts
 #   <out>/peer-transport-<commit12>/MANIFEST.sha256       every other file's sha256 (its own sha256 is what a run config pins)
 #   <out>/peer-transport-<commit12>.tar.gz and .tar.gz.sha256
@@ -34,7 +35,7 @@ say "deps copied ($(ls "$W/deps" | wc -l) packages; lock $lock_c); compiling (MI
   || { echo "bundle.sh: compile FAILED (see $W/compile.txt)" >&2; tail -20 "$W/compile.txt" >&2; exit 1; }
 B=$OUT/$NAME; mkdir -p "$B/ebin" "$B/kit"
 cp -a "$W/build/lib/glacier_relay/ebin" "$B/ebin/glacier_relay"
-for f in peer.exs creds.exs scan.exs start.sh stop.sh compat-check.sh README.md; do cp "$W/src/tools/peer-transport/$f" "$B/kit/$f"; done
+for f in peer.exs sockets.exs creds.exs scan.exs start.sh stop.sh compat-check.sh README.md; do cp "$W/src/tools/peer-transport/$f" "$B/kit/$f"; done
 chmod 755 "$B/kit/start.sh" "$B/kit/stop.sh" "$B/kit/compat-check.sh"
 OTPV=$(cat "$(erl -noshell -eval 'io:format("~s",[code:root_dir()]), halt().')/releases/$(erl -noshell -eval 'io:format("~s",[erlang:system_info(otp_release)]), halt().')/OTP_VERSION")
 {
