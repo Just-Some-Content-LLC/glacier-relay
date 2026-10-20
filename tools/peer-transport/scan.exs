@@ -10,8 +10,12 @@
 #   pem      a PEM private-key block — a "-----BEGIN ... PRIVATE KEY-----" armour that ends its line, then a base64 body, then
 #            its END line — whose body decodes (:public_key.pem_decode, :public_key.der_decode) to a private key; looked for in
 #            each file's text and in its JSON-unescaped view (a PEM inside a JSON string, with \n escapes);
-#   known    the DER of each --known-key, as raw bytes, as base64 (whole, and every 64-character body line of its PEM), and as
-#            lowercase or uppercase hex.
+#   known    the DER of each --known-key, as raw bytes, as base64 (whole, and every 64-character body line of its PEM), as
+#            lowercase or uppercase hex, and as the comma-separated decimal byte list the BEAM prints (inspect / ~p / ~w, matched
+#            on a whitespace-stripped view because ~p wraps lines); and, for an EC key, its private scalar in each of those forms —
+#            what a crash report, a stack trace's arguments or a log line of the decoded key would show (verifier V1).
+# Directories are walked (never globbed: a path may hold glob characters); symbolic links to files are read, to directories
+# not entered. A directory with no file to scan is refused (exit 2): "0 hits" never means "nothing was read".
 # Reported for information only, never as hits: armour-like text whose body is no key (a scanner's own pattern, a quotation, a
 # certificate), and file NAMES containing key / token / secret / cred. Every count is computed from the files scanned now.
 # Exit 0 no hits, 1 hits, 2 usage.
@@ -24,19 +28,50 @@ defmodule Scan do
   @key_types [:ECPrivateKey, :RSAPrivateKey, :DSAPrivateKey, :PrivateKeyInfo]
 
   def files(dirs) do
-    dirs
-    |> Enum.flat_map(fn d -> Path.wildcard(Path.join(d, "**/*"), match_dot: true) end)
-    |> Enum.filter(&File.regular?/1)
+    Enum.flat_map(dirs, fn d ->
+      case walk(d, true) do
+        [] -> (IO.puts("scan: REFUSED: no file to scan under #{d}"); System.halt(2))
+        fs -> fs
+      end
+    end)
     |> Enum.sort()
   end
+
+  defp walk(path, top) do
+    case if(top, do: File.stat(path), else: File.lstat(path)) do
+      {:ok, %{type: :directory}} -> path |> File.ls!() |> Enum.flat_map(&walk(Path.join(path, &1), false))
+      {:ok, %{type: :regular}} -> [path]
+      {:ok, %{type: :symlink}} -> if File.regular?(path), do: [path], else: []
+      _ -> []
+    end
+  end
+
+  def declist(bin), do: bin |> :binary.bin_to_list() |> Enum.join(",")
+
+  def strip(bytes), do: for(<<c <- bytes>>, c not in [?\s, ?\t, ?\r, ?\n], into: "", do: <<c>>)
 
   def known(paths) do
     Enum.flat_map(paths, fn p ->
       for {t, der, _} <- :public_key.pem_decode(File.read!(p)), t in @key_types do
         b64 = Base.encode64(der)
         lines = for l <- String.split(:public_key.pem_encode([{t, der, :not_encrypted}]), "\n"), byte_size(l) == 64, do: l
-        %{source: p, needles: [{"der", der}, {"base64", b64}, {"hex", Base.encode16(der, case: :lower)}, {"HEX", Base.encode16(der)}] ++
-            Enum.map(lines, &{"base64-line", &1})}
+
+        scalar =
+          case t do
+            :ECPrivateKey -> elem(:public_key.der_decode(t, der), 2)
+            _ -> nil
+          end
+
+        forms = fn kind, b ->
+          [{kind, b}, {kind <> "-base64", Base.encode64(b)}, {kind <> "-hex", Base.encode16(b, case: :lower)},
+           {kind <> "-HEX", Base.encode16(b)}]
+        end
+
+        %{source: p,
+          needles: [{"der", der}, {"base64", b64}, {"hex", Base.encode16(der, case: :lower)}, {"HEX", Base.encode16(der)}] ++
+            Enum.map(lines, &{"base64-line", &1}) ++ if(scalar, do: forms.("scalar", scalar), else: []),
+          # matched on the whitespace-stripped view of each file
+          stripped: [{"declist", declist(der)}] ++ if(scalar, do: [{"scalar-declist", declist(scalar)}], else: [])}
       end
     end)
   end
@@ -80,9 +115,12 @@ defmodule Scan do
         {p1, n1} = pem_hits(text)
         {p2, n2} = if String.contains?(text, "\\n-----"), do: pem_hits(unescape(text)), else: {[], 0}
 
+        flat = if ks == [], do: "", else: strip(bytes)
+
         kh =
-          for k <- ks, {kind, needle} <- k.needles, :binary.match(bytes, needle) != :nomatch, uniq: true,
-              do: "known-#{kind}"
+          (for k <- ks, {kind, needle} <- k.needles, :binary.match(bytes, needle) != :nomatch, do: "known-#{kind}") ++
+            (for k <- ks, {kind, needle} <- k.stripped, :binary.match(flat, needle) != :nomatch, do: "known-#{kind}")
+          |> Enum.uniq()
 
         name = Path.basename(f) |> String.downcase()
         %{file: f, pem: length(p1) + length(p2) > 0, known: kh, armour_without_material: n1 + n2,
@@ -104,7 +142,8 @@ defmodule Scan do
   def selftest(dir) do
     if File.exists?(dir), do: (IO.puts("selftest: REFUSED: #{dir} exists"); System.halt(2))
     File.mkdir_p!(dir)
-    pos = Path.join(dir, "positive")
+    # the positives sit in a directory whose name holds glob characters (verifier V1: it must still be read)
+    pos = Path.join(dir, "positive[1]")
     neg = Path.join(dir, "negative")
     File.mkdir_p!(pos)
     File.mkdir_p!(neg)
@@ -129,7 +168,13 @@ defmodule Scan do
       "hex-in-prose.txt" => {"k " <> Base.encode16(der, case: :lower) <> "\n", "known-hex"},
       "HEX-in-prose.txt" => {"K " <> Base.encode16(der) <> "\n", "known-HEX"},
       "raw.bin" => {:crypto.strong_rand_bytes(100) <> der <> :crypto.strong_rand_bytes(100), "known-der"},
-      "one-body-line.txt" => {"fragment: #{body_line}\n", "known-base64-line"}
+      "one-body-line.txt" => {"fragment: #{body_line}\n", "known-base64-line"},
+      # how the BEAM prints a key (verifier V1): inspect in full and at its default limit, Erlang ~p, the decoded record
+      "inspect-full.txt" => {"** (MatchError) " <> inspect({t, der}, limit: :infinity) <> "\n", "known-declist"},
+      "inspect-default.txt" => {"args: " <> inspect({t, der}) <> "\n", "known-scalar-declist"},
+      "erlang-p.txt" => {IO.iodata_to_binary(:io_lib.format("~p~n", [{t, der}])), "known-scalar-declist"},
+      "decoded-record.txt" => {inspect(:public_key.der_decode(t, der)) <> "\n", "known-scalar-declist"},
+      "scalar-hex.txt" => {"d=" <> Base.encode16(elem(:public_key.der_decode(t, der), 2), case: :lower) <> "\n", "known-scalar-hex"}
     }
 
     negatives = %{
@@ -138,6 +183,7 @@ defmodule Scan do
       "quoted-armour.txt" => "-----BEGIN EC PRIVATE KEY-----\nbm90IGEga2V5\n-----END EC PRIVATE KEY-----\n",
       "certificate.pem" => :public_key.pem_encode([{:Certificate, root.cert, :not_encrypted}]),
       "token-name.txt" => "nothing secret here\n",
+      "numbers.txt" => inspect(:crypto.strong_rand_bytes(64), limit: :infinity) <> "\n",
       "key_file.json" => JSON.encode!(%{"key_file" => "/path/to/own-key.pem", "peer_pin" => String.duplicate("ab", 32)})
     }
 

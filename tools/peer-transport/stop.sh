@@ -10,6 +10,9 @@ F=$1/peer.pid
 [ -f "$F" ] || { echo "stop.sh: no $F" >&2; exit 2; }
 PID=$(sed -n 1p "$F"); CFG=$(sed -n 2p "$F")
 case "$PID" in ''|*[!0-9]*) echo "stop.sh: $F does not hold a process id" >&2; exit 2;; esac
+# verifier V7: without the configuration path the identity check would match any kit peer
+[ -n "$CFG" ] || { echo "stop.sh: REFUSED: $F names no run configuration (line 2)" >&2; exit 2; }
+is_peer() { c=$(ps -p "$PID" -o command= 2>/dev/null || true); case "$c" in *kit/peer.exs*"$CFG"*) return 0;; *) return 1;; esac; }
 CMD=$(ps -p "$PID" -o command= 2>/dev/null || true)
 if [ -z "$CMD" ]; then echo "stop.sh: process $PID is not running (already ended)"; exit 0; fi
 case "$CMD" in
@@ -21,8 +24,13 @@ kill -TERM "$PID" 2>/dev/null || true
 i=0
 while [ "$i" -lt 100 ] && ps -p "$PID" >/dev/null 2>&1; do sleep 0.1; i=$((i + 1)); done
 if ps -p "$PID" >/dev/null 2>&1; then
-  echo "stop.sh: still running after 10 s: KILL to $PID"
-  kill -KILL "$PID" 2>/dev/null || true
+  # the identity again, right before the KILL: a reused process id is never killed
+  if is_peer; then
+    echo "stop.sh: still running after 10 s: KILL to $PID"
+    kill -KILL "$PID" 2>/dev/null || true
+  else
+    echo "stop.sh: process $PID is no longer that peer; not killed" >&2; exit 1
+  fi
 fi
 ps -p "$PID" >/dev/null 2>&1 && { echo "stop.sh: process $PID did not end" >&2; exit 1; }
 echo "stop.sh: process $PID ended"

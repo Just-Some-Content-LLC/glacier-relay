@@ -10,20 +10,25 @@
 #
 # Before ANY socket, and before :ssl starts, every input is checked and a failure refuses with exit 2:
 #   - this node is not distributed;
+#   - FIRST, before anything is decoded: the files under the bundle are exactly those its MANIFEST.sha256 lists, each with its
+#     listed sha256 (code and kit identity; an unlisted file — a stray module that -pa would load first — is refused);
 #   - the run configuration's bytes match the sha256 given on the command line (the approved, pinned configuration);
 #   - its schema, the role and the network profile (GlacierRelay.Peer.Network: lan_ipv4, one concrete private IPv4 socket);
-#   - the bundle's MANIFEST.sha256 matches the configuration's pin, and every listed file matches it (code and kit identity);
+#   - the bundle manifest's sha256 is the configuration's pin;
 #   - the runtime matches the configuration's pin (OTP release, Elixir version prefix);
-#   - the credential files exist, the private key file is 0600, and the credentials load;
+#   - the credential files exist, the private key file is 0600, and the credentials load (the key decodes);
 #   - when the configuration names an approval record: its verbatim operator reply is a standalone approval form (the WHOLE reply,
 #     trimmed, equals one accepted form — never an occurrence inside a longer message), it names this configuration's and this
 #     bundle's sha256, and it is not older than its maximum age;
 #   - the output directory does not exist (it is created exclusively; nothing is ever overwritten).
-# Then: outputs <out>/peer.pid, <out>/events.ndjson, <out>/trace/ (the headless motion trace), <out>/summary.json; human lines on
+# Then :ssl starts (no socket) and its TLS 1.3 support is checked (exit 2), still before the output directory exists. A SIGTERM
+# trap is installed first of all, so a stop at any point ends through the run loop with its summary. Then: outputs <out>/peer.pid, <out>/events.ndjson, <out>/trace/ (the headless motion trace), <out>/summary.json; human lines on
 # standard output. The run ends by itself: exchange complete (exit 0), no peer / lifetime expired (3), the connection lost before
-# completion (4), completed but not reconciled (5), stopped by SIGTERM (stop.sh; 6, after its summary); a hard backstop halts
-# at lifetime + 15 s (124). A connector retries its one
-# destination every second only until it is first identified (within connect_window_s); after a connection ends it never reconnects.
+# completion or identification (4), completed but not reconciled (5), stopped by SIGTERM (stop.sh; 6, after its summary), the
+# endpoint could not start — e.g. the declared address or port not available (7, after its summary); a hard backstop halts at
+# lifetime + 15 s (124). A connector retries its one
+# destination every second only until a first connection is registered (within connect_window_s, counted by the endpoint itself);
+# after a connection ends — identified or not — the run ends and never reconnects.
 # No private key, CA key or certificate body is ever printed or written by this script.
 
 alias GlacierRelay.HeadlessPeer
@@ -101,11 +106,10 @@ defmodule PeerKit do
     do: refuse("network must be an object with \"profile\": \"lan_ipv4\" (no other profile; no loopback default for this kit): #{inspect(n)}")
 
   # -- bundle identity ------------------------------------------------------------------------------------------------------------
-  def bundle(root, pin) do
-    unless is_binary(pin) and Regex.match?(@hex64, pin), do: refuse("bundle.manifest_sha256 must be 64 lowercase hex characters")
+  # verifier V4: run first, before any configuration is decoded; the files present must be exactly the listed ones
+  def bundle(root) do
     mpath = Path.join(root, "MANIFEST.sha256")
     bytes = case File.read(mpath), do: ({:ok, b} -> b; _ -> refuse("no bundle manifest at #{mpath}"))
-    unless sha256(bytes) == pin, do: refuse("the bundle manifest's sha256 is #{sha256(bytes)}, not the configuration's #{pin}")
 
     entries =
       for line <- String.split(bytes, "\n", trim: true) do
@@ -123,8 +127,30 @@ defmodule PeerKit do
 
     unless bad == [], do: refuse("bundle files differ from the manifest: #{inspect(Enum.take(bad, 5))}")
     unless Enum.any?(entries, fn {_, rel} -> rel == "kit/peer.exs" end), do: refuse("the manifest does not list kit/peer.exs")
-    length(entries)
+    present = walk(root, "") -- ["MANIFEST.sha256"]
+    extra = present -- Enum.map(entries, &elem(&1, 1))
+    unless extra == [], do: refuse("files in the bundle that its manifest does not list: #{inspect(Enum.take(extra, 5))}")
+    {sha256(bytes), length(entries)}
   end
+
+  # every non-directory entry under the bundle, relative; the root is followed, directories under it are entered, symbolic
+  # links under it are not followed (they count as entries)
+  defp walk(root, rel) do
+    path = if rel == "", do: root, else: Path.join(root, rel)
+
+    case if(rel == "", do: File.stat(path), else: File.lstat(path)) do
+      {:ok, %{type: :directory}} -> path |> File.ls!() |> Enum.sort() |> Enum.flat_map(&walk(root, if(rel == "", do: &1, else: Path.join(rel, &1))))
+      _ -> [rel]
+    end
+  end
+
+  def bundle_pin(%{"manifest_sha256" => pin} = b, sha) when map_size(b) == 1 and is_binary(pin) do
+    unless Regex.match?(@hex64, pin), do: refuse("bundle.manifest_sha256 must be 64 lowercase hex characters")
+    unless sha == pin, do: refuse("the bundle manifest's sha256 is #{sha}, not the configuration's #{pin}")
+    pin
+  end
+
+  def bundle_pin(other, _sha), do: refuse("bundle must be exactly {\"manifest_sha256\": <64 hex>}: #{inspect(other)}")
 
   def runtime(%{"otp_release" => otp, "elixir_version_prefix" => ex}) when is_binary(otp) and is_binary(ex) do
     unless System.otp_release() == otp, do: refuse("OTP release #{System.otp_release()} is not the configuration's #{otp}")
@@ -144,8 +170,15 @@ defmodule PeerKit do
     files = [cert_file: c, key_file: k, peer_ca_file: ca, peer_pin: pin]
 
     case TLS.credentials(files) do
-      {:ok, creds} -> {files, creds.own_pin, creds.peer_pin}
-      {:error, reason} -> refuse("the credentials do not load: #{inspect(reason)}")
+      {:ok, creds} ->
+        # verifier V3: a key that only PEM-decodes would fail inside every handshake; refuse it here
+        {type, der} = creds.key
+        decodes = try do: (_ = :public_key.der_decode(type, der); true), rescue: (_ -> false)
+        unless decodes, do: refuse("the private key in #{k} does not decode")
+        {files, creds.own_pin, creds.peer_pin}
+
+      {:error, reason} ->
+        refuse("the credentials do not load: #{inspect(reason)}")
     end
   end
 
@@ -241,20 +274,35 @@ end
     _ -> PeerKit.refuse("usage: elixir -pa <bundle>/ebin/glacier_relay <bundle>/kit/peer.exs <run-config.json> <run-config-sha256>")
   end
 
+# stop.sh's TERM ends the run through the loop, with its summary. The trap is installed before anything else, and it BLOCKS
+# (bounded): the VM's own SIGTERM handling (a clean stop with status 0, "complete") runs only after the user traps return, so the
+# loop's finish halts first (verifier V2)
+me = self()
+
+System.trap_signal(:sigterm, fn ->
+  send(me, :sigterm)
+  receive do: (:never -> :ok), after: (20_000 -> :ok)
+end)
+
 if Node.alive?(), do: PeerKit.refuse("this node is distributed (#{node()}); the peer must run without --sname / --name")
+bundle_root = __ENV__.file |> Path.dirname() |> Path.dirname()
+{manifest_sha, listed} = PeerKit.bundle(bundle_root)
 {cfg, _bytes, role} = PeerKit.config(cfg_path, cfg_sha)
+_ = PeerKit.bundle_pin(cfg["bundle"], manifest_sha)
 local = %{label: cfg["label"], client_kind: "headless"}
 {net, plan} = PeerKit.network(cfg["network"], role, local)
-bundle_root = __ENV__.file |> Path.dirname() |> Path.dirname()
-listed = PeerKit.bundle(bundle_root, get_in(cfg, ["bundle", "manifest_sha256"]))
 :ok = PeerKit.runtime(cfg["runtime"])
 {cred_files, own_pin, peer_pin} = PeerKit.credentials(cfg["credentials"])
-approval = PeerKit.approval(cfg["approval"], cfg_sha, cfg["bundle"]["manifest_sha256"])
+approval = PeerKit.approval(cfg["approval"], cfg_sha, manifest_sha)
 course = PeerKit.course(cfg["course"])
 lim = PeerKit.limits(cfg["limits"])
 out = PeerKit.out_dir(cfg["out_dir"])
 
-# ---- every check passed: the outputs, then :ssl, then the one endpoint --------------------------------------------------------
+# ---- every input check passed: :ssl (no socket) and its TLS 1.3, then the outputs, then the one endpoint ---------------------
+{:ok, _} = Application.ensure_all_started(:ssl)
+Logger.configure(level: :info)
+unless :"tlsv1.3" in Keyword.get(:ssl.versions(), :supported, []), do: PeerKit.refuse("this OTP's ssl does not support TLS 1.3")
+
 :ok = File.mkdir(out)
 File.chmod!(out, 0o700)
 File.write!(Path.join(out, "peer.pid"), "#{System.pid()}\n#{cfg_path}\n", [:exclusive])
@@ -266,11 +314,11 @@ ev = fn kind, fields ->
 end
 
 PeerKit.say("run #{cfg["run_id"]}, side #{cfg["side"]}, role #{role}, #{Network.describe(plan)}; os pid #{System.pid()}; node #{node()} (distributed #{Node.alive?()}); OTP #{System.otp_release()}, Elixir #{System.version()}")
-PeerKit.say("checked before any socket: configuration #{cfg_sha}; bundle manifest #{cfg["bundle"]["manifest_sha256"]} (#{listed} files verified); credentials loaded (own leaf #{own_pin}, pinned peer leaf #{peer_pin}); approval #{case approval, do: ({:ok, r} -> "standalone reply " <> inspect(r); :none -> "not required by this configuration")}")
+PeerKit.say("checked before any socket: configuration #{cfg_sha}; bundle manifest #{manifest_sha} (exactly its #{listed} files, verified); credentials loaded (own leaf #{own_pin}, pinned peer leaf #{peer_pin}); approval #{case approval, do: ({:ok, r} -> "standalone reply " <> inspect(r); :none -> "not required by this configuration")}")
 
 ev.("checked", %{
   "run_id" => cfg["run_id"], "side" => cfg["side"], "role" => to_string(role), "network" => Network.describe(plan),
-  "config_sha256" => cfg_sha, "bundle_manifest_sha256" => cfg["bundle"]["manifest_sha256"], "bundle_files_verified" => listed,
+  "config_sha256" => cfg_sha, "bundle_manifest_sha256" => manifest_sha, "bundle_files_verified" => listed,
   "otp" => System.otp_release(), "elixir" => System.version(), "os_pid" => System.pid(), "node" => to_string(node()),
   "distributed" => Node.alive?(), "own_pin" => own_pin, "peer_pin" => peer_pin,
   "approval" => case(approval, do: ({:ok, r} -> %{"reply_verbatim" => r}; :none -> nil))
@@ -279,19 +327,33 @@ ev.("checked", %{
 # the hard backstop: whatever happens, this OS process ends
 spawn(fn -> Process.sleep(lim.lifetime_ms + 15_000); IO.puts("#{PeerKit.now()} peer-kit: BACKSTOP halt"); System.halt(124) end)
 
-{:ok, _} = Application.ensure_all_started(:ssl)
-Logger.configure(level: :info)
-unless :"tlsv1.3" in Keyword.get(:ssl.versions(), :supported, []), do: PeerKit.refuse("this OTP's ssl does not support TLS 1.3")
+# exits are trapped only while the peer starts: a failed start then answers {:error, _} here instead of killing this process
+Process.flag(:trap_exit, true)
 
-{:ok, sup} =
-  HeadlessPeer.start_link(
-    role: role,
-    network: net,
-    credentials: cred_files,
-    label: cfg["label"],
-    expected: %{label: cfg["expected_label"], client_kind: "headless"},
-    trace_dir: Path.join(out, "trace")
-  )
+sup =
+  case HeadlessPeer.start_link(
+         role: role,
+         network: net,
+         credentials: cred_files,
+         label: cfg["label"],
+         expected: %{label: cfg["expected_label"], client_kind: "headless"},
+         trace_dir: Path.join(out, "trace")
+       ) do
+    {:ok, sup} ->
+      Process.flag(:trap_exit, false)
+      sup
+
+    {:error, reason} ->
+      # verifier V5: e.g. the declared address no longer this machine's, or the port taken — recorded, exit 7
+      why = inspect(reason, limit: 20) |> String.slice(0, 400)
+      File.write!(Path.join(out, "summary.json"), JSON.encode!(%{
+        "schema" => "glacier-relay.peer-transport-summary/1", "run_id" => cfg["run_id"], "side" => cfg["side"],
+        "role" => to_string(role), "network" => Network.describe(plan), "outcome" => "endpoint_failed",
+        "reason" => why, "exit_status" => 7, "ended_utc" => PeerKit.now()}) <> "\n", [:exclusive])
+      ev.("finished", %{"outcome" => "endpoint_failed", "exit_status" => 7, "reason" => why})
+      PeerKit.say("FINISHED: endpoint_failed (exit 7): #{why}")
+      System.halt(7)
+  end
 
 ep = HeadlessPeer.endpoint()
 PeerKit.say("endpoint up: #{inspect(Endpoint.status(ep) |> Map.take([:role, :address, :network]))}; listening sockets of this VM: #{inspect(PeerKit.listeners())}")
@@ -323,13 +385,12 @@ finish = fn outcome, code, st ->
   System.halt(code)
 end
 
-# stop.sh's TERM ends the run through the loop, with its summary, instead of an unrecorded shutdown
-me = self()
-System.trap_signal(:sigterm, fn -> send(me, :sigterm) && :ok end)
-
 # ---- the bounded run loop -----------------------------------------------------------------------------------------------------
 loop = fn loop, st ->
   ds = Driver.status()
+  es = Endpoint.status(ep)
+  # verifier V6: the endpoint's own count, not this loop's sampling, says whether a connection ever came
+  seen = es.counts.connections >= 1
   t = elapsed.()
   signalled = receive do: (:sigterm -> true), after: (0 -> false)
 
@@ -347,6 +408,11 @@ loop = fn loop, st ->
       ev.("peer_up", %{"peer" => peer, "elapsed_ms" => t})
       loop.(loop, %{st | up_at: t, peer: peer})
 
+    st.up_at == nil and seen and ds.peer == nil and es.connection == nil ->
+      ev.("connection_ended", %{"elapsed_ms" => t, "identified" => false})
+      PeerKit.say("a connection came and went without an identification seen here; no reconnection")
+      finish.("connection_ended_before_identification", 4, st)
+
     st.up_at != nil and ds.peer == nil ->
       complete = ds.sources_done != [] and ds.sink_done != []
       ev.("peer_down", %{"elapsed_ms" => t, "exchange_complete" => complete})
@@ -357,8 +423,8 @@ loop = fn loop, st ->
         true -> finish.("complete_unreconciled", 5, st)
       end
 
-    st.up_at == nil and role == :connect and t < lim.connect_window_ms and t - st.last_try >= 1_000 ->
-      if Endpoint.status(ep).connection == nil, do: Endpoint.connect(ep)
+    st.up_at == nil and not seen and role == :connect and t < lim.connect_window_ms and t - st.last_try >= 1_000 ->
+      if es.connection == nil, do: Endpoint.connect(ep)
       Process.sleep(50)
       loop.(loop, %{st | last_try: t})
 

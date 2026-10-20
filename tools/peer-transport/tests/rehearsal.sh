@@ -6,9 +6,12 @@
 # about a Mac, a LAN, a firewall or another OTP build). <new-attempt-dir> receives every case's configurations, outputs and console
 # logs (created here; must not exist); <state-dir> (an existing, empty 0700 directory on the Linux filesystem) receives the
 # disposable credentials, which this script never prints and the caller removes after scanning.
-# Cases: two successful exchanges (the second a fresh restart), a wrong pin (fail closed), no peer (lifetime), a disconnect before
-# completion (no reconnection), sixteen argument refusals (exit 2 before any socket, ssl never started), the scanner self-test
-# and a material scan of everything written. Every check prints PASS / FAIL; the last line is the result.
+# Cases: two successful exchanges (the second a fresh restart), a wrong pin (fail closed), a wrong hello label (a connection that
+# ends before identification on the listener), no peer (lifetime), a disconnect before completion (no reconnection), a stop at
+# start, a listen failure (the declared port taken: exit 7), the argument refusals (exit 2 before any socket, ssl never started:
+# addresses, ports, roles, the configuration / bundle / runtime pins, a modified or an extra bundle file, the output directory,
+# the key, the approval), the scanner self-test and a material scan of everything written. Every check prints PASS / FAIL; the
+# last line is the result.
 set -uo pipefail
 [ "$#" -eq 3 ] || { echo "usage: rehearsal.sh <bundle-dir> <new-attempt-dir> <state-dir>" >&2; exit 2; }
 B=$(cd "$1" && pwd -P); A=$2; S=$3
@@ -40,8 +43,10 @@ $EX "$B/kit/creds.exs" import "$S" con "$S/xfer/lsn-ca.pem" "$S/xfer/lsn-identit
 LPIN=$(jget "$S/creds-lsn/own-identity.json" leaf_pin); CPIN=$(jget "$S/creds-con/own-identity.json" leaf_pin)
 ZPIN=$(jget "$S/creds-zzz/own-identity.json" leaf_pin)
 [ "$(jget "$S/creds-lsn/peer.json" peer_leaf_pin)" = "$CPIN" ] && [ "$(jget "$S/creds-con/peer.json" peer_leaf_pin)" = "$LPIN" ]; ok $? "each side pins the other's leaf"
-grep -l "PRIVATE KEY" "$S"/creds-*/own-ca.pem "$S"/creds-*/own-identity.json "$S"/creds-*/peer*.json 2>/dev/null | grep -q . ; [ $? = 1 ]; ok $? "the public files hold no private key"
-! ls "$S"/creds-*/ | grep -qi "ca-key\|ca_key"; ok $? "no CA private key file was written"
+pub=0; for side in lsn con; do for f in own-ca.pem own-identity.json peer-ca.pem peer.json; do
+  [ -s "$S/creds-$side/$f" ] && ! grep -q "PRIVATE KEY" "$S/creds-$side/$f" && pub=$((pub + 1)); done; done
+[ "$pub" = 8 ]; ok $? "the eight public files exist and hold no private key ($pub)"
+[ "$(ls "$S/creds-lsn" | sort | tr '\n' ' ')" = "own-ca.pem own-cert.pem own-identity.json own-key.pem peer-ca.pem peer.json " ]; ok $? "exactly the expected files per side: no CA private key was written"
 
 # ---- configuration / approval writers -------------------------------------------------------------------------------------------
 # cfg <file> <side> <role> <port> <out> [key=json ...]   (later keys override; "network" etc. as JSON)
@@ -76,14 +81,16 @@ approval() {
   python3 -I - "$@" "$MS" <<'PY'
 import json, sys, hashlib, datetime
 f, cfgf, reply = sys.argv[1:4]
+import os
 off = int(sys.argv[4]) if len(sys.argv) > 5 and sys.argv[4] != "" else 0
 sha = sys.argv[5] if len(sys.argv) > 6 and sys.argv[5] != "" else hashlib.sha256(open(cfgf, "rb").read()).hexdigest()
-ms = sys.argv[-1]
+ms = os.environ.get("APPROVAL_BUNDLE") or sys.argv[-1]
+late = 10 if os.environ.get("APPROVAL_PRESENTED_LATE") else -5
 now = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=off)
 iso = lambda t: t.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 json.dump({"schema": "glacier-relay.peer-transport-approval/1", "run_id": "m7l1-rehearsal",
            "gate": "M7-L1 loopback rehearsal — TEST FIXTURE, not an operator's approval",
-           "presented_utc": iso(now - datetime.timedelta(seconds=5)), "config_sha256": sha, "bundle_manifest_sha256": ms,
+           "presented_utc": iso(now + datetime.timedelta(seconds=late)), "config_sha256": sha, "bundle_manifest_sha256": ms,
            "operator_reply_verbatim": reply, "recorded_utc": iso(now)}, open(f, "x"), indent=1)
 PY
 }
@@ -187,10 +194,11 @@ refuse() {
   cfg "$d/cfg.json" mac "${ROLE:-listen}" "$port" "$d/out" "$@"
   local s; s=$(sha "$d/cfg.json"); [ -n "${SHA_OVERRIDE:-}" ] && s=$SHA_OVERRIDE
   [ -n "${APPROVAL:-}" ] && eval "$APPROVAL"
-  sh "$B/kit/start.sh" "$B" "$d/cfg.json" "$s" > "$d/console.txt" 2>&1; local rc=$?
+  local bb=${BUNDLE:-$B}
+  sh "$bb/kit/start.sh" "$bb" "$d/cfg.json" "$s" > "$d/console.txt" 2>&1; local rc=$?
   local made=no; [ "$name" != out-exists ] && [ -e "$d/out" ] && made=yes
-  [ "$rc" = 2 ] && grep -q "REFUSED (before any socket; ssl started: false)" "$d/console.txt" && grep -q -- "$expect" "$d/console.txt" && [ $made = no ] \
-    && ! ss -H -ltn | grep -q ":$port "
+  # the evidence of "before any socket" is the exit 2 with peer.exs's own line (ssl not started) and no output directory
+  [ "$rc" = 2 ] && grep -q "REFUSED (before any socket; ssl started: false)" "$d/console.txt" && grep -q -- "$expect" "$d/console.txt" && [ $made = no ]
   ok $? "refused before any socket: $name (exit $rc; '$(grep -o 'REFUSED.*' "$d/console.txt" | cut -c1-150)')"
 }
 refuse wildcard "unspecified" 'network.listen=["0.0.0.0", 4760]'
@@ -205,9 +213,21 @@ refuse bundle-pin "bundle manifest" "bundle={\"manifest_sha256\":\"$(printf '%06
 refuse runtime "OTP release" 'runtime={"otp_release":"27","elixir_version_prefix":"1.19."}'
 refuse out-exists "already exists"
 refuse unknown-key "unknown configuration keys" 'bind_any=true'
+refuse bundle-not-object "bundle must be exactly" 'bundle="x"'
+# a modified and an extra bundle file, against the unchanged manifest (verifier V4/V10)
+cp -a "$B" "$A/bundle-modified"; echo "an edit" >> "$A/bundle-modified/kit/README.md"
+BUNDLE=$A/bundle-modified refuse bundle-modified "bundle files differ from the manifest"
+cp -a "$B" "$A/bundle-extra"; : > "$A/bundle-extra/ebin/glacier_relay/Elixir.Stray.beam"
+BUNDLE=$A/bundle-extra refuse bundle-extra "manifest does not list"
+rm -rf "$A/bundle-modified" "$A/bundle-extra"
 cp -a "$S/creds-lsn" "$S/creds-lsn-0644"; chmod 644 "$S/creds-lsn-0644/own-key.pem"
 refuse key-mode "mode 0600" "credentials.key_file=\"$S/creds-lsn-0644/own-key.pem\""
 rm -rf "$S/creds-lsn-0644"
+# a key that PEM-decodes but whose body is no key (verifier V3): refused by the kit, never left to fail inside a handshake
+mkdir -m 700 "$S/creds-badkey"; cp "$S/creds-lsn/own-cert.pem" "$S/creds-lsn/peer-ca.pem" "$S/creds-badkey/"
+printf -- '-----BEGIN EC PRIVATE KEY-----\n%s\n-----END EC PRIVATE KEY-----\n' "$(head -c 60 /dev/urandom | base64 -w0)" > "$S/creds-badkey/own-key.pem"; chmod 600 "$S/creds-badkey/own-key.pem"
+refuse key-not-decoding "does not decode" "credentials.key_file=\"$S/creds-badkey/own-key.pem\"" "credentials.cert_file=\"$S/creds-badkey/own-cert.pem\"" "credentials.peer_ca_file=\"$S/creds-badkey/peer-ca.pem\""
+rm -rf "$S/creds-badkey"
 for v in not-standalone:'Go ahead, but wait for me' word-inside:'I am ready, go ahead' ready-not-accepted:'Ready'; do
   n=${v%%:*}; r=${v#*:}
   ROLE=connect APPROVAL="approval \"\$d/approval.json\" \"\$d/cfg.json\" '$r'" refuse "approval-$n" "not a standalone approval" \
@@ -221,12 +241,50 @@ ROLE=connect APPROVAL="approval \"\$d/approval.json\" \"\$d/cfg.json\" 'Go ahead
   'network={"profile":"lan_ipv4","prefix_length":8,"connect":["127.0.0.1",4760]}' 'role="connect"' \
   "approval={\"file\":\"$A/args-approval-other-config/approval.json\",\"max_age_s\":1800,\"accepted_replies\":[\"Go ahead\"]}"
 
+APPROVAL_BUNDLE=$(printf '%064d' 3) ROLE=connect APPROVAL="approval \"\$d/approval.json\" \"\$d/cfg.json\" 'Go ahead'" refuse approval-other-bundle "names bundle" \
+  'network={"profile":"lan_ipv4","prefix_length":8,"connect":["127.0.0.1",4760]}' 'role="connect"' \
+  "approval={\"file\":\"$A/args-approval-other-bundle/approval.json\",\"max_age_s\":1800,\"accepted_replies\":[\"Go ahead\"]}"
+APPROVAL_PRESENTED_LATE=1 ROLE=connect APPROVAL="approval \"\$d/approval.json\" \"\$d/cfg.json\" 'Go ahead'" refuse approval-presented-late "recorded before its presentation" \
+  'network={"profile":"lan_ipv4","prefix_length":8,"connect":["127.0.0.1",4760]}' 'role="connect"' \
+  "approval={\"file\":\"$A/args-approval-presented-late/approval.json\",\"max_age_s\":1800,\"accepted_replies\":[\"Go ahead\"]}"
+
+# ---- a wrong hello label: the listener's one connection ends before identification; no reconnection ------------------------------
+c=wronglabel; port=$(free_port); mkdir -p "$A/$c"
+cfg "$A/$c/lsn.json" mac listen "$port" "$A/$c/out-lsn" 'limits.lifetime_s=20'
+cfg "$A/$c/con.json" windows connect "$port" "$A/$c/out-con" 'label="l1-someone-else"' 'limits.lifetime_s=20' 'limits.connect_window_s=10'
+sh "$B/kit/start.sh" "$B" "$A/$c/lsn.json" "$(sha "$A/$c/lsn.json")" > "$A/$c/console-lsn.txt" 2>&1 & LBG=$!
+wait_grep "$A/$c/console-lsn.txt" "endpoint up" 100
+sh "$B/kit/start.sh" "$B" "$A/$c/con.json" "$(sha "$A/$c/con.json")" > "$A/$c/console-con.txt" 2>&1; CRC=$?
+wait $LBG; LRC=$?
+[ "$LRC" = 4 ] && [ "$(jget "$A/$c/out-lsn/summary.json" outcome)" = connection_ended_before_identification ]; ok $? "wrong label: the listener ends with exit 4, its one connection never identified ($LRC)"
+[ "$CRC" = 4 ] && [ "$(jget "$A/$c/out-con/summary.json" endpoint_counts.connections)" = 1 ]; ok $? "wrong label: the connector ends with exit 4 after one connection, no reconnection ($CRC)"
+[ "$(jget "$A/$c/out-lsn/summary.json" endpoint_counts.connections)" = 1 ] && [ "$(jget "$A/$c/out-lsn/summary.json" sinks_done)" = "[]" ]; ok $? "wrong label: no data reached the listener"
+
+# ---- a stop right at the start: still a recorded stop (the trap precedes peer.pid) --------------------------------------------
+c=early-stop; port=$(free_port); mkdir -p "$A/$c"
+cfg "$A/$c/lsn.json" mac listen "$port" "$A/$c/out-lsn"
+sh "$B/kit/start.sh" "$B" "$A/$c/lsn.json" "$(sha "$A/$c/lsn.json")" > "$A/$c/console-lsn.txt" 2>&1 & LBG=$!
+wait_file "$A/$c/out-lsn/peer.pid" 100
+sh "$B/kit/stop.sh" "$A/$c/out-lsn" > "$A/$c/stop.txt" 2>&1; wait $LBG; LRC=$?
+[ "$LRC" = 6 ] && [ "$(jget "$A/$c/out-lsn/summary.json" outcome)" = stopped_by_signal ]; ok $? "early stop: exit 6 with its summary ($LRC)"
+
+# ---- the declared port already taken: the endpoint cannot start (exit 7, recorded) --------------------------------------------
+c=port-taken; port=$(free_port); mkdir -p "$A/$c"
+python3 -I -c 'import socket,sys,time; s=socket.socket(); s.bind(("127.0.0.1",int(sys.argv[1]))); s.listen(1); time.sleep(30)' "$port" & HOLD=$!
+sleep 0.5
+cfg "$A/$c/lsn.json" mac listen "$port" "$A/$c/out-lsn"
+sh "$B/kit/start.sh" "$B" "$A/$c/lsn.json" "$(sha "$A/$c/lsn.json")" > "$A/$c/console-lsn.txt" 2>&1; LRC=$?
+kill "$HOLD"; wait "$HOLD" 2>/dev/null
+[ "$LRC" = 7 ] && [ "$(jget "$A/$c/out-lsn/summary.json" outcome)" = endpoint_failed ] && grep -q eaddrinuse "$A/$c/out-lsn/summary.json"; ok $? "port taken: exit 7, endpoint_failed (eaddrinuse) recorded ($LRC)"
+
 # ---- scans: the self-test's planted controls, then every byte this rehearsal wrote ----------------------------------------------
 $EX "$B/kit/scan.exs" --selftest "$A/scan-selftest" > "$A/scan-selftest.txt" 2>&1; ok $? "scanner self-test (planted positives found by class, negatives clean)"
 elixir "$B/kit/scan.exs" "$A" --known-key "$S/creds-lsn/own-key.pem" --known-key "$S/creds-con/own-key.pem" --known-key "$S/creds-zzz/own-key.pem" \
   > "$A/scan-attempt.txt.partial" 2>&1; rc=$?
 mv "$A/scan-attempt.txt.partial" "$A/scan-attempt.txt"
-grep -q "MATERIAL HITS: 0 " "$A/scan-attempt.txt" && [ "$rc" = 0 ]; ok $? "material scan of the attempt directory with all three keys known: $(grep -o 'MATERIAL HITS: [0-9]*' "$A/scan-attempt.txt")"
+nf=$(grep -o '^scanned [0-9]* files' "$A/scan-attempt.txt" | grep -o '[0-9]*')
+grep -q "MATERIAL HITS: 0 " "$A/scan-attempt.txt" && grep -q "; known keys 3 " "$A/scan-attempt.txt" && [ "${nf:-0}" -gt 100 ] && [ "$rc" = 0 ]
+ok $? "material scan of the attempt directory ($nf files) with all three keys known: $(grep -o 'MATERIAL HITS: [0-9]*' "$A/scan-attempt.txt")"
 
 # ---- leftovers ----------------------------------------------------------------------------------------------------------------
 left=0; for f in "$A"/*/out-*/peer.pid; do p=$(sed -n 1p "$f"); ps -p "$p" > /dev/null 2>&1 && left=$((left + 1)); done

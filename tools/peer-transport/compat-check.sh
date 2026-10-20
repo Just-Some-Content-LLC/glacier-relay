@@ -10,11 +10,14 @@
 #   the OTP test-certificate functions the kit's creds.exs uses; Elixir's JSON module; whether this emulator would start
 #   distributed; whether the Erlang flag variables are set (names only); with a bundle: whether its modules load here;
 #   with a port: whether anything listens on it; the local IPv4 addresses (listed for a human to choose; nothing is selected);
-#   on macOS the application firewall's state (read only).
+#   on macOS the application firewall's state (read only); a user Erlang boot file (named only; start.sh refuses one).
+# A version manager's shim is reported and NOT executed (it may read version files above this directory or install a runtime):
+# then name the real elixir with GLACIER_PEER_ELIXIR (the same variable start.sh honours) and run this check again.
 # Then MISSING PREREQUISITES (none, or each one named). Exit 0 always unless the arguments are wrong (2).
 set -u
 B=${1:-}; PORT=${2:-}
 [ -z "$B" ] || [ -d "$B/ebin/glacier_relay" ] || { echo "compat-check: $B is not a peer-transport bundle" >&2; exit 2; }
+[ -z "$B" ] || B=$(cd "$B" && pwd -P)
 case "$PORT" in ''|[0-9]*) ;; *) echo "compat-check: the port must be a number" >&2; exit 2;; esac
 cd "$(dirname "$0")" || exit 2
 missing=""
@@ -26,20 +29,25 @@ if [ "$(uname -s)" = Darwin ]; then echo "macos: $(sw_vers -productVersion 2>/de
 for v in ERL_AFLAGS ERL_FLAGS ERL_ZFLAGS ELIXIR_ERL_OPTIONS MIX_ENV MIX_HOME HEX_HOME; do
   eval "x=\${$v+set}"; [ "$x" = set ] && echo "environment: $v is set (start.sh removes the ERL_* / ELIXIR_ERL_OPTIONS ones for the peer)"
 done
-E=$(command -v elixir 2>/dev/null || true); R=$(command -v erl 2>/dev/null || true)
-echo "elixir on PATH: ${E:-none}"; echo "erl on PATH: ${R:-none}"
+E=${GLACIER_PEER_ELIXIR:-$(command -v elixir 2>/dev/null || true)}; R=$(command -v erl 2>/dev/null || true)
+echo "elixir to be used: ${E:-none}${GLACIER_PEER_ELIXIR:+ (from GLACIER_PEER_ELIXIR)}"; echo "erl on PATH: ${R:-none}"
+shim=""
 for p in "$E" "$R"; do
   [ -n "$p" ] || continue
-  case "$p" in *asdf*|*mise*|*rtx*|*shims*) echo "  $p looks like a version manager's shim: the version below is the one it resolves from $(pwd)";; esac
+  case "$p" in *asdf*|*mise*|*rtx*|*/shims/*) shim="$shim $p"; echo "  $p looks like a version manager's shim: NOT executed by this check";; esac
   [ -L "$p" ] && echo "  $p -> $(readlink "$p")"
 done
+for rc in "$HOME/.erlang" "${XDG_CONFIG_HOME:-$HOME/.config}/erlang/.erlang" "$HOME/Library/Application Support/erlang/.erlang"; do
+  [ -e "$rc" ] && { echo "Erlang boot file present: $rc (not read; start.sh refuses to run while it exists)"; note "an Erlang boot file exists: $rc"; }
+done
 if [ -z "$E" ]; then note "elixir is not on PATH"; fi
-if [ -n "$E" ]; then
-  echo "elixir --version:"; env -u ERL_AFLAGS -u ERL_FLAGS -u ERL_ZFLAGS -u ELIXIR_ERL_OPTIONS elixir --version 2>&1 | sed 's/^/  /'
+if [ -n "$shim" ]; then note "a version manager's shim is on the path ($shim); name the real elixir with GLACIER_PEER_ELIXIR — the runtime was not examined"; fi
+if [ -n "$E" ] && [ -z "$shim" ]; then
+  echo "elixir --version:"; env -u ERL_AFLAGS -u ERL_FLAGS -u ERL_ZFLAGS -u ELIXIR_ERL_OPTIONS -u ERL_LIBS ERL_CRASH_DUMP_BYTES=0 "$E" --version 2>&1 | sed 's/^/  /'
   PA=""; [ -n "$B" ] && PA="-pa $B/ebin/glacier_relay"
   # shellcheck disable=SC2086
   [ -n "$B" ] && export M7L1_BUNDLE_GIVEN=1
-  OUT=$(env -u ERL_AFLAGS -u ERL_FLAGS -u ERL_ZFLAGS -u ELIXIR_ERL_OPTIONS elixir $PA -e '
+  OUT=$(env -u ERL_AFLAGS -u ERL_FLAGS -u ERL_ZFLAGS -u ELIXIR_ERL_OPTIONS -u ERL_LIBS ERL_CRASH_DUMP_BYTES=0 "$E" $PA -e '
     say = fn k, v -> IO.puts("#{k}: #{v}") end
     otp = System.otp_release()
     say.("otp_release", otp)

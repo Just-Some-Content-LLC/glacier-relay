@@ -30,8 +30,10 @@ Operator tooling for **one transport-only test of the peer link between two mach
 
 ## Prerequisites (to be checked on the Mac under the L2 authorization, not assumed)
 
-- **The runtime:** Erlang/OTP **28** and Elixir **1.19.x** on the PATH. The bundle is BEAM bytecode built and qualified with OTP 28.4.2 / Elixir 1.19.6, and every start refuses a different OTP release or Elixir minor.
-  - `elixir` existing on the Mac does **not** establish this. `compat-check.sh` reports the version the PATH actually resolves, including through a version manager's shim.
+- **The runtime:** Erlang/OTP **28** and Elixir **1.19.x**: on the PATH, or named by absolute path in `GLACIER_PEER_ELIXIR`. The bundle is BEAM bytecode built and qualified with OTP 28.4.2 / Elixir 1.19.6, and every start refuses a different OTP release or Elixir minor.
+  - `elixir` existing on the Mac does **not** establish this. `compat-check.sh` reports the runtime it would use.
+  - A version manager's shim (asdf, mise) is reported and **not executed**, since it may read version files above the kit or install a runtime; `start.sh` refuses one. Name the real `elixir` in `GLACIER_PEER_ELIXIR` instead.
+  - A user Erlang boot file (`~/.erlang`, or `.erlang` in the user configuration directory) would run before the peer's checks: `compat-check.sh` names it and `start.sh` refuses to run while it exists.
   - A missing or different runtime is listed for a decision. The kit does not install, upgrade or switch anything.
 - **TLS:** ssl with TLS 1.3; crypto with P-256 and ECDSA.
 - **The shell:** a POSIX `sh`, plus `ps`, `kill`, `tar` and `shasum` (macOS base system), and `lsof` / `ifconfig` for the report.
@@ -55,8 +57,20 @@ All paths are absolute. `<B>` is the unpacked bundle directory, `<S>` the owned 
 5. **The run configuration**, one per side (schema below). Its sha256 is computed and presented with the exact addresses, port and pins. The Windows side's configuration names an approval record (below).
 6. **Start the listener first**, on the Mac in a terminal: `sh <B>/kit/start.sh <B> <config> <sha256>`. Then start the connector on Windows.
    - Each prints its checks, the endpoint, the listening sockets of its own VM, the identification and the two courses, then FINISHED with its outcome.
-   - Exit status: 0 = complete and reconciled; 3 = no peer, or the lifetime ended; 4 = the connection ended first; 5 = complete but not reconciled; 2 = refused before any socket.
-7. **Stop early, if needed:** `sh <B>/kit/stop.sh <O>`, from another terminal.
+   - `start.sh` removes `ERL_AFLAGS`, `ERL_FLAGS`, `ERL_ZFLAGS`, `ELIXIR_ERL_OPTIONS` and `ERL_LIBS` for the peer, and turns crash dumps off (`ERL_CRASH_DUMP_BYTES=0`), because a dump would hold the private key.
+   - Exit status:
+
+     | Status | Meaning | Summary written |
+     |---|---|---|
+     | 0 | complete and reconciled | yes |
+     | 2 | refused before any socket | no; the output directory is not created |
+     | 3 | no peer, or the lifetime ended | yes |
+     | 4 | the connection ended before completion or before identification; never reconnected | yes |
+     | 5 | complete but not reconciled | yes |
+     | 6 | stopped by `stop.sh` (SIGTERM) | yes |
+     | 7 | the endpoint could not start (the declared address not this machine's, or the port taken) | yes |
+     | 124 | the hard backstop, lifetime + 15 s | no |
+7. **Stop early, if needed:** `sh <B>/kit/stop.sh <O>`, from another terminal. It acts only on the process recorded in `<O>/peer.pid` whose command line is that run's peer, and it checks that again before any KILL.
 8. **Scan, then clean up:**
    - `elixir <B>/kit/scan.exs <O> --known-key <S>/creds-<side>/own-key.pem` must report MATERIAL HITS: 0;
    - then remove `<S>/creds-<side>`. This is a logical deletion, not secure erasure.
@@ -89,6 +103,8 @@ All paths are absolute. `<B>` is the unpacked bundle directory, `<S>` the owned 
 
 The addresses above are **placeholders**: the real ones are named by the L2 authorization.
 
+**The bundle** is checked before anything else, even before the configuration is decoded. The files under it must be exactly those listed in its `MANIFEST.sha256`, each with its sha256. So keep the configuration, credentials and outputs **outside** the bundle directory.
+
 ## The approval record (`glacier-relay.peer-transport-approval/1`)
 
 A JSON file written by the coordinator holding:
@@ -102,6 +118,8 @@ A JSON file written by the coordinator holding:
 
 A longer message that merely contains an approval word is **not** consent. The coordinator then asks for a standalone reply and never composes one from another message. A no-game transport stage asks for no game recording and no HITMAN "Ready".
 
+A configuration without an `approval` entry needs none. By convention only the side the coordinator starts (the Windows connector) names one, because the operator starting the Mac listener in their own terminal is that side's act. The L2 authorization can require it on both.
+
 ## Outputs (`<O>`, created exclusively, 0700)
 
 - `peer.pid`: the OS process id and the configuration path, for `stop.sh`;
@@ -110,3 +128,10 @@ A longer message that merely contains an approval word is **not** consent. The c
 - `summary.json`: the outcome, both identities and pins (public), the endpoint counts, the source and sink reconciliation.
 
 None of them holds a private key or a token.
+
+**The scan** (`scan.exs`) counts as material:
+- a decodable PEM private key, including one inside a JSON string;
+- each known key's DER as raw bytes, base64, hex, or the decimal byte list the BEAM prints (inspect, `~p`, `~w`);
+- an EC key's private scalar in each of those forms.
+
+It walks directories without glob expansion and refuses a directory with nothing to scan. Its `--selftest` plants positive controls for every form, each of which must be found by its own class, plus negative controls (pattern text, a certificate, suggestive file names, random numbers). It then removes the planted key and the positives.
