@@ -470,3 +470,29 @@ The suite grew from 866 to 888 (+14 lifecycle, +8 abandon). The known failing se
 ### 14.12 M7-L2 (unchanged, not granted)
 
 Section 12's procedure stands, with one addition from finding 4: **SASL reports stay off** on both machines (no `handle_sasl_reports`, no handler serialising raw report terms). A transport-only stage asks for no game recording and no HITMAN "Ready". Its own authorization still has to name the Mac's actual runtime, addresses, the permission to listen, the transfer channel and the owned directories.
+
+## 15. M7-L1 accepted for its demonstrated offline scope (2026-10-20)
+
+**Authorization:** "Glacier Relay — M7-L1 acceptance and M7-L2 transport-only authorization". It accepts M7-L1 and its correction (section 14) for the demonstrated offline scope. The review inspected the pushed code and records. The Windows test executions, the local seals and anything about the Mac remain **recorded evidence**, to be verified where they are relied on. Sections 1–14 are unchanged. **The original gate (section 6) stays NOT MET** in its historical record; the acceptance rests on the corrected code, its retained gate of record (`beam-gate-attempt1`) and the rehearsal from the rebuilt bundle (`kit-rehearsal-attempt1`), both in `m7l1-correction\` (`f7bf96bb…`). Five clean suites are evidence on those inputs, not a statistical guarantee.
+
+**Accepted:**
+- the corrected default listener's actual behaviour: the busy refusal closed before any TLS byte; handshake failures handled; an acceptor's loss stopping the endpoint; and teardown ending the acceptor and its sockets;
+- `Hub.abandon/1` forgetting only a matching pending preparation;
+- the diagnosed corrections of the three test families;
+- the five strict suites, 888 / 0 each, with seeds declared before any run;
+- the 95 / 0 rehearsal from the corrected bundle (`20987b6c…`, archive `61720a82…`), with exact accounting in both directions.
+
+**Qualifications kept with the acceptance:**
+- T1 still requires the test process to release one controlled sample within a stated 120 ms lead before the bound. It is improved and qualified, not scheduling-independent.
+- The verifier's six SessionTest startup timeouts (finding 6) in its separate full suite stand as reported. They did not recur in the gate, and they are not rerun to chase a statistical conclusion.
+- The verifier's report survives; its raw run and mutation outputs were deleted (14.10 item 7). Claims that rest only on that report are **report-supported**, not independently replayable raw evidence. The author's retained gate, rehearsal and before / after evidence are separate. No verifier campaign is recreated to repair the account.
+- The reconstructed diagnostic sources stay marked as reconstructed, each with its matching pre-recorded sha256 (14.10 item 2).
+- The claim record's guard hash is empty; the independently pinned checkpoint identity is the disclosed substitute (14.10 item 1).
+
+**The web decision (finding 3):** accepted as a **documented, deferred M3 reliability limitation**, not a blocker for the headless transport experiment. A `:kill`ed web endpoint can escalate to a web-subtree restart. Nothing here claims endpoint-only recovery or immunity to repeated crashes. The web supervisor, its restart budget and the kill test are not changed. The transport kit starts no dashboard and no ingestion or command application.
+
+**Residuals retained:** the unexercised ownership / close distinctions (finding 5), the accept loop's immediate retry on other errors (finding 7), and the report and dump limitations (finding 4: raw SASL terms, tracing, memory inspection and OS / core dumps are outside the tested confidentiality claim). M7-L2 includes no exhaustion, crash or fault-injection experiment.
+
+**Unchanged:** M6 and M7-C stay accepted for their scopes. M7 stays open. No milestone tag is created or moved.
+
+**M7-L2** is authorized: its preparation, and then, only after a separate approval of its exact configuration, one bounded transport-only exchange between the Windows/WSL host and the MacBook. That is not a game experiment. Its record is `docs/design/M7L2_LAN_TRANSPORT_RECORD.md`.

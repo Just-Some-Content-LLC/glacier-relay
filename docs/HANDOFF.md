@@ -1,5 +1,23 @@
 # Handoff checkpoint
 
+Updated: 2026-10-20, after **M7-L1's acceptance** (authorization "Glacier Relay — M7-L1 acceptance and M7-L2 transport-only authorization"; record `docs/design/M7L1_PEER_NETWORK_RECORD.md` section 15; pointer `docs/design/M7_NETWORK_GHOST.md` section 23). No code changed. No tag. M7 stays open.
+- **Accepted for its demonstrated offline scope:**
+  - the corrected default listener: busy closure, handshake handling, acceptor lifetime and teardown;
+  - `Hub.abandon/1` forgetting only a pending preparation;
+  - the three diagnosed test corrections;
+  - the five strict 888 / 0 suites with predeclared seeds;
+  - the 95 / 0 rehearsal from the rebuilt bundle (`20987b6c…`).
+- The original L1 gate stays NOT MET as recorded, and five clean suites are not a statistical guarantee.
+- **Qualifications kept:**
+  - T1's 120 ms release lead;
+  - the verifier's six SessionTest timeouts;
+  - the verifier's deleted raw outputs: claims resting only on its report are report-supported;
+  - the reconstructed probe sources;
+  - the empty guard hash in the claim record.
+- **Web finding 3:** accepted as a documented, deferred M3 reliability limitation; not changed.
+- **Residuals:** findings 4, 5 and 7 retained.
+- **M7-L2:** authorized. Preparation first, then one bounded, game-free transport exchange with the MacBook, only after a separate approval of its exact configuration (`docs/design/M7L2_LAN_TRANSPORT_RECORD.md`).
+
 Updated: 2026-10-20, after **the M7-L1 correction — the default listener, `Motion.Hub.abandon` and the gate's three test families, offline** (authorization "Glacier Relay — M7-L1 focused listener, abandonment and gate correction"; record `docs/design/M7L1_PEER_NETWORK_RECORD.md` section 14, appended; pointer `docs/design/M7_NETWORK_GHOST.md` section 22; evidence `m7l1-correction\`, sealed, 495 entries, manifest `f7bf96bbda757c10405c152bd6ae16d0d27188ffdd167dd30a2ed2630963ea69`). BEAM, tests and tooling only, on owned loopback sockets with throwaway credentials: no native change, HITMAN, content, Mac, LAN socket, real credential or firewall / WSL / epmd change. No tag. M7 stays open; full M7-L1 acceptance and M7-L2 are not granted.
 - **Code** (relay tree `90d40033`, `main` `9541c02` + docs; kit `4f473706` unchanged):
   - `42eb31b`: the default loopback listener now takes the profile's path. It accepts TCP and closes a busy second connection before any TLS byte (B1's `:ssl.close/1` left it open). It upgrades with `:ssl.handshake/3`, catching raise and exit, stops when its acceptor is lost, and kills its acceptor first at teardown. The address contract is unchanged (`127.0.0.1` only; port 0 allowed).

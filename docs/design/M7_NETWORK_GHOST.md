@@ -784,6 +784,10 @@ A separately authorized, BEAM / test / tooling-only pass (`M7L1_PEER_NETWORK_REC
 
 Nothing else in sections 15–21 changes. M7 is not complete; full M7-L1 acceptance and M7-L2 remain for review. M7-L2 adds one condition (record 14.12): SASL reports stay off.
 
+## 23. M7-L1 accepted; M7-L2 authorized (pointer; 2026-10-20)
+
+M7-L1 and its correction are accepted for their demonstrated offline scope (`M7L1_PEER_NETWORK_RECORD.md` section 15). The original gate stays NOT MET as recorded. The killed-endpoint escalation (record 14.7 finding 3) is a documented, deferred M3 reliability limitation. M7-L2 is authorized: one bounded transport-only exchange between the Windows/WSL host and the MacBook, under section 20's profile, after a separate approval of its exact configuration; no game. Its record is `M7L2_LAN_TRANSPORT_RECORD.md`. Sections 15–22 are unchanged. M7 is not complete.
+
 ## 13. Sources
 
 | Claim area | Source (blobs in `source-facts.txt`) |
