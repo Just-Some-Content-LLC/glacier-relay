@@ -823,6 +823,69 @@ The preparation is accepted for its demonstrated offline scope (`M7L3_LAN_GAME_P
 
 The run therefore stopped before any root claim, Mac contact, credential, console, installation or game launch. Nothing changed; the closing options are in that section. Sections 15–27 are unchanged. M7 is not complete.
 
+## 29. Source-sequence admission: a stationary-prefix start condition (normative; amends 15.3; 2026-10-20)
+
+Authorization "Glacier Relay — M7-L3 source-sequence admission correction" (option A of `M7L3_LAN_GAME_PREPARATION.md` section 13). This section is written before the code. It adds one **optional, local** admission condition for a destination session. It is not a new remote command, wire field, transport version, native rule or trajectory controller. A session opened without it keeps the contract of sections 15–17 exactly.
+
+### 29.1 Distinctions
+
+1. **A receipt count is not a source sequence.** Spacing, producer drops and stale-queue drops (15.6, 17.3) advance a source's schedule without delivering every index. The host's count of received samples can therefore be lower than the source's position. The transport keeps doing this; nothing here changes it.
+2. **Observed progress is scoped.** It belongs to one current peer connection generation, one peer boot, one stream identity and that stream's declared provenance (`source_kind`, `label`, `course`). It is not a global counter. It is not the source's present position on any clock.
+3. **A source sequence is progress within one pinned synthetic course.** It does not establish absolute freshness, bound one-way latency, prove that the source is stationary now, or map arbitrary game samples onto that course.
+4. **The destination envelope and the start condition are different properties.** A late first target can fit the 15.3 displacement bound (at most `max_speed` × `credit` from the opening snapshot: 0.1 m at M7-C's limits). Fitting it does not establish a start inside the stationary prefix.
+5. **A status lookup followed by a later open is not atomic.** The condition is enforced where the hub prepares the session, where it activates it, and where the destination decides its first target. An operator tool's earlier reading is advisory only.
+
+### 29.2 Per-stream received progress (every open peer stream)
+
+The hub keeps a small record for each stream currently open on the current peer connection, updated for every sample it processes, whether the sample is unrouted, arrives while a session is being opened, or is routed to an active session. The record holds:
+- `received`: the sample items processed for the stream, in any order;
+- `advanced`, and `not_advanced`: of those, the ones whose sequence number was above every earlier one, and the duplicates or older ones;
+- `first_seq`, and `index_gaps`: the first sequence number seen, and the sum of the index jumps between advancing samples. A gap is an **observed** gap. Its cause (spacing, a producer drop, a stale drop or anything else) is not known, and `highest − received` is not used as a loss count;
+- `high`: the highest sequence number processed (decoded by `Peer.Codec`: a positive integer), with that same sample's horizontal words (x, y), its `qualified` flag, its source time (`src_mono_ms`, the source's clock) and the receiver's processing time (this node's clock), kept apart. It is absent until the first sample.
+
+Rules:
+- An older or duplicate sample never moves `high` and never overwrites its values.
+- A newer unqualified sample replaces `high`, so an older qualified sample can never stand in for current progress.
+- Absent progress is not zero progress.
+- A foreign connection, an ended or absent stream, and any other stream identity cannot qualify a stream.
+- The record ends with its stream: on `stream.end`, peer-link loss or replacement it is gone and is no longer admission evidence. A stream identity that ended on a connection and is opened again there is marked reopened and cannot qualify. Progress never transfers to a new generation, and a stream bound once is never bound again (15.4).
+- The hub's status shows the record. Bounded decision evidence goes to the existing motion trace and journal; no recorder of every pre-session sample is added.
+
+### 29.3 The admission condition (opt-in)
+
+The operator's approval may carry one `admission` of kind `stationary_prefix`. It is fixed with the rest of the approval (15.3) and journaled with it; no peer message can supply or change it. Its fields:
+
+| Field | Meaning | Bound |
+|---|---|---|
+| `anchor` | the opening anchor's horizontal words (x, y) | must equal the qualified inspection's x / y words (the authority checks), and then the native-confirmed opening snapshot's (the hub checks) |
+| `course` | the declared `course` text the stream must carry | exact, non-empty, at most 256 bytes |
+| `max_open_seq` | the highest sequence number allowed at preparation | 1 … `max_activation_seq` |
+| `max_activation_seq` | the highest sequence number allowed when the native-open result is processed | `max_open_seq` … `first_changing_seq − 1` |
+| `first_changing_seq` | the course's first sample that leaves the anchor | `max_activation_seq + 1` … 100,000 |
+
+It is allowed only for a stream with `source_kind: synthetic`. The numbers belong to the opted-in course, not to motion in general. For M7-L3 (M7-C's course: 241 samples, the first changing sample 82) they are: `max_open_seq` 55, `max_activation_seq` 61, `first_changing_seq` 82. Every boundary is inclusive as written: preparation passes with a highest observed sequence ≤ 55; activation passes with ≤ 61; the first target must come from a sample with sequence ≤ 81.
+
+### 29.4 Where it is enforced
+
+- **Preparation** (`Hub.prepare_session`, before anything is issued): the named stream is open on the current connection, not reopened; its declared kind is `synthetic` and its declared course equals `course`; it has progress; and `high` is qualified, at exactly `anchor`, with sequence ≤ `max_open_seq`. Otherwise nothing is issued (`{:admission_not_met, why}`). The hub reads its own current record at that moment. An operator's earlier snapshot plays no part.
+- **Issuance** (the authority's `prepare_open`, before the command is sent): the admission is well formed, the stream kind is `synthetic`, and `anchor` equals the qualified inspection's x / y words. The authority journals the admission in the accepted approval. Facade and authority keep their existing one-way relationship: the hub never calls the authority.
+- **Activation** (`Hub.activate_session`, when the authority's cast with the native-open result is processed, before any sample is routed): the same record is re-evaluated with `max_activation_seq`, the stream must still be bound and open, and `anchor` must equal the opening snapshot's x / y. A failure takes the existing close-on-activation path (`ghost.close` on the motion link). No target is forwarded. The open command was issued and stays recorded as issued; no budget is refunded, re-armed or reset.
+- **First target** (`Motion.Destination`): until a first target is confirmed, the session is *acquiring*. While acquiring, a validated sample whose sequence is ≥ `first_changing_seq`, or whose x / y words differ from the opening snapshot's, closes the session (`acquisition_missed`) and is not forwarded, even if it would fit the displacement bound. The single in-flight slot means no displaced target can be forwarded before the acquisition target's acknowledgement. Acquisition is established only by that acknowledgement: `applied` exact at the anchor, or `skipped_identical` at the anchor, which is anchor evidence, not a displacement. A sample that was received, or pending and superseded, establishes nothing.
+
+After acquisition the rules of 15.3–17 apply unchanged: pacing, the confirmed reference, the displacement bound, deadlines. Nothing requires every index to arrive. Nothing synthesizes, interpolates, clamps, restarts or replays a sample.
+
+### 29.5 What this establishes, and what it does not
+
+It establishes a locally qualified start in terms of processed observations and forwarded targets: the first target forwarded is a qualified prefix sample at exactly the anchor, and it is confirmed before anything displaced is forwarded. It does not establish that the remote producer has paused, that no newer bytes sit in transport buffers, absolute freshness, one-way latency, or anything about a game source. The z word of a synthetic sample is metadata. Application stays horizontal-only against the independently verified opening snapshot (15.3, 15.5).
+
+### 29.6 Unchanged
+
+- The wire and its codec, the native, and the native rules.
+- The limits and their bounds.
+- The 30 s arming TTL, inspection freshness, the BEAM and native deadlines, and the one-session budget.
+- `Peer.Connection` and the source's queue policy.
+- Every caller that does not pass an `admission`.
+
 ## 13. Sources
 
 | Claim area | Source (blobs in `source-facts.txt`) |
