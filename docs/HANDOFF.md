@@ -1,5 +1,29 @@
 # Handoff checkpoint
 
+Updated: 2026-10-20, after **M7-L1 — the opt-in peer-network profile and the transport-test kit, offline** (record `docs/design/M7L1_PEER_NETWORK_RECORD.md`; boundary `docs/design/M7_NETWORK_GHOST.md` section 20 and ADR 0010 amendment 14, committed before code as `47c2147`; pointer section 21; evidence `m7l1-offline\`, sealed, 732 entries, manifest `4cf04a32299ffa1180c821a80061467312e480969b666ba5a768433897462d89`). Only owned loopback sockets on the Windows/WSL host were used: no LAN socket, Mac contact, firewall / WSL / epmd change, HITMAN, DLL or real credential. No tag was created or moved. M7 stays open; M6 stays closed.
+- **Code** (relay tree `5f63cde9`): `Peer.Network`, a pure policy.
+  - Without `:network`, B1's loopback rule is unchanged.
+  - `lan_ipv4` names one concrete private IPv4 socket per role: a listener with its one initiator, or a connector with its one destination; a prefix of 8–30 and a port of 1024–65535.
+  - Refused: wildcard, multicast, broadcast, link-local, public, malformed and IPv6 addresses, a role mismatch, an address given twice, and a non-headless listener.
+  - The profile listener accepts TCP, closes non-initiators and second connections before any TLS byte, then upgrades under the unchanged TLS policy.
+  - `HeadlessPeer` gains `role: :connect`.
+  - B1's listen socket, which embeds the key, is redacted from status.
+- **Kit** (`tools/peer-transport/`, tree `4f473706`): `bundle.sh`, `compat-check.sh` (read only), `creds.exs`, `peer.exs` (every check before any socket; one bounded synthetic exchange each way; exits 0/2/3/4/5/6/7/124), `start.sh`, `stop.sh`, `scan.exs` (material-based, with positive controls), and `tests/rehearsal.sh`. **Never run on the Mac.**
+- **Verifier** (one, on `160d4eb`): 0 blockers, 1 major (the scanner's false negatives), the rest minor or notes; all fixed or dispositioned (`verifier\`).
+- **Tests:** +35 (866 in all). **Five-suite gate NOT MET**, three attempts kept with NOTEs:
+  - attempts 1–2: my own new tests' accounting assertions, corrected;
+  - attempt 2: pre-existing M3 `endpoint_test:224` and M7-B1 T1 ×2;
+  - attempt 3, on the final tree: compiles, format, areas and 4 of 5 suites clean (866/0); suite 2 failed pre-existing `restore_result_test` B ×2.
+  
+  Baseline diagnostic: 5 / 5 clean on `da39d5e4` today. Not re-run to obtain a pass.
+- **Kit rehearsal of record:** PASS, 95 / 0 (attempt 2), with exact accounting 57 / 57 / 57 each way, every failure case (exits 3/4/6/7), 24 refusals before any socket, and a 0-hit scan. Attempt 1 failed on a case-insensitive file-name collision in the scanner self-test (drvfs; APFS alike); it was fixed, and the planted throwaway keys were removed and listed.
+- **Findings left for review:**
+  - B1's busy refusal never closes its TCP connection (OTP 28 `ssl:close` on a `transport_accept` socket);
+  - `Motion.Hub.abandon` crashes with `BadBooleanError` on a refused share issue;
+  - B1's accept loop can lose its acceptor to a handshake exit;
+  - the five-suite gate's timing-tight B1 / M3 tests.
+- **Proposed next (not granted):** review; then M7-L2, one transport-only exchange (MacBook listening on `<MAC_IP>:4760` for `<WIN_IP>`, Windows connecting out). The permission it needs and the blank, unverified Mac facts are in record section 12.
+
 Updated: 2026-10-20, after **M7-C run 1's bounded acceptance** (`docs/design/M7C_ATTENDED_RECORD.md` section 11; authorization "Glacier Relay — M7-C acceptance and M7-L1 offline peer-network preparation"). M7 stays open; M6 stays closed; no tag was created or moved.
 - **Accepted scope:** one host; a finite share of the moving real local hero to the local headless sink, then a separately approved synthetic course driving Agent48 through repeated native setter calls, ending at its opening state. Sequential phases: a real player's motion did not drive the candidate.
 - **Accounts:** share — native 1,100, host relayed 1,099 (sequence 2 refused by the receiver-time rate guard), sink the same 1,099 values; about 18.3 Hz achieved (50 / 54.6 / 107 ms), nominal 50 ms. Destination — peer 241 = 3 before activation + 238; 8 of the 238 superseded in BEAM; native received and answered 230 = 152 skipped-identical + 78 applied.

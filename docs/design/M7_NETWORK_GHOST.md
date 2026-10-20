@@ -764,6 +764,17 @@ A transport-only test between two machines needs no game: two headless peers, ea
 
 Each of these needs its own authorization naming the actual addresses, the port, the certificate pins, the owned processes and the cleanup.
 
+## 21. M7-L1 offline peer-network preparation (pointer; 2026-10-20)
+
+Section 20 was implemented offline as written (`M7L1_PEER_NETWORK_RECORD.md`; evidence `m7l1-offline\`, sealed, 732 entries, manifest `4cf04a32299ffa1180c821a80061467312e480969b666ba5a768433897462d89`):
+- `Peer.Network`'s `lan_ipv4` profile, `HeadlessPeer`'s connect role, and the transport-test kit `tools/peer-transport/`;
+- qualified on owned loopback sockets only;
+- no LAN socket, no Mac contact, nothing native changed.
+
+Two implementation choices sit inside the section: the profile listener accepts TCP itself and upgrades with `:ssl.handshake/3`, because OTP 28's `:ssl.close/1` does not close a `transport_accept` socket; and B1's listen socket is now also redacted from the endpoint's status, because it embeds the private key.
+
+The five-suite gate of record was **not met**: pre-existing timing-tight tests failed in one or two runs of five; the record has the account. M7 is not complete, and M7-L2 is proposed, not granted.
+
 ## 13. Sources
 
 | Claim area | Source (blobs in `source-facts.txt`) |
