@@ -227,17 +227,16 @@ defmodule GlacierRelay.Motion.Hub do
     end
   end
 
+  # only the matching PENDING preparation is forgotten; an active, closing or done one, a foreign
+  # id and an absent share or session leave the state as it is (the M7-L1 correction: the strict
+  # `and` of the earlier form raised BadBooleanError on a nil session, so an authority refusal of a
+  # prepared share crashed the hub)
   def handle_call({:abandon, id}, _from, state) do
     state =
-      cond do
-        (state.session && state.session.id == id) and state.session.status == :pending ->
-          %{state | session: nil}
-
-        (state.share && state.share.id == id) and state.share.status == :pending ->
-          %{state | share: nil}
-
-        true ->
-          state
+      case state do
+        %{session: %{id: ^id, status: :pending}} -> %{state | session: nil}
+        %{share: %{id: ^id, status: :pending}} -> %{state | share: nil}
+        _ -> state
       end
 
     {:reply, :ok, state}
