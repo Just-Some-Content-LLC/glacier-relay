@@ -1,5 +1,13 @@
 # Handoff checkpoint
 
+Updated: 2026-10-20, after **M7-C run 1's bounded acceptance** (`docs/design/M7C_ATTENDED_RECORD.md` section 11; authorization "Glacier Relay — M7-C acceptance and M7-L1 offline peer-network preparation"). M7 stays open; M6 stays closed; no tag was created or moved.
+- **Accepted scope:** one host; a finite share of the moving real local hero to the local headless sink, then a separately approved synthetic course driving Agent48 through repeated native setter calls, ending at its opening state. Sequential phases: a real player's motion did not drive the candidate.
+- **Accounts:** share — native 1,100, host relayed 1,099 (sequence 2 refused by the receiver-time rate guard), sink the same 1,099 values; about 18.3 Hz achieved (50 / 54.6 / 107 ms), nominal 50 ms. Destination — peer 241 = 3 before activation + 238; 8 of the 238 superseded in BEAM; native received and answered 230 = 152 skipped-identical + 78 applied.
+- **Verified locally for the acceptance** (`m7l1-offline\checkpoint-attempt2`, 33 / 33): heads, tags, the m7c-run1 seal re-hashed (3,545 / 3,545), native6, content, the video's hash. The review itself checked remote heads and committed records only.
+- **Video** (external, not sealed, sha256 `6a1fc3db…` unchanged): inspected once as 13 stills and one crop strip (`m7l1-offline\media-review\`); it supports a displacement away and back against fixed scenery in the session's interval. "Gradual" stays testimony; no pixel-to-frame alignment.
+- **Wording:** complete-but-unspawned stays hypothesis H1; registry absence and the observed behaviour are separate facts.
+- **Not established:** collision, coupling, F4 cost, F2 frames, moving-source following, LAN, Mac, second game, animation, multiplayer.
+
 Updated: 2026-10-20, after **M7-B2's bounded acceptance and M7-C run 1 — the attended motion experiment** (record `docs/design/M7C_ATTENDED_RECORD.md`; the acceptance `docs/design/M7B2_NATIVE_RECORD.md` section 13; the pointer `docs/design/M7_NETWORK_GHOST.md` section 19; evidence `m7c-run1\`, sealed, 3,545 files, manifest `5da4a64afff678b692d484570245dbf9bbbcd57948882d6dbb046d53fb8f9ee5`). One attended HITMAN load and one Paris attempt on the one Windows host; full rollback. No tag was created or moved; M6 stays closed; **M7 is not complete**.
 - **M7-B2 accepted** for its demonstrated offline scope; the acceptance establishes no native6 behaviour in HITMAN by itself.
 - **Control:** a non-distributed run console (no node name, no distribution listener, no epmd use) hosting the relay and owning the headless peer (a second non-distributed OS process on `127.0.0.1:4760`, per-run pinned TLS, no token, no token path, no authority API). All endpoints loopback.

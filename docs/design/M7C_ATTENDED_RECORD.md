@@ -1,6 +1,6 @@
 # M7-C — the attended motion experiment, run 1 (record)
 
-**Status:** DONE (2026-10-20), awaiting architectural review.
+**Status:** DONE (2026-10-20); **accepted** for its demonstrated, bounded one-host scope (section 11, 2026-10-20). M7 stays open.
 - One attended HITMAN load and one Paris attempt with native6 installed, then a full rollback. Two sequential, separately approved phases: **one** finite read-only share of the local hero to the headless sink, then **one** bounded synthetic destination session for Agent48. It ended at its opening words, so the session was released at baseline. **No restoration** was eligible or sought.
 - The source share and the destination course were separate phases. The hero's motion was **not** mirrored onto Agent48; the destination's samples were a synthetic course from a headless peer on the same machine. This is not a LAN, MacBook, two-game, input, animation or multiplayer test.
 - No tag was created or moved. M6 stays closed. **M7 is not complete**: its goal and exit (bidirectional representation between two PCs) are unchanged.
@@ -184,7 +184,7 @@ Not rerun: the 25 native loops, the five application suites, the B2 matrix and t
 - continuous physical or rendered tracking: the values are exact at sampled frames, and the visual account is testimony and an unreviewed recording;
 - collision and physical coupling;
 - the per-frame cost (F4) and F2's +1 … +4 frames;
-- any effect of the setter on other engine state (Agent48 remains an unspawned hero, M6-D's hypothesis);
+- any effect of the setter on other engine state (that Agent48 is a complete-but-unspawned hero remains M6-D's hypothesis H1, not an observed diagnosis; wording corrected at acceptance, section 11);
 - the native "released at baseline" path (the release was BEAM-journaled; no later exclusive operation read the record);
 - any live restoration, the operator's stop, or a refusal path;
 - a moving source driving the destination;
@@ -203,3 +203,27 @@ Candidate next stages, each under its own authorization:
 - a live source → destination mapping on the one host;
 - M7-L (the headless peer on the MacBook);
 - M7-D (two real game instances).
+
+## 11. Bounded acceptance (2026-10-20)
+
+**Authorization:** "Glacier Relay — M7-C acceptance and M7-L1 offline peer-network preparation". M7-C run 1 is **accepted for its demonstrated, bounded one-host scope**: a finite share of a moving real local hero to the local headless sink, followed by a separately approved synthetic course that drove Agent48 through repeated native setter calls and ended at its opening state. The phases were sequential; a real player's motion did not drive the candidate. Sections 1–10 and the verdicts are kept as run. M7 stays open; M6 stays closed; no tag was created or moved.
+
+**The accounts accepted:**
+- **Share:** the native sampled 1,100 times during the finite 60 s share. The host relayed 1,099; sequence 2 was refused by the receiver-time rate guard. The sink received those same 1,099 values. The nominal interval was 50 ms; the achieved native cadence was about 18.3 Hz (reported intervals 50 / 54.6 / 107 ms minimum / mean / maximum), not a regular 20 Hz stream.
+- **Destination, by layer:** the peer sent 241 samples = 3 before activation + 238 during the session. Of the 238, 8 were superseded in BEAM before forwarding. The native received and answered 230 = 152 skipped-identical + 78 applied.
+- **The course:** one 12-second, one-metre out-and-back along negative world x at the proposed course speed of 0.5 m/s, inside the fixed per-run limits (20 s, ±1.25 m, 1.0 m/s, 100 ms credit). The exact same-frame results and the checked preimage chain are observations at the recorded frames, not continuous collision or rendering guarantees.
+- **Demonstrated for this build (native6 `91a7098f…`) and this route:** the first live native6 load and binding, real source sampling, and repeated destination application.
+- **The end:** a native-confirmed clean close and a fresh, exact at-baseline inspection; BEAM journaled the baseline release without an engine write. The native's later release on an exclusive operation was not exercised, and no motion restoration was attempted. No additional command is needed to close that coverage row.
+- **After the exit:** the boundary at record 8, a successful replay and reconciliation, the reported complete byte-and-timestamp rollback, and the logical removal of the credentials.
+
+**What the review checked.** The architectural review checked the remote heads and the committed records — not the local suite executions, the video's contents or the Windows restoration. That distinction stands. For this acceptance the inputs it relies on were verified locally (`m7l1-offline\checkpoint-attempt2`, 33 / 33 ok): both heads and the tags unchanged, the m7c-run1 seal re-hashed in full (3,545 / 3,545), native6 and the placement content by identity, and the video by hash in place.
+
+**The video.** It stays with the operator, outside every seal and Git: `C:\Users\steve\Videos\Captures\HITMAN 3 2026-10-19 19-07-18.mp4`, 417,940,283 B, sha256 `6a1fc3dbfc200d5d8fc3a92786a46b8f3086fc2afb11eb6d6ac5c9c5b4a87d90` (unchanged before and after). It was inspected **once**, with existing built-in tools (the M6 closure's WinRT still script and System.Drawing; nothing installed or uploaded): 13 stills and one crop strip, in `m7l1-offline\media-review\` (`README.txt`), not in the sealed C root.
+- Visible: the courtyard, the HUD and Agent 47 in the foreground fixed in every still; a second suited figure standing on the carpet before the fountain.
+- From 176 to 186 s that figure stands at one screen position; at 188 and 190 s it stands further into the scene, at two different displaced positions; at 192 s it is at or near the first position, and from 194 s at it.
+- The duration-based start estimate places the native's calls at about 186.4–192.4 s, consistent with the stills; the file's creation time is not consistent with them and is not used. No native frame, world distance or direction is derived from the pixels.
+- **What it supports:** the operator's report of a displacement away and back against fixed scenery within the session's interval. Stills 2–3 s apart cannot show continuity between them, so "gradual" remains the operator's testimony.
+
+**Wording correction.** Section 9 said "Agent48 remains an unspawned hero, M6-D's hypothesis"; it now reads that complete-but-unspawned remains a hypothesis (M6-D2's H1: supported, not proven), not an observed diagnosis. Agent48's absence from the player registry (M6-D1b) and the behaviour observed here are established separately.
+
+**Still not established:** collision; physical coupling; the callback's execution cost (F4); observations at +1 … +4 frames (F2); a moving source driving the destination; LAN; the MacBook; a second game; animation; multiplayer.

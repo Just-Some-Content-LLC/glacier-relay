@@ -711,7 +711,7 @@ M7-B2 implemented the native side of sections 15 and 17 offline, in ZHMModSDK `r
 
 ## 19. M7-C attended run 1 (pointer; 2026-10-20)
 
-M7-B2 was accepted for its offline scope (`M7B2_NATIVE_RECORD.md` section 13), and M7-C ran once on the one Windows host (`M7C_ATTENDED_RECORD.md`; evidence `m7c-run1\`, sealed, `5da4a64a…`): native6 loaded in HITMAN for the first time; one 60 s read-only share of the local hero reached the headless sink (1,100 sent, 1,099 relayed, one refused by the host's rate floor); one synthetic out-and-back course drove Agent48 1.0 m along negative world x and back through 78 checked setter calls, ending bit-exact at its opening words, so it was released at baseline without a restoration. The operator saw a gradual translation. Nothing in this design was widened or changed. M7 is not complete.
+M7-B2 was accepted for its offline scope (`M7B2_NATIVE_RECORD.md` section 13), and M7-C ran once on the one Windows host (`M7C_ATTENDED_RECORD.md`; evidence `m7c-run1\`, sealed, `5da4a64a…`): native6 loaded in HITMAN for the first time; one 60 s read-only share of the local hero reached the headless sink (1,100 sent, 1,099 relayed, one refused by the host's rate floor); one synthetic out-and-back course drove Agent48 1.0 m along negative world x and back through 78 checked setter calls, ending bit-exact at its opening words, so it was released at baseline without a restoration. The operator saw a gradual translation. Nothing in this design was widened or changed. M7 is not complete. **Accepted** for that bounded one-host scope (`M7C_ATTENDED_RECORD.md` section 11, 2026-10-20), with the accounts by layer and the bounded video inspection recorded there.
 
 ## 13. Sources
 
