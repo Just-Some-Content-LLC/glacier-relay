@@ -93,17 +93,17 @@ defmodule GlacierRelay.Peer.NetworkWiringTest do
   test "the game host's peer endpoint refuses a listen profile" do
     c = PeerCredentials.pair()
     Process.flag(:trap_exit, true)
+    # the motion trace creates its directory before the endpoint child is refused (the M7-L1
+    # correction: it used to be left behind)
+    dir = Path.join(System.tmp_dir!(), "m7l1-wiring-#{System.unique_integer([:positive])}")
+    on_exit(fn -> File.rm_rf(dir) end)
 
     assert {:error,
             {{:shutdown, {:failed_to_start_child, GlacierRelay.Peer.Endpoint, reason}}, _}} =
              start_supervised(
                {Motion.Supervisor,
                 port: 0,
-                trace_dir:
-                  Path.join(
-                    System.tmp_dir!(),
-                    "m7l1-wiring-#{System.unique_integer([:positive])}"
-                  ),
+                trace_dir: dir,
                 peer: [
                   network: MotionStack.lan_listen(MotionStack.free_port()),
                   credentials: fn -> c.host end,
