@@ -382,6 +382,7 @@ finish = fn outcome, code, st ->
     # the peer as identified (kept from its identification: by the end the connection may be gone)
     "peer_seen" => st.peer,
     "endpoint_counts" => Map.new(es.counts, fn {k, v} -> {to_string(k), v} end),
+    "connection_counts" => st.conn_counts,
     "sources_done" => Enum.map(ds.sources_done, fn s -> Map.new(s, fn {k, v} -> {to_string(k), v} end) end),
     "sinks_done" =>
       Enum.map(ds.sink_done, fn s ->
@@ -455,8 +456,10 @@ loop = fn loop, st ->
 
     st.started and st.done_at == nil and ds.source == nil and ds.sources_done != [] and ds.sink_done != [] and map_size(ds.sink) == 0 ->
       PeerKit.say("both directions ended (sent #{Enum.map_join(ds.sources_done, ",", & &1.sent)}, received #{Enum.map_join(ds.sink_done, ",", & &1.received)}); draining #{lim.drain_ms} ms")
-      ev.("exchange_ended", %{"elapsed_ms" => t})
-      loop.(loop, %{st | done_at: t})
+      # the connection's own counters while it is still up: what it wrote, and what it dropped as stale or expired
+      cc = case es.connection, do: (%{pid: pid} -> Connection.status(pid).counts |> Map.new(fn {k, v} -> {to_string(k), v} end); nil -> nil)
+      ev.("exchange_ended", %{"elapsed_ms" => t, "connection_counts" => cc})
+      loop.(loop, %{st | done_at: t, conn_counts: cc})
 
     st.done_at != nil and role == :connect and t - st.done_at >= lim.drain_ms ->
       %{connection: conn} = Endpoint.status(ep)
@@ -476,5 +479,4 @@ loop = fn loop, st ->
   end
 end
 
-_ = Connection
-loop.(loop, %{up_at: nil, peer: nil, started: false, done_at: nil, last_try: 0})
+loop.(loop, %{up_at: nil, peer: nil, started: false, done_at: nil, last_try: 0, conn_counts: nil})

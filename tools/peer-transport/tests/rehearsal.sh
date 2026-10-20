@@ -134,10 +134,13 @@ for c in ok1 ok2; do
     [ "$(jget "$o/summary.json" sinks_done.0.transport_complete)" = True ]; ok $? "$c/$s: the inbound stream is transport-complete (all sent received, in order, nothing twice)"
     sent_other=$(jget "$other" sources_done.0.sent)
     [ "$(jget "$o/summary.json" sinks_done.0.received)" = "$sent_other" ] && [ "$sent_other" -gt 20 ]; ok $? "$c/$s: received = the other side's sent ($sent_other)"
-    # every sequence gap is a sample the other side's source skipped itself (inside the stream or after its last sent one)
-    g=$(jget "$o/summary.json" sinks_done.0.gaps); tl=$(( $(jget "$other" sources_done.0.total) - $(jget "$o/summary.json" sinks_done.0.reconciliation.source_last_seq) ))
+    # exact accounting across the two summaries: each of the other course's samples is one of sent / spaced / dropped, and of
+    # the sent ones the other side's connection may drop a stale or expired one (counted there); every other one arrived once
+    tot=$(jget "$other" sources_done.0.total); sn=$(jget "$other" sources_done.0.sent); rc=$(jget "$o/summary.json" sinks_done.0.received)
     sk=$(( $(jget "$other" sources_done.0.spaced) + $(jget "$other" sources_done.0.dropped) ))
-    [ $((g + tl)) = "$sk" ]; ok $? "$c/$s: gaps $g + skipped tail $tl = the other source's own skips $sk"
+    cd_=$(( $(jget "$other" connection_counts.samples_stale) + $(jget "$other" connection_counts.samples_expired) ))
+    [ $((sn + sk)) = "$tot" ] && [ $((sn - cd_)) = "$rc" ] && [ $((tot - rc)) = $((sk + cd_)) ]
+    ok $? "$c/$s: total $tot = sent $sn + skipped $sk; received $rc = sent - connection drops $cd_"
     [ "$(jget "$o/summary.json" sinks_done.0.source_kind)" = synthetic ]; ok $? "$c/$s: the inbound stream is labelled synthetic"
     [ "$(jget "$o/summary.json" endpoint_counts.connections)" = 1 ] && [ "$(jget "$o/summary.json" peer_seen.generation)" = 1 ]; ok $? "$c/$s: one connection, generation 1"
     [ "$(jget "$o/summary.json" endpoint_counts.refused_address)" = 0 ] && [ "$(jget "$o/summary.json" endpoint_counts.handshake_failures)" = 0 ]; ok $? "$c/$s: no refusal on the declared path"
