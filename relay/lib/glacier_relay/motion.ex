@@ -14,7 +14,7 @@ defmodule GlacierRelay.Motion do
   """
 
   alias GlacierRelay.Command.{Authority, Schema}
-  alias GlacierRelay.Motion.{Destination, Hub}
+  alias GlacierRelay.Motion.{Admission, Destination, Hub}
 
   @doc "Whether the motion subtree is running in this node."
   def enabled?, do: Process.whereis(GlacierRelay.Motion.Supervisor) != nil
@@ -81,8 +81,12 @@ defmodule GlacierRelay.Motion do
   `relay.inspect.candidate_transform/1` of this authority — the opening snapshot), `:expected_generation`
   (required), `:stream_id` and `:source_kind` (required: the stream the operator approves and the
   kind it must declare), `:limits` (a map of `Motion.Destination.limit_bounds/0` keys; defaults
-  otherwise), `:ttl_ms`, `:peer_boot_id` / `:peer_connection_generation` (optional assertions).
-  Needs the effectful arming. Returns `{:ok, %{session_id, command_id}}` or `{:error, reason}`.
+  otherwise), `:ttl_ms`, `:peer_boot_id` / `:peer_connection_generation` (optional assertions), and
+  `:admission` (optional; a `synthetic` stream only: a `Motion.Admission` `stationary_prefix`
+  condition — design section 29 — which the hub checks against the stream's progress at preparation
+  and again at activation, the authority against the inspection, and the destination at its first
+  target). Needs the effectful arming. Returns `{:ok, %{session_id, command_id}}` or
+  `{:error, reason}`.
   """
   def open_session(opts) when is_list(opts) do
     guarded(fn ->
@@ -95,7 +99,11 @@ defmodule GlacierRelay.Motion do
              is_binary(opts[:inspection_command_id]) or {:error, :inspection_command_id_required},
            true <-
              is_binary(opts[:expected_generation]) or {:error, :expected_generation_required},
-           {:ok, limits} <- Destination.limits(Keyword.get(opts, :limits, %{})) do
+           {:ok, limits} <- Destination.limits(Keyword.get(opts, :limits, %{})),
+           {:ok, admission} <- Admission.validate(opts[:admission]),
+           true <-
+             admission == nil or opts[:source_kind] == "synthetic" or
+               {:error, :admission_requires_synthetic} do
         approval = %{
           session_id: Schema.uuid4(),
           peer: %{
@@ -108,7 +116,8 @@ defmodule GlacierRelay.Motion do
           source_kind: opts[:source_kind],
           motion_link_generation: link.generation,
           limits: limits,
-          mapping: "identity"
+          mapping: "identity",
+          admission: admission
         }
 
         with {:ok, approval} <- Hub.prepare_session(approval) do

@@ -37,16 +37,31 @@ defmodule GlacierRelay.Motion.Hub do
   the motion socket, `Source.before_send/3` before a relayed sample is handed to the peer
   connection (with the share's bound as the connection's `not_after`). A target or sample that is
   no longer eligible is cancelled there, before any byte of it is written.
+
+  Source-sequence admission (M7-L3 correction; design section 29). Every stream open on the current
+  peer connection carries its received progress (`Motion.StreamProgress`), updated for every sample
+  processed here — unrouted, while the session's open is in flight, or routed — and shown in
+  `status/0`; it ends with the stream, the connection or the boot, and a stream identity that ended
+  on this connection and is opened again is marked `reopened`. An approval with a
+  `stationary_prefix` admission (`Motion.Admission`) is checked against the stream's own record
+  where it takes effect: at `prepare_session/1` (nothing is issued unless it is met) and when the
+  authority's cast with the native-open result is processed (a failure takes the existing
+  close-on-activation path before any sample is routed). The session's first target is the
+  destination's acquisition rule. Decision evidence goes to the trace (`hub.admission`) and the
+  journal. A session without an admission is unchanged.
   """
 
   use GenServer
   require Logger
 
   alias GlacierRelay.Command.Authority
-  alias GlacierRelay.Motion.{Clock, Codec, Destination, Source, Trace}
+  alias GlacierRelay.Motion.{Admission, Clock, Codec, Destination, Source, StreamProgress, Trace}
   alias GlacierRelay.Peer.Connection
 
   @history 16
+  # stream identities that ended on the current peer connection, remembered so that a reopened one
+  # is marked (bounded)
+  @ended_streams 16
 
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -65,7 +80,9 @@ defmodule GlacierRelay.Motion.Hub do
   @doc """
   Prepares a destination session for the authority to issue (`approval`: `:session_id`, `:peer`
   — `%{connection_generation, boot_id, label, pin}` — `:stream_id`, `:source_kind`,
-  `:motion_link_generation`, `:limits`). `{:ok, approval}` or `{:error, reason}`.
+  `:motion_link_generation`, `:limits`, and optionally `:admission`, a validated
+  `Motion.Admission`, checked against the stream's progress now). `{:ok, approval}` or
+  `{:error, reason}` (`{:error, {:admission_not_met, why}}` for an unmet admission).
   """
   def prepare_session(approval), do: GenServer.call(__MODULE__, {:prepare_session, approval})
 
@@ -222,8 +239,22 @@ defmodule GlacierRelay.Motion.Hub do
         {:reply, {:error, {:source_kind_mismatch, stream.source_kind}}, state}
 
       true ->
-        {:reply, {:ok, ap},
-         %{state | session: pending(ap.session_id, %{approval: ap, dest: nil})}}
+        case admit(state, ap, stream, :prepare, nil) do
+          {:ok, _evidence, state} ->
+            {:reply, {:ok, ap},
+             %{state | session: pending(ap.session_id, %{approval: ap, dest: nil})}}
+
+          {{:error, why}, evidence, state} ->
+            state =
+              event(state, %{
+                "event" => "motion.session.admission_not_met",
+                "session_id" => ap.session_id,
+                "stream_id" => ap.stream_id,
+                "admission" => evidence
+              })
+
+            {:reply, {:error, {:admission_not_met, why}}, state}
+        end
     end
   end
 
@@ -499,7 +530,8 @@ defmodule GlacierRelay.Motion.Hub do
         stream_id: ap.stream_id,
         limits: ap.limits,
         opening_world: opening_world,
-        opened_at: now()
+        opened_at: now(),
+        acquisition: ap[:admission] && %{first_changing_seq: ap.admission.first_changing_seq}
       })
 
     state = %{
@@ -509,6 +541,12 @@ defmodule GlacierRelay.Motion.Hub do
     }
 
     stream = state.peer && Map.get(state.peer.streams, ap.stream_id)
+    bound = peer_matches?(state, ap.peer) and stream != nil
+
+    # the admission is re-evaluated on the stream's record as it is now: after the native-open
+    # result, before any sample is routed (design section 29.4)
+    {admission, evidence, state} =
+      admit(state, ap, if(bound, do: stream), :activation, opening_world)
 
     reason =
       cond do
@@ -524,24 +562,35 @@ defmodule GlacierRelay.Motion.Hub do
         not state.audit_ok ->
           :audit_degraded
 
-        not (peer_matches?(state, ap.peer) and stream != nil and
-               stream.source_kind == ap.source_kind and
+        not (bound and stream.source_kind == ap.source_kind and
                state.link != nil and state.link.generation == ap.motion_link_generation) ->
           :binding_lost_before_activation
+
+        admission != :ok ->
+          {:admission_not_met, Admission.why_text(elem(admission, 1))}
 
         true ->
           nil
       end
 
     state =
-      event(state, %{
-        "event" =>
-          if(reason, do: "motion.session.closing_at_activation", else: "motion.session.activated"),
-        "session_id" => s.id,
-        "stream_id" => ap.stream_id,
-        "opening_world" => opening_world,
-        "reason" => reason && Destination.reason_text(reason)
-      })
+      event(
+        state,
+        Map.merge(
+          %{
+            "event" =>
+              if(reason,
+                do: "motion.session.closing_at_activation",
+                else: "motion.session.activated"
+              ),
+            "session_id" => s.id,
+            "stream_id" => ap.stream_id,
+            "opening_world" => opening_world,
+            "reason" => reason && Destination.reason_text(reason)
+          },
+          if(evidence, do: %{"admission" => evidence}, else: %{})
+        )
+      )
 
     cond do
       s.native_closed != nil ->
@@ -552,6 +601,29 @@ defmodule GlacierRelay.Motion.Hub do
 
       true ->
         state
+    end
+  end
+
+  # the approval's admission against the stream's own record now (no admission: nothing to check);
+  # the evidence is traced either way
+  defp admit(state, ap, stream, phase, opening_world) do
+    case ap[:admission] do
+      nil ->
+        {:ok, nil, state}
+
+      adm ->
+        {verdict, evidence} = Admission.evaluate(adm, stream, phase, opening_world)
+
+        state =
+          trace(state, [
+            Map.merge(evidence, %{
+              "event" => "hub.admission",
+              "session_id" => ap.session_id,
+              "stream_id" => ap.stream_id
+            })
+          ])
+
+        {verdict, evidence, state}
     end
   end
 
@@ -635,7 +707,7 @@ defmodule GlacierRelay.Motion.Hub do
         }
       ])
 
-    {:ok, %{state | peer: %{info: info, ref: ref, streams: %{}}}}
+    {:ok, %{state | peer: %{info: info, ref: ref, streams: %{}, ended: []}}}
   end
 
   defp peer({:stream_open, info, f}, state) do
@@ -647,7 +719,8 @@ defmodule GlacierRelay.Motion.Hub do
         label: f.label,
         course: f.course,
         opened_at: now(),
-        received: 0
+        progress: StreamProgress.new(),
+        reopened: f.stream_id in state.peer.ended
       }
 
       state = put_in(state.peer.streams[f.stream_id], stream)
@@ -675,18 +748,18 @@ defmodule GlacierRelay.Motion.Hub do
       not current_peer?(state, info) ->
         {{:close, :not_the_current_peer}, state}
 
-      bound_stream?(state, info, f.stream_id) ->
-        {:ok, dest(state, &Destination.sample(&1, f, now()))}
-
       true ->
-        {:ok, bump(state, :unrouted_samples)}
+        state |> progress(f) |> route(info, f)
     end
   end
 
   defp peer({:stream_end, info, f}, state) do
     state =
       if current_peer?(state, info),
-        do: update_in(state.peer.streams, &Map.delete(&1, f.stream_id)),
+        do:
+          state
+          |> update_in([:peer, :streams], &Map.delete(&1, f.stream_id))
+          |> update_in([:peer, :ended], &Enum.take([f.stream_id | &1], @ended_streams)),
         else: state
 
     state =
@@ -717,6 +790,30 @@ defmodule GlacierRelay.Motion.Hub do
         else: state
 
     {:ok, state}
+  end
+
+  # the stream's received progress, for every sample of a stream open on the current connection
+  defp progress(state, f) do
+    case Map.get(state.peer.streams, f.stream_id) do
+      nil ->
+        state
+
+      s ->
+        put_in(
+          state.peer.streams[f.stream_id].progress,
+          StreamProgress.observe(s.progress, f, now())
+        )
+    end
+  end
+
+  defp route(state, info, f) do
+    cond do
+      bound_stream?(state, info, f.stream_id) ->
+        {:ok, dest(state, &Destination.sample(&1, f, now()))}
+
+      true ->
+        {:ok, bump(state, :unrouted_samples)}
+    end
   end
 
   defp current_peer?(state, info),
@@ -979,7 +1076,16 @@ defmodule GlacierRelay.Motion.Hub do
             pin: state.peer.info.pin,
             streams:
               Map.new(state.peer.streams, fn {id, s} ->
-                {id, Map.take(s, [:source_kind, :src_clock, :label, :course])}
+                {id,
+                 Map.take(s, [
+                   :source_kind,
+                   :src_clock,
+                   :label,
+                   :course,
+                   :opened_at,
+                   :progress,
+                   :reopened
+                 ])}
               end)
           },
       share:

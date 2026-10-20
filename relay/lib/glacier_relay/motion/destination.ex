@@ -60,6 +60,17 @@ defmodule GlacierRelay.Motion.Destination do
   scheduled too; and a link loss applies an acknowledgement deadline that has already passed
   (verifier findings F3, F4, F5, F7 of the correction).
 
+  **Acquisition (M7-L3 source-sequence admission correction; design section 29.4).** A session
+  opened with a `stationary_prefix` admission is created *acquiring* (`:acquisition`, the course's
+  `first_changing_seq`): until a first target is confirmed, a validated sample whose sequence is at
+  or above `first_changing_seq`, or whose x / y words differ from the opening snapshot's, closes the
+  session (`acquisition_missed`) and is not forwarded — even inside the displacement bound. The one
+  target in flight means nothing displaced is forwarded before the acquisition target's
+  acknowledgement; acquisition is established only by that acknowledgement (`applied` exact at the
+  anchor, or `skipped_identical` at the anchor — anchor evidence, not a displacement). A received,
+  pending or superseded sample establishes nothing. Afterwards every rule above applies unchanged.
+  A session without an admission has no acquisition state and keeps the contract above.
+
   The **send boundary** is checked again by `before_send/3`, which the hub calls after the
   batch's required trace write and immediately before the target's bytes: a target whose session
   has reached its duration, or whose stall deadline (measured from the previous send) has passed,
@@ -108,6 +119,7 @@ defmodule GlacierRelay.Motion.Destination do
     close: nil,
     native_close: nil,
     late_native_close: nil,
+    acquisition: nil,
     counts: %{}
   ]
 
@@ -142,16 +154,19 @@ defmodule GlacierRelay.Motion.Destination do
 
   @doc """
   A new open session. `params`: `:session_id`, `:stream_id`, `:limits` (validated), `:opening_world`
-  (the native-confirmed opening snapshot, 12 words as text) and `:opened_at` (receiver time of the
-  confirmation).
+  (the native-confirmed opening snapshot, 12 words as text), `:opened_at` (receiver time of the
+  confirmation) and, for a session with a `stationary_prefix` admission, `:acquisition`
+  (`%{first_changing_seq: n}`).
   """
-  def new(%{
-        session_id: sid,
-        stream_id: stream,
-        limits: limits,
-        opening_world: world,
-        opened_at: t
-      }) do
+  def new(
+        %{
+          session_id: sid,
+          stream_id: stream,
+          limits: limits,
+          opening_world: world,
+          opened_at: t
+        } = params
+      ) do
     {:ok, words} = TransformWords.decode_world(world)
     xw = Enum.at(words, 9)
     yw = Enum.at(words, 10)
@@ -170,9 +185,15 @@ defmodule GlacierRelay.Motion.Destination do
       opened_at: t,
       ref: Map.merge(anchor, %{seq: nil, r: t}),
       last_forward_r: t,
+      acquisition: acquisition(params[:acquisition]),
       counts: empty_counts()
     }
   end
+
+  defp acquisition(%{first_changing_seq: f}) when is_integer(f) and f > 1,
+    do: %{state: :awaiting, before_seq: f, seq: nil, why: nil}
+
+  defp acquisition(nil), do: nil
 
   defp empty_counts do
     %{
@@ -241,6 +262,25 @@ defmodule GlacierRelay.Motion.Destination do
             {st, a2} = close(st, :outside_area, now)
             {st, a1 ++ a2}
 
+          (why = acquisition_miss(st, s.seq, pos)) != nil ->
+            st = %{st | acquisition: %{st.acquisition | state: :missed, seq: s.seq, why: why}}
+            {st, a} = close(st, {:acquisition_missed, why}, now)
+
+            {st,
+             [
+               trace(st, now, "sample", %{
+                 "seq" => s.seq,
+                 "src_mono_ms" => s.src_mono_ms,
+                 "verdict" => "acquisition_missed",
+                 "why" => why,
+                 "pos" => pos,
+                 "anchor" => st.anchor.pos,
+                 "first_changing_seq" => st.acquisition.before_seq,
+                 "pending_dropped" => st.counts.dropped_on_close
+               })
+               | a
+             ]}
+
           true ->
             superseded = st.pending != nil
 
@@ -290,6 +330,19 @@ defmodule GlacierRelay.Motion.Destination do
     abs(x - st.anchor.x) <= half and abs(y - st.anchor.y) <= half
   end
 
+  # while acquiring with no acquisition target forwarded: only a prefix sample at exactly the opening
+  # anchor may take the pending slot (it would otherwise supersede the anchor sample and become the
+  # first target). The reason stays short: the native echoes "beam:" + reason within 64 bytes.
+  defp acquisition_miss(%{acquisition: %{state: :awaiting, before_seq: f}} = st, seq, pos) do
+    cond do
+      seq >= f -> "past_prefix:#{seq}"
+      pos != st.anchor.pos -> "off_anchor:#{seq}"
+      true -> nil
+    end
+  end
+
+  defp acquisition_miss(_st, _seq, _pos), do: nil
+
   defp refuse(st, s, why, now, extra \\ %{}) do
     st = update_in(st.counts.refused[why], &(&1 + 1))
 
@@ -310,59 +363,77 @@ defmodule GlacierRelay.Motion.Destination do
   # -- forwarding -----------------------------------------------------------------------------------
 
   defp try_forward(%{phase: :open, in_flight: nil, pending: %{} = p} = st, now) do
-    if now < st.last_forward_r + st.limits.min_forward_interval_ms do
-      {st, []}
-    else
-      dt = min(now - st.ref.r, st.limits.credit_ms)
-      allowance = st.limits.max_speed_mmps * max(dt, 0) / 1_000_000
-      distance = :math.sqrt(:math.pow(p.x - st.ref.x, 2) + :math.pow(p.y - st.ref.y, 2))
+    cond do
+      now < st.last_forward_r + st.limits.min_forward_interval_ms ->
+        {st, []}
 
-      if distance <= allowance do
-        st = %{
-          st
-          | in_flight: %{
-              seq: p.seq,
-              x: p.x,
-              y: p.y,
-              pos: p.pos,
-              r_sent: now,
-              prev_forward_r: st.last_forward_r
-            },
-            pending: nil,
-            last_forward_r: now
-        }
+      # the first-target gate, where the forwarding is decided (the sample gate keeps it from
+      # arising; this keeps the rule local to the decision)
+      (why = acquisition_miss(st, p.seq, p.pos)) != nil ->
+        st = %{st | acquisition: %{st.acquisition | state: :missed, seq: p.seq, why: why}}
+        close(st, {:acquisition_missed, why}, now)
 
-        st = bump(st, :forwarded)
-
-        {st,
-         [
-           {:send_target, %{session_id: st.session_id, seq: p.seq, pos: p.pos}},
-           trace(st, now, "forward", %{
-             "seq" => p.seq,
-             "pos" => p.pos,
-             "reference_seq" => st.ref.seq,
-             "distance_m" => distance,
-             "allowance_m" => allowance
-           })
-         ]}
-      else
-        st = update_in(st.counts.refused[:refused_displacement], &(&1 + 1))
-
-        {%{st | pending: nil},
-         [
-           trace(st, now, "sample", %{
-             "seq" => p.seq,
-             "verdict" => "refused_displacement",
-             "reference_seq" => st.ref.seq,
-             "distance_m" => distance,
-             "allowance_m" => allowance
-           })
-         ]}
-      end
+      true ->
+        forward(st, p, now)
     end
   end
 
   defp try_forward(st, _now), do: {st, []}
+
+  defp forward(st, p, now) do
+    dt = min(now - st.ref.r, st.limits.credit_ms)
+    allowance = st.limits.max_speed_mmps * max(dt, 0) / 1_000_000
+    distance = :math.sqrt(:math.pow(p.x - st.ref.x, 2) + :math.pow(p.y - st.ref.y, 2))
+
+    if distance <= allowance do
+      st = %{
+        st
+        | in_flight: %{
+            seq: p.seq,
+            x: p.x,
+            y: p.y,
+            pos: p.pos,
+            r_sent: now,
+            prev_forward_r: st.last_forward_r
+          },
+          pending: nil,
+          last_forward_r: now
+      }
+
+      st = bump(st, :forwarded)
+
+      st =
+        case st.acquisition do
+          %{state: :awaiting} = a -> %{st | acquisition: %{a | state: :in_flight, seq: p.seq}}
+          _ -> st
+        end
+
+      {st,
+       [
+         {:send_target, %{session_id: st.session_id, seq: p.seq, pos: p.pos}},
+         trace(st, now, "forward", %{
+           "seq" => p.seq,
+           "pos" => p.pos,
+           "reference_seq" => st.ref.seq,
+           "distance_m" => distance,
+           "allowance_m" => allowance
+         })
+       ]}
+    else
+      st = update_in(st.counts.refused[:refused_displacement], &(&1 + 1))
+
+      {%{st | pending: nil},
+       [
+         trace(st, now, "sample", %{
+           "seq" => p.seq,
+           "verdict" => "refused_displacement",
+           "reference_seq" => st.ref.seq,
+           "distance_m" => distance,
+           "allowance_m" => allowance
+         })
+       ]}
+    end
+  end
 
   # -- the native's answers -------------------------------------------------------------------------
 
@@ -415,8 +486,9 @@ defmodule GlacierRelay.Motion.Destination do
                 }
                 |> bump(:applied)
 
+              {st, acq} = acquired(st, f, ack, now)
               {st, a} = try_forward(st, now)
-              {st, [trace_ack | a]}
+              {st, [trace_ack | acq ++ a]}
             else
               st = bump(st, :uncertain)
               {st, a} = close(st, :postimage_mismatch, now)
@@ -426,8 +498,9 @@ defmodule GlacierRelay.Motion.Destination do
           "skipped_identical" ->
             if f.pos == st.ref.pos do
               st = %{st | ref: %{st.ref | seq: f.seq, r: f.r_sent}} |> bump(:skipped)
+              {st, acq} = acquired(st, f, ack, now)
               {st, a} = try_forward(st, now)
-              {st, [trace_ack | a]}
+              {st, [trace_ack | acq ++ a]}
             else
               st = bump(st, :uncertain)
               {st, a} = close(st, :skip_disagrees, now)
@@ -446,6 +519,36 @@ defmodule GlacierRelay.Motion.Destination do
         end
     end
   end
+
+  # the acquisition target's confirmation at the anchor (applied exact, or skipped identical): the
+  # only event that establishes acquisition
+  defp acquired(
+         %{acquisition: %{state: :in_flight, seq: seq} = a} = st,
+         %{seq: seq} = f,
+         ack,
+         now
+       )
+       when f.pos == st.anchor.pos do
+    st = %{st | acquisition: %{a | state: :established}}
+
+    {st,
+     [
+       trace(st, now, "acquisition", %{
+         "state" => "established",
+         "seq" => seq,
+         "outcome" => ack.outcome
+       })
+     ]}
+  end
+
+  defp acquired(st, _f, _ack, _now), do: {st, []}
+
+  # an acquisition target that never left this node (withdrawn, or cancelled at the send boundary)
+  # establishes nothing
+  defp unsent(%{acquisition: %{state: :in_flight, seq: seq} = a} = st, seq),
+    do: %{st | acquisition: %{a | state: :awaiting, seq: nil}}
+
+  defp unsent(st, _seq), do: st
 
   # an acknowledgement for a target that is not the one in flight is a control failure; a late
   # answer for the unresolved target is recorded beside it, never as a resolution
@@ -622,7 +725,7 @@ defmodule GlacierRelay.Motion.Destination do
   """
   def withdrawn(%__MODULE__{in_flight: %{seq: seq}} = st, seq) do
     # the bump first: a record update reading st.counts would discard it (M7-B1 correction)
-    st = bump(st, :withdrawn)
+    st = bump(st, :withdrawn) |> unsent(seq)
     %{st | in_flight: nil, counts: Map.update!(st.counts, :forwarded, &(&1 - 1))}
   end
 
@@ -655,7 +758,7 @@ defmodule GlacierRelay.Motion.Destination do
 
   defp cancel_send(st, why, now) do
     f = st.in_flight
-    st = bump(st, :cancelled_before_send)
+    st = bump(st, :cancelled_before_send) |> unsent(f.seq)
     st = %{st | in_flight: nil, counts: Map.update!(st.counts, :forwarded, &(&1 - 1))}
 
     tr =
@@ -794,7 +897,8 @@ defmodule GlacierRelay.Motion.Destination do
 
   @doc """
   The session's account: phase, close (reason, state, initiator), counts, the confirmed reference,
-  the native's close facts, the unresolved target if any. `restorable` is true only for a
+  the native's close facts, the unresolved target if any, and the acquisition state (nil for a
+  session without an admission). `restorable` is true only for a
   native-confirmed, clean close with exact final words and no uncertainty.
   """
   def summary(%__MODULE__{} = st) do
@@ -840,6 +944,7 @@ defmodule GlacierRelay.Motion.Destination do
             final_world: st.late_native_close.final_world,
             qualification: "received after the close was declared unknown; not a confirmation"
           },
+      acquisition: st.acquisition && Map.take(st.acquisition, [:state, :before_seq, :seq, :why]),
       restorable: restorable?(st, nc)
     }
   end

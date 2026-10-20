@@ -9,7 +9,10 @@ defmodule GlacierRelay.Command.MotionControl do
   approval (built by the `GlacierRelay.Motion` facade and journaled in the accepted entry), the
   canonical parameters derived from that approval and — for `open` and `restore` — from one fresh
   exact inspection verified from the authority's own journal (`TransformBinding.qualify/2`).
-  Nothing a peer sends takes part.
+  Nothing a peer sends takes part. An approval's optional `stationary_prefix` admission (M7-L3
+  correction; design section 29) is validated here, allowed for a `synthetic` stream only, its
+  anchor compared with the qualified inspection's x / y words, and journaled with the approval; the
+  hub enforces it against the stream's progress, and the destination at its first target.
 
   **Exclusivity.** `candidate.transform.set` v1 / v2 — forward and restore — is refused while any
   motion session of this authority is not `restored` (or never opened: `not_opened`). A motion
@@ -62,7 +65,7 @@ defmodule GlacierRelay.Command.MotionControl do
   """
 
   alias GlacierRelay.Command.{Schema, TransformBinding, TransformReadback, TransformWords}
-  alias GlacierRelay.Motion.Destination
+  alias GlacierRelay.Motion.{Admission, Destination}
 
   @native_limits %{min_apply_interval_ms: 40, silence_close_ms: 1_000}
   @releasing [:not_opened, :restored, :at_baseline]
@@ -205,6 +208,10 @@ defmodule GlacierRelay.Command.MotionControl do
          true <- ap[:mapping] == "identity" or {:error, {:mapping_not_supported, ap[:mapping]}},
          true <- ap[:source_kind] in ["game", "synthetic"] or {:error, :source_kind_invalid},
          {:ok, limits} <- Destination.limits(ap[:limits] || %{}),
+         {:ok, admission} <- Admission.validate(ap[:admission]),
+         true <-
+           admission == nil or ap[:source_kind] == "synthetic" or
+             {:error, :admission_requires_synthetic},
          :ok <- bound_link(state, ap[:motion_link_generation]),
          true <-
            supplied["motion_link_generation"] in [nil, ap[:motion_link_generation]] or
@@ -217,6 +224,7 @@ defmodule GlacierRelay.Command.MotionControl do
          true <- not Map.has_key?(m.sessions, ap[:session_id]) or {:error, :session_id_reused},
          {:ok, ctx} <- ctx_fun.(),
          {:ok, q} <- TransformBinding.qualify(ctx, Keyword.get(opts, :inspection_command_id)),
+         :ok <- admission_anchor(admission, q),
          canonical =
            Map.merge(expectations(q), %{
              "mode" => "open",
@@ -236,18 +244,31 @@ defmodule GlacierRelay.Command.MotionControl do
          kind: :session_open,
          id: ap[:session_id],
          binding: binding_of(q),
-         record: %{
-           "session_id" => ap[:session_id],
-           "peer" => stringify(ap[:peer]),
-           "stream_id" => ap[:stream_id],
-           "source_kind" => ap[:source_kind],
-           "mapping" => "identity",
-           "limits" => stringify(limits),
-           "label" =>
-             "local operator approval; fixed before application; no peer message can open, extend or widen it"
-         }
+         record:
+           Map.merge(
+             %{
+               "session_id" => ap[:session_id],
+               "peer" => stringify(ap[:peer]),
+               "stream_id" => ap[:stream_id],
+               "source_kind" => ap[:source_kind],
+               "mapping" => "identity",
+               "limits" => stringify(limits),
+               "label" =>
+                 "local operator approval; fixed before application; no peer message can open, extend or widen it"
+             },
+             if(admission, do: %{"admission" => stringify(admission)}, else: %{})
+           )
        }}
     end
+  end
+
+  # M7-L3 correction (design section 29.4): an admission's anchor is the qualified inspection's x / y
+  defp admission_anchor(nil, _q), do: :ok
+
+  defp admission_anchor(adm, q) do
+    if TransformWords.encode([Enum.at(q.world, 9), Enum.at(q.world, 10)]) == adm.anchor,
+      do: :ok,
+      else: {:error, :admission_anchor_not_the_inspection}
   end
 
   defp prepare_restore(state, entry, supplied, opts, ctx_fun) do
