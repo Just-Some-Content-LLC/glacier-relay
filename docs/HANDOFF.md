@@ -1,5 +1,19 @@
 # Handoff checkpoint
 
+Updated: 2026-10-20, after **the M7-L3 acceptance and the attended run's stop before live execution** (authorization "Glacier Relay — M7-L3 reviewed attended one-game LAN authorization"; record `docs/design/M7L3_LAN_GAME_PREPARATION.md` sections 12–13; pointer `docs/design/M7_NETWORK_GHOST.md` section 28). No code or kit changed. No evidence root claimed. No tag. M7 stays open; awaiting a decision.
+- **Accepted:** the M7-L3 preparation, for its demonstrated offline scope.
+  - The review read the record, the socket code, the game-facing peer and `go.sh`. It did not execute or re-hash the PC kit or the sealed artefacts.
+  - The retained failures and the missing claim guard hash stay disclosed.
+- **Stopped before live execution.** The required pre-checkpoint inspection of the sealed `dest-wait` (`533bed53…`, equal to the seal) found that its stationary-prefix gates use a count, not a source position:
+  - the gates are `<= 55` before the open and `<= 61` at activation;
+  - what they count is the hub's unrouted samples received.
+  - The Mac's source can omit samples (`spaced`, backlog `dropped`, `samples_stale`) while its schedule advances.
+  - The host cannot see an unbound stream's sequence number.
+  - The admission therefore holds only if at most 20 samples are omitted before activation, which is unobservable.
+  - Loopback dry run A and M7-L2 omitted none, which does not establish the property.
+- **Not done:** no `m7l3-run1` root, packet, Mac contact, credential, token, console, installation, game launch or LAN socket. No table presented, no Ready asked for.
+- **Next (a decision):** close the gap (record section 13). The recommendation is to make the unbound stream's highest received sequence number observable in the hub and gate on it: an application change under its own authorization. The alternatives are a kit-only after-the-fact check, or a reviewer-changed admission rule.
+
 Updated: 2026-10-20, after **the M7-L3 preparation — one game-host-to-MacBook LAN experiment, offline** (record `docs/design/M7L3_LAN_GAME_PREPARATION.md`; pointer `docs/design/M7_NETWORK_GHOST.md` section 27; evidence `m7l3-prep\`, sealed, 4,247 entries, manifest `11cabfcc88070277f8826a7c67ab55f392e6769c394e01ea98a7b3582acbfc7e`). No game, Mac contact, LAN socket or live credential. No tag. M7 stays open; awaiting review.
 - **Socket record corrected** (`86c9071`): `PeerKit.Sockets` classifies the VM's sockets by explicit state (listen / connecting / connected) beside the kernel's view, and a failed query reads as unavailable.
   - Controls 8 / 0; the kit rehearsal 99 / 99.

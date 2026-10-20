@@ -6,7 +6,7 @@
 
 M7-L3 is the working label of that next subdivision of M7-L.
 
-**Status: preparation DONE offline (2026-10-20); awaiting review.** The later experiment would join two capabilities already demonstrated separately:
+**Status: preparation DONE offline (2026-10-20); ACCEPTED for its demonstrated offline scope (section 12). The attended run authorized with that acceptance STOPPED before live execution: the sealed `dest-wait` cannot establish its stationary-prefix admission (section 13). Awaiting a decision.** The later experiment would join two capabilities already demonstrated separately:
 - M7-C: on one host, a real-player share to a headless sink, then a synthetic course driving Agent48;
 - M7-L2: transport and accounting between the Windows/WSL host and the MacBook.
 
@@ -361,3 +361,93 @@ All of these are synthetic, with native-fake engine values: they prove the opera
 - real-player mirroring, multiplayer, or M7 completion.
 
 A later, separately reviewed authorization and fresh operator approvals govern the one-game LAN experiment.
+
+## 12. The review's acceptance (bounded; 2026-10-20)
+
+**Authorization:** "Glacier Relay — M7-L3 reviewed attended one-game LAN authorization" (2026-10-20), dispatched by Stephen. It does two things:
+- accepts this preparation for its demonstrated offline scope;
+- authorizes, after one combined operator checkpoint, one attended HITMAN load and one Paris attempt on the Windows host, connected to one Mac headless peer. Section 13 records why that run did not start.
+
+- **Accepted, for its demonstrated offline scope:** sections 3–8 as rehearsed on owned loopback against the frozen native6 probe:
+  - the socket correction;
+  - the game-facing peer;
+  - the bundle of record;
+  - the PC run kit and its dry runs;
+  - the install / rollback / readiness chain.
+
+  Section 11's limits stand.
+- **The review's basis:**
+  - It inspected this record, the socket-observation code, the game-facing peer and the GO helper.
+  - It did not independently execute or re-hash the PC run kit, its local rehearsal outputs or the sealed artefacts.
+  - In particular, the sealed `dest-wait` was supported by this record, not by an independent source inspection in that review.
+- **Kept as written:** the retained failures of section 9. The claim record's missing guard hash stays disclosed (`claim-NOTE.txt`), beside the independently pinned checkpoint identity.
+- **Outside the run:** the pre-existing scratchpad `erl_crash.dump` (2026-10-19).
+  - It is not copied, uploaded, inspected or deleted, and is treated as potentially sensitive.
+  - Its retention is a separate decision, not a run prerequisite.
+- M6 stays closed. M7-C and M7-L2 keep their bounded acceptances. M7 stays open. No tag.
+
+## 13. The coordinator's `dest-wait` inspection before the checkpoint: a tooling gap; the run stopped before live execution (2026-10-20)
+
+**The instruction.** The authorization required the coordinator, before the Ready, to inspect the sealed `dest-wait` gates and report their precise meaning. If "the actual code cannot establish its claimed stationary-prefix admission", the coordinator was to stop before live execution with that specific tooling gap, without reinterpreting the rule or changing qualified files. The code cannot establish it, so the run stopped here.
+
+**The bytes inspected:**
+- `m7l3-prep\kit\cmd-m7l3.exs`, sha256 `533bed531d611afe5a6a1db1bb6313db9309003888507d03bf12293ed321ae61`. This equals its line in the seal manifest, which re-hashes to `11cabfcc…`.
+- The relay at tree `90d4003303d721035f23e91c8939b4b4a61d6338` (`relay/lib` `156ac80b…`, identical at `9541c02` and `695d410`): `motion/hub.ex`, `motion/destination.ex`, `peer/connection.ex`, `headless_peer/driver.ex`. Their compiled modules are the console's dev build and the bundle's `ebin`.
+
+**What the two admission gates compute:**
+
+| Gate | The code | What it establishes |
+|---|---|---|
+| `dest.stream-early-enough-to-open` | `k_pre` = the hub's `unrouted_samples` counter minus its value at `prepare`; `k_pre <= 55` before `open_session` | The host received at most 55 samples unrouted since `prepare`. With no Mac stream at `prepare` and exactly one new stream, they are that stream's. |
+| `dest.session-confirmed-before-the-first-changing-sample` | Active within `t_seen` + 3,050 ms on the host clock (`t_seen` = the stream's first sight in the hub's map), and `k_act <= 61` | The session became active within that host-clock window, with at most 61 samples received by then. |
+
+Neither gate reads a sample's source sequence number or source time. Two texts describe the source position, but the code measures a receipt count:
+- section 7's wording ("measured in the stream's own samples … active by its sample 62");
+- the code's comment ("the stream's own sequence measures how early the session is").
+
+**Why the count is not the source position.** The count equals the latest received sequence number only if the Mac sent every one of samples 1 … k. The committed source can omit samples while its schedule advances (`start + k × interval`):
+- **Spacing:** after a scheduler delay, an overdue sample less than 45 ms after the last one sent is not sent (`spaced`).
+- **Backlog:** above 8 queued samples, the producer drops the sample (`dropped`).
+- **Stale:** a queued sample that waited more than 100 ms in the Mac's connection is discarded before it is written (`samples_stale`). The driver has already counted it as sent.
+
+TLS keeps the rest in order, and the host's receive path drops nothing. So after g omissions, the latest received sequence number is k + g. The host cannot see g before the stream's end (`stream.end` carries `last_seq` and `sent`):
+- `Hub.status().peer.streams` shows only `source_kind`, `src_clock`, `label` and `course`;
+- the hub's per-stream `received` field is never incremented;
+- an unrouted sample only increments the hub-wide counter. It is not traced, and its sequence number is not kept.
+
+The host's elapsed time does not close the gap. Its time since the stream's first sight is a lower bound on the source's schedule, not an upper bound, unless one-way delay is bounded, and the run has no such bound.
+
+**Consequence.** `k_act <= 61` implies only that the latest received sequence number is at most 61 + g. The claimed property is that the session is active before sample 82 reaches the host. It therefore holds only while g <= 20, and g is unobservable when the gate decides.
+
+If the property fails, the first routed sample is already displaced from P. The Destination has no acquisition exemption:
+- A first target within 1.0 m/s × min(Δr, 100 ms) of the opening snapshot, so at most 0.1 m, is forwarded. That is an acquisition step inside the session's limits, not M7-C's exact course from P.
+- A larger one is withheld (`refused_displacement`, never clamped).
+
+This follows from the contract; the path was not executed. The session's safety envelope holds; the stationary-prefix admission and its exact-P opening do not.
+
+**What the evidence shows:**
+- On loopback, dry run A omitted nothing. 2 samples arrived unrouted at activation, and the session then received sequences 3–241: 239 distinct samples, all validated.
+- In M7-L2's one LAN run, the Mac's source omitted none (`spaced`, `dropped`, `samples_stale` and `samples_expired` all 0; 201 of 201 sent).
+- Neither shows that omissions cannot occur across the Wi-Fi LAN.
+
+**Not done (the stop):**
+- no `m7l3-run1` evidence root or state directory claimed (the run id stays unused);
+- no kit copy, readiness record, packet or USB write;
+- no Mac contact or runtime;
+- no credentials or run token;
+- no console, installation, game launch or LAN socket;
+- no permission table presented, and no Ready asked for.
+
+The qualified files are unchanged. The authorization's run-specific values were not exercised and do not carry forward:
+- the 600 s Mac lifetime, contingent on Stephen's approval in the table;
+- the accepted start-up connection attempt.
+
+**The gap, for a decision.** The host has no observation of a new stream's source position before a session is bound to it. Three ways to close it; each needs its own authorization, and none is started:
+- **A (recommended): make the source position observable.** The hub keeps, per open peer stream, the count and the highest sequence number it received unrouted, and shows them in `Hub.status()`. `dest-wait` then gates on that sequence number (<= 55 at the open, <= 61 at activation) and records the count–sequence gap. This is an application change:
+  - a new relay tree and a rebuild of the console's dev build;
+  - the relay suites;
+  - for the Mac bundle, which carries the compiled modules: either a new bundle identity, or a reviewed statement that the Mac peer does not load the hub.
+- **B: verify afterwards (kit only).** `dest-wait` records the session's first routed sequence number from the host trace, and judges "admitted in the prefix" only if it is below 82.
+  - This establishes the fact afterwards but prevents nothing; the acquisition step of at most 0.1 m stays possible.
+  - It changes a qualified kit file and relies on the Destination's envelope.
+- **C: run with the count gate as a disclosed limitation**, and reconcile afterwards from both machines' files (the Mac's per-sample source outcomes and stale count; the host's first routed sequence number). This changes the stated admission rule, which only the reviewer can do.

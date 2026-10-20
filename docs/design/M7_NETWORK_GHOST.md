@@ -814,6 +814,15 @@ One offline pass prepared a later one-game LAN experiment (`M7L3_LAN_GAME_PREPAR
 
 Everything was rehearsed on owned loopback against the frozen native6 probe. There was no game, no Mac contact and no LAN socket. No contract in sections 15–26 changes: no application, wire, native or limit change. M7 is not complete.
 
+## 28. M7-L3 preparation accepted; the attended run stopped before live execution (pointer; 2026-10-20)
+
+The preparation is accepted for its demonstrated offline scope (`M7L3_LAN_GAME_PREPARATION.md` section 12). The same authorization allowed one attended one-game LAN run after a combined checkpoint. It first required the coordinator to inspect the sealed `dest-wait`, and to stop if that code cannot establish its stationary-prefix admission. It cannot (record section 13):
+- `dest-wait` gates on the hub's count of unrouted samples received, not on the stream's source sequence number;
+- the committed source can omit samples (spacing, backlog, stale) while its schedule advances;
+- the host has no observation of an unbound stream's source position.
+
+The run therefore stopped before any root claim, Mac contact, credential, console, installation or game launch. Nothing changed; the closing options are in that section. Sections 15–27 are unchanged. M7 is not complete.
+
 ## 13. Sources
 
 | Claim area | Source (blobs in `source-facts.txt`) |
