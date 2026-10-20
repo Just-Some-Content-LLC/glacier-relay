@@ -8,16 +8,23 @@ defmodule GlacierRelay.Peer.Endpoint do
   `{127, 0, 0, 1}` is refused at start (`{:not_loopback, ip}`) — no `0.0.0.0`, no `::`, no LAN
   address, no port proxy. M7-L1 (design section 20): the explicit `:network` profile `lan_ipv4`
   instead names one concrete private IPv4 socket for the role (`Peer.Network`); the listener binds
-  exactly it and checks its socket name, accepts TCP itself and closes, before any TLS byte, a
-  connection from any address but the declared initiator (`refused_address`) or a second connection
-  while one is up, then upgrades an admitted one with `:ssl.handshake/3` under the same TLS policy;
-  the connector checks its peer name. Every socket plan is validated before any socket exists.
-  B1's loopback listener is unchanged: it refuses a second TCP connection before its TLS handshake
-  with `:ssl.close/1`, which OTP 28 does not perform on a `transport_accept` socket (an M7-L1
-  finding, left for review). Each handshake runs with a 5 s deadline in the acceptor (or connector)
-  process, after which the socket passes to a new `Peer.Connection` with the next connection
-  generation. The connecting side retries every `reconnect_ms` while no connection is up, when that
-  option is given (default: no retry).
+  exactly it and checks its socket name, and the connector checks its peer name. Every socket plan
+  is validated before any socket exists.
+
+  Both listeners (the loopback default and the profile; the M7-L1 correction) accept TCP
+  themselves and close, before any TLS byte, a connection from any address but a profile's
+  declared initiator (`refused_address`) or a second connection while one is up (`refused_busy`),
+  then upgrade an admitted one with `:ssl.handshake/3` under the TLS policy
+  (`TLS.upgrade_options/1`). A handshake that fails, raises or exits closes its socket and counts a
+  handshake failure; the acceptor keeps serving. An endpoint whose acceptor has died stops (closing
+  its socket) rather than keep a bound socket that serves no one, and its teardown ends the
+  acceptor (with any handshake in progress) and the connection. B1's loopback listener used
+  `:ssl.transport_accept/1` and refused with `:ssl.close/1`, which OTP 28 does not perform on a
+  `transport_accept` socket, so a refused connection stayed open; and a handshake exit ended its
+  acceptor unnoticed (M7-L1 findings). Each handshake runs with a 5 s deadline in the acceptor (or
+  connector) process, after which the socket passes to a new `Peer.Connection` with the next
+  connection generation. The connecting side retries every `reconnect_ms` while no connection is
+  up, when that option is given (default: no retry).
 
   Options: `:role` (`:listen` | `:connect`), `:ip`, `:port` (default 4760; 0 picks one when
   listening) or instead `:network` (`Peer.Network`), `:credentials` (`Peer.TLS.credentials/1`),
@@ -92,17 +99,21 @@ defmodule GlacierRelay.Peer.Endpoint do
     end
   end
 
-  # M7-L1: the profile listener accepts TCP itself (see the moduledoc)
-  defp listen(%{network: %{profile: :lan_ipv4} = plan} = state) do
+  # both plans accept TCP themselves (see the moduledoc; the M7-L1 correction): the listen call
+  # carries socket options only, and the TLS options go to the acceptor for the upgrade
+  defp listen(%{network: plan} = state) do
     case (state.sock || :gen_tcp).listen(state.port, TLS.tcp_listen_options(state.ip)) do
       {:ok, ls} ->
-        case Network.check_socket(plan, :bound, :inet.sockname(ls)) do
+        name = :inet.sockname(ls)
+
+        case Network.check_socket(plan, :bound, name) do
           :ok ->
+            {:ok, {_ip, bound}} = name
             me = self()
             tls = TLS.upgrade_options(state.creds)
-            acceptor = spawn_link(fn -> tcp_accept_loop(me, ls, plan, tls) end)
-            Logger.info("peer endpoint: listening (#{Network.describe(plan)})")
-            {:ok, %{state | listen_socket: {:tcp, ls}, acceptor: acceptor}}
+            acceptor = spawn_link(fn -> accept_loop(me, ls, plan, tls) end)
+            Logger.info(listening(plan, state.ip, bound))
+            {:ok, %{state | listen_socket: ls, port: bound, acceptor: acceptor}}
 
           {:error, reason} ->
             :gen_tcp.close(ls)
@@ -114,19 +125,10 @@ defmodule GlacierRelay.Peer.Endpoint do
     end
   end
 
-  defp listen(state) do
-    case (state.sock || :ssl).listen(state.port, TLS.listen_options(state.creds, state.ip)) do
-      {:ok, ls} ->
-        {:ok, {_ip, bound}} = :ssl.sockname(ls)
-        me = self()
-        acceptor = spawn_link(fn -> accept_loop(me, ls) end)
-        Logger.info("peer endpoint: listening on #{:inet.ntoa(state.ip)}:#{bound} (loopback)")
-        {:ok, %{state | listen_socket: ls, port: bound, acceptor: acceptor}}
+  defp listening(%{profile: :loopback}, ip, port),
+    do: "peer endpoint: listening on #{:inet.ntoa(ip)}:#{port} (loopback)"
 
-      {:error, reason} ->
-        {:stop, {:listen_failed, reason}}
-    end
-  end
+  defp listening(plan, _ip, _port), do: "peer endpoint: listening (#{Network.describe(plan)})"
 
   defp maybe_connect(%{conn: nil, connecting: nil} = state) do
     me = self()
@@ -177,36 +179,11 @@ defmodule GlacierRelay.Peer.Endpoint do
     end
   end
 
-  defp accept_loop(endpoint, ls) do
-    case :ssl.transport_accept(ls) do
-      {:ok, transport} ->
-        if GenServer.call(endpoint, :busy?) do
-          :ssl.close(transport)
-          GenServer.cast(endpoint, :refused_busy)
-        else
-          case :ssl.handshake(transport, TLS.handshake_timeout_ms()) do
-            {:ok, socket} ->
-              hand_over(endpoint, socket)
-
-            {:error, reason} ->
-              GenServer.cast(endpoint, {:handshake_failed, reason})
-          end
-        end
-
-        accept_loop(endpoint, ls)
-
-      {:error, :closed} ->
-        :ok
-
-      {:error, _reason} ->
-        accept_loop(endpoint, ls)
-    end
-  end
-
-  # M7-L1: the profile listener's loop. Only the declared initiator, and only while no connection is
-  # up, reaches the TLS handshake; anything else is closed with no TLS byte sent. The handshake's
-  # options hold the private key, so a raise inside it is caught and reduced to its exception name.
-  defp tcp_accept_loop(endpoint, ls, plan, tls) do
+  # The listener's loop (both plans). Only an allowed address (a profile's declared initiator; any
+  # under the loopback plan), and only while no connection is up, reaches the TLS handshake;
+  # anything else is closed with no TLS byte sent. The handshake's options hold the private key, so
+  # a raise inside it is caught and reduced to its exception name.
+  defp accept_loop(endpoint, ls, plan, tls) do
     case :gen_tcp.accept(ls) do
       {:ok, tcp} ->
         remote =
@@ -235,13 +212,13 @@ defmodule GlacierRelay.Peer.Endpoint do
             end
         end
 
-        tcp_accept_loop(endpoint, ls, plan, tls)
+        accept_loop(endpoint, ls, plan, tls)
 
       {:error, :closed} ->
         :ok
 
       {:error, _reason} ->
-        tcp_accept_loop(endpoint, ls, plan, tls)
+        accept_loop(endpoint, ls, plan, tls)
     end
   end
 
@@ -256,8 +233,8 @@ defmodule GlacierRelay.Peer.Endpoint do
   end
 
   # the credentials (with the private key) never appear in a crash report or a :sys.get_status —
-  # nor does B1's TLS listen socket, whose term embeds the TLS options, the private key included
-  # (an M7-L1 finding: B1 redacted the credentials only)
+  # nor does the listen socket (B1's TLS listen socket embedded the TLS options, the private key
+  # included: an M7-L1 finding; the listen socket is now a TCP socket, and stays redacted)
   @impl true
   def format_status(status) do
     Map.update(status, :state, nil, fn
@@ -332,10 +309,10 @@ defmodule GlacierRelay.Peer.Endpoint do
     {:noreply, schedule_reconnect(%{state | conn: nil})}
   end
 
-  # M7-L1 (verifier V3): a profile listener whose acceptor has died stops, closing its socket, rather
-  # than keep a bound socket that no longer closes anyone
-  def handle_info({:EXIT, pid, reason}, %{acceptor: pid, network: %{profile: :lan_ipv4}} = state),
-    do: {:stop, {:acceptor_exited, reason}, state}
+  # M7-L1 (verifier V3; both plans since the correction): a listener whose acceptor has died stops,
+  # closing its socket, rather than keep a bound socket that serves and closes no one
+  def handle_info({:EXIT, pid, reason}, %{acceptor: pid} = state),
+    do: {:stop, {:acceptor_exited, reason}, %{state | acceptor: nil}}
 
   def handle_info({:EXIT, _pid, _reason}, state), do: {:noreply, state}
 
@@ -361,14 +338,13 @@ defmodule GlacierRelay.Peer.Endpoint do
 
   defp schedule_reconnect(state), do: state
 
+  # the acceptor first (the M7-L1 correction: a handshake in progress, with its socket, no longer
+  # outlives the endpoint; its owner gone, the TLS connection process closes it), then the listen
+  # socket, then the connection
   @impl true
   def terminate(_reason, state) do
-    case state.listen_socket do
-      nil -> :ok
-      {:tcp, ls} -> :gen_tcp.close(ls)
-      ls -> :ssl.close(ls)
-    end
-
+    if state.acceptor, do: Process.exit(state.acceptor, :kill)
+    if state.listen_socket, do: :gen_tcp.close(state.listen_socket)
     if state.conn, do: Process.exit(state.conn.pid, :shutdown)
     :ok
   end

@@ -127,7 +127,12 @@ defmodule GlacierRelay.Peer.TLS do
     ]
   end
 
-  @doc "Listen options (the acceptor side)."
+  @doc """
+  B1's `:ssl` listen options (the acceptor side, as one set). Since the M7-L1 correction the
+  endpoint no longer listens with them — both its listeners accept TCP (`tcp_listen_options/1`) and
+  upgrade (`upgrade_options/1`) — and the set remains the reference the upgrade's policy is compared
+  with, and what a test's own TLS listener uses.
+  """
   def listen_options(creds, ip),
     do: common(creds) ++ [fail_if_no_peer_cert: true, ip: ip, reuseaddr: true, backlog: 2]
 
@@ -135,10 +140,11 @@ defmodule GlacierRelay.Peer.TLS do
   def handshake_options(_creds), do: []
 
   @doc """
-  M7-L1, the `lan_ipv4` listener: the plain TCP listen options. The listener accepts TCP itself so
-  that a connection from anyone but the declared initiator is closed (`:gen_tcp.close/1`) before any
-  TLS byte; on OTP 28 `:ssl.close/1` refuses a `transport_accept` socket
-  (`notsup_on_transport_accept_socket`). Accepted sockets inherit these options.
+  The endpoint's listeners (M7-L1: the `lan_ipv4` profile; since the correction the loopback
+  default too): the plain TCP listen options. The listener accepts TCP itself so that a connection
+  it does not serve (a profile's non-initiator, or a second connection) is closed
+  (`:gen_tcp.close/1`) before any TLS byte; on OTP 28 `:ssl.close/1` refuses a `transport_accept`
+  socket (`notsup_on_transport_accept_socket`). Accepted sockets inherit these options.
   """
   def tcp_listen_options(ip),
     do: [
@@ -153,8 +159,8 @@ defmodule GlacierRelay.Peer.TLS do
     ]
 
   @doc """
-  M7-L1, the `lan_ipv4` listener: the server-side TLS options for `:ssl.handshake/3` on an admitted
-  TCP socket — the same policy as `listen_options/2` (TLS 1.3, `verify_peer`, the one trusted CA,
+  The endpoint's listeners (both plans since the M7-L1 correction): the server-side TLS options for
+  `:ssl.handshake/3` on an admitted TCP socket — the same policy as `listen_options/2` (TLS 1.3, `verify_peer`, the one trusted CA,
   the pin callback, `fail_if_no_peer_cert`), without the socket options the TCP socket already has.
   """
   def upgrade_options(creds),
