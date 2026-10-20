@@ -1,6 +1,6 @@
 # M7-L1 — the opt-in peer-network profile and the transport-test kit (record)
 
-**Status:** DONE offline (2026-10-20), awaiting review.
+**Status:** DONE offline (2026-10-20), awaiting review. **Corrected** by a later, separately authorized pass (section 14, appended; sections 1–13 unchanged, their gate still NOT MET as recorded): the default listener's refusal and acceptor lifecycle, `Motion.Hub.abandon`, and the three failing test families; its own five-suite gate on the corrected inputs PASSED.
 - Implemented and qualified **on the Windows/WSL host only, on owned loopback sockets**.
 - No LAN socket was bound or contacted. Nothing ran on the MacBook, and no firewall, WSL, router or epmd setting was touched.
 - No HITMAN, DLL, content or real credential was involved.
@@ -300,3 +300,173 @@ Both are non-distributed BEAM processes started from the same bundle, and nothin
 **Not established:** anything on the MacBook, or on any LAN; macOS firewall or Local Network behaviour; the Mac's runtime compatibility; WSL2 NAT outbound to the LAN; real-game LAN following; collision; native frame cost; a second game; the M7 exit. A loopback test is no proof of Mac or LAN compatibility. **The five-suite gate is not met** (section 6).
 
 **Next:** review. Nothing further is granted, and no Mac or LAN action follows from this record.
+
+## 14. M7-L1 correction: the default listener, `Hub.abandon` and the gate's three test families (2026-10-20)
+
+**Authorization:** "Glacier Relay — M7-L1 focused listener, abandonment and gate correction". It accepted M7-L1's demonstrated progress (the explicit profile, loopback-only execution, the two-process kit, the scanner improvements, the M7-C acceptance) but **not** full M7-L1 acceptance or M7-L2. It authorized one BEAM / test / tooling pass, confined to:
+- the default peer listener's refusal and acceptor lifecycle;
+- `Motion.Hub.abandon`;
+- diagnosing and correcting the three named failing test families.
+
+No native change or rebuild, HITMAN, content, Mac, LAN socket, real credential, firewall / WSL / router / epmd change, packaging, frontend, media inspection or tag. **Sections 1–13 above are unchanged: the original gate stays NOT MET as recorded.**
+
+**Evidence:** `%TEMP%\glacier-m0\hitmen\m7l1-correction\`, sealed, 495 entries, manifest `f7bf96bbda757c10405c152bd6ae16d0d27188ffdd167dd30a2ed2630963ea69` (verifies; its temporary file was written outside the root; 0 unlisted files). State root `~/.local/state/glacier-relay-m7l1c` (ext4: isolated copies and builds, the kit's disposable credentials, removed after their scan).
+
+### 14.1 Basis
+
+`checkpoint-attempt1`, `readiness.py`, 32 / 32 ok, read only:
+- glacier-relay `main` `5436a7bb` = origin, clean; the L1 relay tree `5f63cde9` (= gate commit `aae5999`'s), kit `4f473706`; `dba921b` an ancestor;
+- ZHMModSDK `relay/m2` `8129d721` = origin, clean; the tags unchanged (`6ee99b44…`);
+- the runtime by file hash; native6 (`91a7098f…`, its manifest's bytes) and native5 (`f271d129…`); the placement content;
+- the L1 seal re-hashed in full (732 / 732, `4cf04a32…`); the M7-C seal by its manifest's bytes (`5da4a64a…`);
+- the game at M0 (26 / 26); no BEAM or game process; the project ports free; the shared epmd (pid 45286) present and untouched.
+
+The claim record `.evidence-root` has an empty `guard_sha256` (the guard was sourced from zsh; `claim-NOTE.txt`); the guard's identity is pinned by the checkpoint.
+
+### 14.2 Diagnosis (on the frozen tree, in isolated copies)
+
+**Leak probe.** One run per file, with a diagnostic `test_helper` that snapshots the VM before any test and after the suite (+0.2 s, +6 s): M7-L1's four test files, the three failing families' files, and B1's TLS and two-process tests as controls.
+- Before (`diagnosis-frozen-attempt1`, then `diagnosis-frozen-v2-attempt1` with every temporary entry listed): no new port, OS child, busy process or environment change after any file; the only new processes are ExUnit's runner and the logger handler, as for the controls. **One leftover:** `network_wiring_test` leaves an `m7l1-wiring-*` trace directory (version 1 of the probe listed only `glacier-relay*` names and missed it; the verifier found it). 38 such directories (40 synthetic motion traces, no key text) from M7-L1-era runs were removed from `/tmp`.
+- After (`diagnosis-final-attempt1`, the final commit, plus the two new test files): nothing left by any file.
+- No resource or environment leakage that could slow the named tests was found. That does not prove M7-L1's added load is irrelevant; it removes leakage as a cause.
+
+**The three families, each reproduced on purpose:**
+
+| Test | Gate failure | Mechanism (reproduced) | Classification |
+|---|---|---|---|
+| web `endpoint_test.exs:224` (M3-A) | `ArgumentError` from `:ets.lookup` in `server_info/1` | The restarted endpoint's name is registered before its `init/1` runs, and `server_info/1` reads a table its first child creates (R1: raising samples after 20 / 20 kills). After a `:kill` the **first** restart attempt also fails to start its LiveView socket child (`:already_started`, the killed endpoint's still terminating; R1c 8 / 10), so even `projection_test`'s predicate (`1f7c2fc`) exits on it (R1b). | test predicate |
+| `deadline_share_hub_test` T1, held write | no `{:held, …}` within 1 s | A hold armed after the last sample decided before the bound holds nothing (R2: armed at bound − 1 ms). | test timing |
+| T1, suspended connection | `last_seq_received` 17 ≠ k − 1 (k = 19) | Handed 17 = received 16 + expired 1, so nothing was stale: sample 18 was never handed — the share's 45 ms **rate guard** withheld it (R3: a native burst reproduces it exactly). Attempt 2's NOTE called it a stale drop; these counts exclude that. | test assumption |
+| `restore_result_test` B ×2 | `world != pre` failed at :43 | The fixture's 600 ms course moved before the session was admitted late: 0 targets applied, a clean confirmed close at the stream's end — restorable by definition — at the preimage (R4b: the fake's answers 210–240 ms late give exactly this; ≤ 200 ms, displaced). | test fixture |
+
+None demonstrated a production defect in the code under test. The killed endpoint's failing restart attempts are recorded as a finding (14.7), not changed.
+
+### 14.3 The production corrections
+
+| Commit | Change |
+|---|---|
+| `42eb31b` | **The default listener** takes the profile's qualified path: `gen_tcp` listen with socket options only, accept, close a second connection (`refused_busy`) before any TLS byte, upgrade with `:ssl.handshake/3` (raise and exit caught). A lost acceptor stops the endpoint (`{:acceptor_exited, reason}`) for both plans. Teardown kills the acceptor first, so a handshake in progress no longer outlives the endpoint, then closes the listen socket and the connection. |
+| `5668d10` | **`Hub.abandon/1`** pattern-matches: only a share or session with this id AND status `:pending` is forgotten; anything else leaves the state as it was. No rescue. |
+
+Unchanged: `Peer.Network` (no `:network` option = `127.0.0.1` only, port 0 allowed; the profile's concrete address, initiator and headless-only rules), the TLS policy, pins and credentials, the wire messages, `Peer.Connection`, reconnect behaviour, the log lines, the `format_status` redaction, the authority. `TLS`: documentation only.
+
+**Before / after** (`before-after-attempt2`, on the final commit: the new tests against the frozen `relay/lib`, then the corrected one; attempt 1, on `914c7f0`, agrees but for the barrier-dependent case of 14.10 item 3):
+
+| Behaviour | Before (frozen code) | After |
+|---|---|---|
+| a second connection while the peer is up (loopback default) | the client's read times out (3 s): the connection stayed open | closed at once, no byte received; the peer unaffected |
+| a handshake that exits (loopback default) | the exit escapes: no failure is counted and the next attempt is never served | the socket closed, the failure counted; the acceptor survives and serves the next |
+| a killed acceptor (loopback default) | the endpoint stays up, bound, serving no one | the endpoint stops; under `HeadlessPeer` only it restarts and serves |
+| a normal stop during a handshake (both plans) | the profile's handshake waits out its 5 s deadline | ended at once |
+| a refused share issue with no session | `BadBooleanError`, the hub crashes | the refusal answered; the share forgotten; nothing sent |
+| back-to-back clients (race probe, 30 rounds, two runs) | 3 and 1 busy refusals, each a 3 s client timeout | 15 and 15, each closed within 2 ms |
+
+### 14.4 The tests
+
+Commits `82eb1ac`, `d51284e` (new tests and the updates the listener change needs), `c398a3f`, `ebf2c7b`, `914c7f0`, `02052fb` (the three families, test-only), and after the verifier `83c4853`, `0333466`, `6fe6ee3` (tests) and `9541c02` (documentation):
+- `peer/listener_lifecycle_test` (new, 14 = 7 cases × both listeners): the busy refusal (raw and TLS clients, within 1 s, no byte; the peer keeps its process, generation and data), both handshake-failure paths, the lost acceptor (alone and under `HeadlessPeer`), both teardowns (no TCP socket left on the listener's port), and the key's absence from `:sys.get_status/1`, `Endpoint.status/1`, the exit reason after an acceptor loss (`{:acceptor_exited, :killed}`) and the formatted log text captured in each case at `:debug` with SASL reports let through (the endpoint's info lines and the crash report's `State:` asserted present) — **only those channels**; raw report terms are not checked (finding 4).
+- `motion/hub_abandon_test` (new, 8): the share and session refusals through `Motion` (the hub the same process on the same links, no open at the fake, a legitimate open afterwards), and on the hub: nothing prepared, a pending share alone, a pending session alone, foreign ids, active and done operations.
+- Updated for the corrected listener: `network_test` (the loopback listen call carries TCP options only), `network_endpoint_test` (the default listen socket no longer embeds the key), `tls_test` (two back-to-back raw-client tests wait for the previous connection to end: a client arriving earlier is refused at once now, where it used to wait out its 3 s timeout).
+- web `endpoint_test`: `projection_test`'s predicate plus "a failed restart attempt that is gone is not yet" (its `failed_to_start_child` exit, or `:noproc` when its name is no longer registered to it); any other exit propagates.
+- T1: explicit fake-source control (`FakeMotionNative.hold_motion_out/1`, `release_motion_out/2`): the fake's output is held 300 ms before the bound, the hub is seen to have decided every written sample, and exactly one sample is released 120 ms before the bound; its decision before the bound is asserted. Delivery control kept; exact accounting `source_sent = received + the connection's stale + expired`. The old 150 ms hold bound is replaced by the conditions it stood for (the same motion link and identified peer connection). Production deadlines unchanged. **Remaining timing dependence:** the test process must release the one sample in time to precede the bound — a 120 ms lead, asserted with its own message (at least 40 ms before the bound) — where the old tests had an effective 10–60 ms window that also depended on the fake's cadence.
+- restore B: the course holds at its displaced end; the fixture waits for an applied target at that end (the destination's confirmed reference and the fake's candidate there), then ends the stream, so the session closes as before.
+
+**Negative controls** (`before-after-attempt2`). Six mutations, each failing exactly the tests that claim it: the share's send boundary, the connection's `not_after`, the busy close, the teardown kill, the acceptor-exit stop, and `format_status` returning the unredacted state (the status checks and, through the crash report's `State:`, both lost-acceptor cases). The corrected web predicate survives 20 tight kills and stays false without a restart. The corrected B fixture is displaced and restorable with the fake's answers 0 / 230 / 400 ms late, and refuses an at-baseline course (that control first showed `914c7f0`'s wait trivially true for a course that never leaves P; fixed in `02052fb`).
+
+### 14.5 The verifier
+
+One agent, read only, on the frozen draft `02052fb` (brief, report and disposition in `verifier\`; the report preserved as delivered). It found 1 major, 3 minor and 6 notes; no key leak on any path the endpoint controls.
+
+| Id | Finding | Disposition |
+|---|---|---|
+| W1 major | `network_endpoint_test.exs` not formatter-clean: the gate's format step would fail | fixed (`83c4853`) |
+| W2 minor | the log channel was narrower than claimed: `with_log` keeps the `:warning` level, so the endpoint's info lines and a crash report's `State:` were never checked (an unredacted `format_status` passed the lost-acceptor cases) | fixed (`83c4853`): `:debug` with SASL reports let through, the channel asserted present, byte forms only in log text; mutation m6 now fails those cases |
+| W3 note | OTP's ssl keeps the TLS options, the key included, in raw SASL report terms; formatted text has none | recorded (14.7); no configuration enables SASL reports |
+| W4 minor | the VM-wide socket count could be flaky | fixed (`83c4853`): sockets on the test's listener port only |
+| W5 minor | the web predicate's `:noproc` window; a dead branch; the restart budget at 3 of 3 | (a), (b) fixed (`0333466`); (d) recorded (14.7), not asserted |
+| W6 note | the endpoint's own closes after a failed upgrade and at teardown are not discriminated (ssl and port ownership close them on the tested paths) | recorded (14.7) |
+| W7, W8 | a trivially true conjunct; a barrier that can match just before the handshake | acknowledged; the assertions hold either way |
+| W9 note | a stale seam comment; a long docstring line | fixed (`9541c02`) |
+| W10 note | six SessionTest failures in its one full suite (command-link welcome timeouts after a trace-append timeout); `network_wiring_test`'s temporary directory; the accept loop's immediate retry | recorded (14.7); the directory fixed (`6fe6ee3`) |
+
+### 14.6 Qualification
+
+**The final inputs:** glacier-relay `9541c02` (relay tree `90d40033`; kit `tools/peer-transport` `4f473706`, unchanged; `tools/content-deployment` unchanged). Twelve commits after `5436a7b`: 2 production, 1 documentation-only in `relay/lib`, 9 test (`relay/test`, `test/support`).
+
+**The BEAM gate of record** (`scripts/beam-gate.sh`, `beam-gate-attempt1`): **PASS, the first and only attempt.**
+
+| Step | Result |
+|---|---|
+| `mix compile --warnings-as-errors --force` (dev, test) | exit 0, exit 0 |
+| scoped format check (explicit globs: peer, motion, headless, command lib and tests, test support, the boundary, headless and web endpoint tests, config) | exit 0 |
+| whole-tree format check (information only) | exit 1, the same 12 pre-existing M2-era files as M7-L1's |
+| areas: peer + motion; command; headless + boundary; web endpoint | 234 / 0; 207 / 0; 21 / 0; 11 / 0 |
+| five full suites, `--warnings-as-errors`, seeds declared in the script before any run: 118004, 529371, 760243, 342815, 905562 | **888 / 0 each, exit 0 each**, no warning |
+| leftovers after the gate | beam 0, project ports 0 |
+
+The suite grew from 866 to 888 (+14 lifecycle, +8 abandon). The known failing seeds of M7-L1 were used only as diagnostic inputs, never in the gate. One clean gate on these inputs is evidence that the three families no longer depend on the timing they did; it is not a statistical claim, and the stalls of finding 6 can still fail a future run.
+
+**The kit rehearsal** (`scripts/kit-rehearsal.sh`, M7-L1's wrapper unchanged but for its header; `kit-rehearsal-attempt1`): **PASS, 95 checks, 0 failures, the first and only attempt.** The corrected endpoint invalidated every two-process result, so the whole rehearsal ran again; nothing of M7-L1's rehearsal is reused.
+- **Inputs:** a bundle of the final commit `9541c02`: 98 files, manifest `20987b6c8748924211ca24de050a0a0772e8691c4b10f3de06892366e260f7b7`, archive `61720a82bc6cd7451af53b42c521fc9b49147e1a2dff5d5c12033c07f8d85d8b`; the evidence copy verifies against its manifest.
+- **Exchanges:** two, the second a fresh restart: 57 = 57 = 57 each way (total = sent + 0 skipped; received = sent − 0 connection drops), one connection, generation 1; the listener's only listening socket `127.0.0.1:<port>`, the connector listening on nothing; both OS processes ended.
+- **Failure cases:** wrong pin (exit 3 on both sides, every handshake refused); wrong hello label (exit 4 on both, one connection never identified, no reconnection, no data); no peer (exit 3 at its 10 s lifetime); disconnect (the connector exit 4; the listener, stopped by `stop.sh` through its recorded pid, exit 6 with its summary); early stop (exit 6); port taken (exit 7, `eaddrinuse`).
+- **Refusals:** the same 24 as M7-L1's, each exit 2 before any socket with ssl not started.
+- **Afterwards:** the scanner self-test PASS; the attempt-wide scan with the three rehearsal keys known: MATERIAL HITS 0 over 270 files (2 armour-like texts without material and 10 suggestive names, information only); no peer process left; the credentials then removed (logical deletion, not secure erasure).
+- `compat-check.sh` on **this** build host: no missing prerequisite. **Not run on the Mac.**
+
+### 14.7 Findings (for review; none changed beyond its row)
+
+1. **The default listener's three defects: fixed** (14.3): the busy refusal that left the TCP connection open, the escaping handshake exit, and the ignored acceptor exit.
+2. **`Hub.abandon`'s `BadBooleanError`: fixed** (14.3).
+3. **A brutally killed web endpoint escalates to a whole web-subtree restart.** After `Process.exit(endpoint, :kill)` the endpoint's restart attempts fail while its LiveView socket child is still terminating (`:already_started`), and they exhaust the web supervisor's default intensity (3 in 5 s): over 30 fresh subtrees of `endpoint_test`'s sequence, the web supervisor itself ended in 22 to 25 (two runs; `probe-web-intensity-attempt2`, `before-after-attempt2`). Under `start_supervised` the test supervisor restarts the subtree, so the test passes; in the application the web subtree is a `one_for_one` child of `GlacierRelay.Supervisor`, which would restart it alone. The ingestion processes are untouched either way, which is what the test asserts. Not changed (web supervision is outside this pass). **Decision for review:** accept it as recorded, or authorize a web-only change (the endpoint's restart tolerance, or a test that kills with the supervisor's own semantics).
+4. **OTP's ssl keeps the TLS options, the private key included, in raw SASL report terms** (the receiver child's start arguments on every upgraded connection; the bad-key `child_terminated` report). Elixir's formatted text holds none of it, and no configuration enables SASL reports. Pre-existing for every TLS listener here, B1's included. **M7-L2 must keep SASL reports off.**
+5. **The endpoint's own socket closes are not discriminated by the tests** (verifier W6): after a failed upgrade the TLS connection process closes the socket, and the listen port dies with its owner. The behaviour holds; the endpoint's close matters only on the raise path, which no test reaches.
+6. **SessionTest stalls in the verifier's one full suite** (seed 424242): six consecutive `MotionStack.start` timeouts on the command link's welcome (1 s), right after a 200 ms trace-append timeout; the file passes alone with that seed. Outside this pass's code and named families; watched in the gate (14.6).
+7. **The accept loop retries an accept error other than `:closed` at once** (a busy loop on `:emfile`), in both listeners, as before. Not changed.
+
+### 14.8 Performed, reused, not executed
+
+| Item | Status |
+|---|---|
+| The frozen-basis checkpoint (heads, trees, tags, runtime, native6 / native5, content, the L1 seal re-hashed, the M7-C seal's manifest, M0) | performed (`checkpoint-attempt1`, 32 / 32) |
+| Leak probe before and after; the four reproductions; R1b / R1c / R4b; the race and web-intensity probes | performed (`diagnosis-*`, `probe-*`) |
+| The two production corrections and the test corrections | performed (14.3, 14.4) |
+| Before / after and six mutations | performed (`before-after-attempt2` of record; attempt 1 kept with a NOTE) |
+| One verifier | performed (`verifier\`) |
+| Strict compiles, scoped format, four areas, five full suites | performed, **PASS** (`beam-gate-attempt1`) |
+| The kit rehearsal from a bundle of the final tree | performed, **PASS** (`kit-rehearsal-attempt1`) |
+| `compat-check.sh` | performed on the WSL build host only; **not run on the Mac** |
+| M7-L1's scanner unit / pure-policy results | not re-run separately: the rehearsal re-ran the scanner self-test and the policy refusals with everything else |
+| native6 / native5, the placement content, M7-C's runtime qualification, earlier sealed evidence | **reused by identity** (the checkpoint and the final checks); nothing native or content rebuilt or re-run |
+| Native loops, content rehearsal, media review, HITMAN | not executed (not authorized; nothing native changed) |
+| Any LAN socket, Mac contact or check, firewall / WSL / router / epmd change, real credential | **not executed** (not authorized) |
+
+### 14.9 Preserved
+
+- M7-L1's sections 1–13 and its sealed root `m7l1-offline` (re-hashed, 732 / 732): **its gate stays NOT MET as recorded**; this section adds a gate on corrected inputs, it does not rewrite that one.
+- native5 and native6, the placement content, the M7-C root and video, every tag on both repositories, the M6 tags; the game at M0 (26 / 26); the shared epmd untouched.
+- Every failed or superseded attempt of this pass is kept: `probe-r1c-frozen-attempt1`, `before-after-attempt1` (NOTE), `probe-web-intensity-attempt1`; the superseded probe sources are reconstructed byte for byte in `scripts\diag\superseded\` (each matching the sha256 its attempt recorded).
+
+### 14.10 Deviations and disclosures
+
+1. The claim record's `guard_sha256` is empty: the guard was sourced from zsh (`claim-NOTE.txt`). The guard's identity is pinned by the checkpoint and the final checks.
+2. Six probe sources were edited after a first run and not saved first; each earlier version was reconstructed by reversing the edit and kept only because its sha256 matched the one recorded (`scripts\diag\superseded\README.txt`). `diag-run.sh` and `before-after.sh` gained steps between attempts; the README says which, and how the earlier runs are unaffected.
+3. The before / after's loopback teardown-during-handshake case on the **old** code passed in attempt 1 and failed in attempt 2 (its barrier can match just before the handshake, verifier W8). The profile's case failed on the old code both times; the corrected code passes both in every run.
+4. 38 stray `m7l1-wiring-*` directories in `/tmp` (40 synthetic motion traces, no key text) from M7-L1-era runs of `network_wiring_test` were removed (not evidence).
+5. The verifier's report is saved as delivered, without the hand-back's two-space indentation.
+6. The state root's isolated copies and builds (no key file; scanned, `final-scan.txt`) were removed after the seal's scan; the kit's disposable credentials were removed after their scan (logical deletion, not secure erasure).
+7. **The verifier's own run outputs were not retained.** Its working directory (copies, builds, probes, its mutation script and run logs) sat in the state root and was removed with it, before I copied its run logs into the evidence root as M7-L1 did. Its report, preserved verbatim, lists every run with its command and exit status; the raw logs behind those rows are gone. I read part of its full-suite log (the SessionTest failures) before the removal; finding 6 quotes it from that reading.
+
+### 14.11 What this establishes, and what it does not
+
+**Establishes (offline, on this host, on owned loopback sockets):**
+- The default listener now closes a refused connection with no TLS byte, survives handshake failures, stops when its acceptor is lost, and tears down completely; its address contract is unchanged.
+- `Hub.abandon` answers an authority refusal without crashing the hub and forgets only the matching pending preparation.
+- The three test families no longer depend on the timing that failed them; each mechanism was reproduced and its protection shown by a mutation or a negative control.
+- The five-suite gate passes on the corrected inputs; the kit passes its loopback rehearsal from a bundle of them.
+
+**Does not establish:** anything on the MacBook, a LAN, macOS's firewall, another OTP build or a case-insensitive APFS volume beyond what the drvfs evidence root shows; anything about HITMAN, the native or a game; that every possible dump or report is free of key material (14.4 names the channels checked; finding 4); that the gate cannot fail on a future run (finding 6); full M7-L1 acceptance or M7-L2, which remain for review.
+
+### 14.12 M7-L2 (unchanged, not granted)
+
+Section 12's procedure stands, with one addition from finding 4: **SASL reports stay off** on both machines (no `handle_sasl_reports`, no handler serialising raw report terms). A transport-only stage asks for no game recording and no HITMAN "Ready". Its own authorization still has to name the Mac's actual runtime, addresses, the permission to listen, the transfer channel and the owned directories.

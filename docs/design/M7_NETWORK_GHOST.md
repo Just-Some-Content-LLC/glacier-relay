@@ -775,6 +775,15 @@ Two implementation choices sit inside the section: the profile listener accepts 
 
 The five-suite gate of record was **not met**: pre-existing timing-tight tests failed in one or two runs of five; the record has the account. M7 is not complete, and M7-L2 is proposed, not granted.
 
+## 22. M7-L1 correction (pointer; 2026-10-20)
+
+A separately authorized, BEAM / test / tooling-only pass (`M7L1_PEER_NETWORK_RECORD.md` section 14; evidence `m7l1-correction\`, sealed, 495 entries, manifest `f7bf96bbda757c10405c152bd6ae16d0d27188ffdd167dd30a2ed2630963ea69`):
+- **The default listener** (no `:network` option) now takes the profile's listener path: it accepts TCP, closes a busy second connection before any TLS byte, upgrades with `:ssl.handshake/3`, stops when its acceptor is lost, and ends its acceptor at teardown. Section 20's "the default" stands as an address contract — `127.0.0.1` only, the same port handling — and section 21's second implementation choice now covers both listeners. The refused connection that B1's listener left open was a defect, not part of the contract.
+- **`Motion.Hub.abandon/1`** forgets only the matching pending preparation; an authority refusal of a prepared share no longer crashes the hub.
+- **The three test families** of M7-L1's failed gate were reproduced and corrected in the tests (no production limit changed); the five-suite gate on the corrected inputs passed, and the kit's loopback rehearsal passed from a bundle of them.
+
+Nothing else in sections 15–21 changes. M7 is not complete; full M7-L1 acceptance and M7-L2 remain for review. M7-L2 adds one condition (record 14.12): SASL reports stay off.
+
 ## 13. Sources
 
 | Claim area | Source (blobs in `source-facts.txt`) |

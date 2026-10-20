@@ -1,5 +1,26 @@
 # Handoff checkpoint
 
+Updated: 2026-10-20, after **the M7-L1 correction — the default listener, `Motion.Hub.abandon` and the gate's three test families, offline** (authorization "Glacier Relay — M7-L1 focused listener, abandonment and gate correction"; record `docs/design/M7L1_PEER_NETWORK_RECORD.md` section 14, appended; pointer `docs/design/M7_NETWORK_GHOST.md` section 22; evidence `m7l1-correction\`, sealed, 495 entries, manifest `f7bf96bbda757c10405c152bd6ae16d0d27188ffdd167dd30a2ed2630963ea69`). BEAM, tests and tooling only, on owned loopback sockets with throwaway credentials: no native change, HITMAN, content, Mac, LAN socket, real credential or firewall / WSL / epmd change. No tag. M7 stays open; full M7-L1 acceptance and M7-L2 are not granted.
+- **Code** (relay tree `90d40033`, `main` `9541c02` + docs; kit `4f473706` unchanged):
+  - `42eb31b`: the default loopback listener now takes the profile's path. It accepts TCP and closes a busy second connection before any TLS byte (B1's `:ssl.close/1` left it open). It upgrades with `:ssl.handshake/3`, catching raise and exit, stops when its acceptor is lost, and kills its acceptor first at teardown. The address contract is unchanged (`127.0.0.1` only; port 0 allowed).
+  - `5668d10`: `Hub.abandon/1` pattern-matches the pending preparation (no `BadBooleanError` on a nil session).
+- **Diagnosis** (frozen tree, isolated copies): each gate failure reproduced on purpose; none a production defect.
+  - web `endpoint_test:224`: the predicate raised during the endpoint's restart window.
+  - T1 held write: a hold armed after the last pre-bound sample.
+  - T1 suspended connection: the sample before k was withheld by the share's 45 ms rate guard (17 = 16 + 1; not a stale drop as the L1 note said).
+  - `restore_result` B: admission after the 600 ms course had moved, so restorable at the preimage.
+  - The leak probe found one L1 test leftover (a temporary directory, fixed) and nothing that could slow the tests.
+- **Tests:** 888 (+14 listener lifecycle in both modes, +8 abandon). The three families are fixed in the tests only, with barriers and explicit fake-source control; no production limit changed. Before / after: the new tests fail on the frozen code exactly at the defects. Six mutations are each caught.
+- **Verifier** (one, on `02052fb`): 1 major (a format miss that would have failed the gate), 3 minor, 6 notes. All fixed or recorded (`verifier\`).
+- **Gate of record: PASS**, its first attempt. Compiles, scoped format and the four areas are clean, and five full suites are 888 / 0 with declared seeds 118004, 529371, 760243, 342815, 905562. **Kit rehearsal: PASS**, 95 / 0, from a bundle of `9541c02` (57 = 57 = 57 each way; 0 material hits).
+- **Findings for review** (record 14.7):
+  - A `:kill`ed web endpoint's failing restarts exhaust the web supervisor's intensity: the whole subtree restarted in 22–25 of 30 sequences. Pre-existing M3; not changed; a decision is asked for.
+  - OTP's ssl keeps the key in raw SASL report terms; SASL reports are off, and M7-L2 must keep them off.
+  - The endpoint's own closes are not discriminated by the tests.
+  - SessionTest stalled six times in the verifier's one suite (not in the gate).
+  - The accept loop's immediate retry on errors other than `:closed`.
+- **Next (not granted):** review; then M7-L2 under its own authorization (record section 12 and 14.12).
+
 Updated: 2026-10-20, after **M7-L1 — the opt-in peer-network profile and the transport-test kit, offline** (record `docs/design/M7L1_PEER_NETWORK_RECORD.md`; boundary `docs/design/M7_NETWORK_GHOST.md` section 20 and ADR 0010 amendment 14, committed before code as `47c2147`; pointer section 21; evidence `m7l1-offline\`, sealed, 732 entries, manifest `4cf04a32299ffa1180c821a80061467312e480969b666ba5a768433897462d89`). Only owned loopback sockets on the Windows/WSL host were used: no LAN socket, Mac contact, firewall / WSL / epmd change, HITMAN, DLL or real credential. No tag was created or moved. M7 stays open; M6 stays closed.
 - **Code** (relay tree `5f63cde9`): `Peer.Network`, a pure policy.
   - Without `:network`, B1's loopback rule is unchanged.
