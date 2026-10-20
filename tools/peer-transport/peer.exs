@@ -23,7 +23,10 @@
 #   - the output directory does not exist (it is created exclusively; nothing is ever overwritten).
 # Then :ssl starts (no socket) and its TLS 1.3 support is checked (exit 2), still before the output directory exists. A SIGTERM
 # trap is installed first of all, so a stop at any point ends through the run loop with its summary. Then: outputs <out>/peer.pid, <out>/events.ndjson, <out>/trace/ (the headless motion trace), <out>/summary.json; human lines on
-# standard output. The run ends by itself: exchange complete (exit 0), no peer / lifetime expired (3), the connection lost before
+# standard output. "Complete" means transport completeness: every inbound stream ended with everything its source reports having
+# sent received, in order, with no duplicate or older sample; a sequence gap is a sample that SOURCE skipped itself (its 45 ms
+# spacing, or a full queue: the other side's summary counts them as spaced / dropped), reconciled across the two summaries — not a
+# loss. The run ends by itself: exchange complete (exit 0), no peer / lifetime expired (3), the connection lost before
 # completion or identification (4), completed but not reconciled (5), stopped by SIGTERM (stop.sh; 6, after its summary), the
 # endpoint could not start — e.g. the declared address or port not available (7, after its summary); a hard backstop halts at
 # lifetime + 15 s (124). A connector retries its one
@@ -53,6 +56,12 @@ defmodule PeerKit do
   end
 
   def ssl_started?, do: Enum.any?(Application.started_applications(), fn {a, _, _} -> a == :ssl end)
+
+  # everything the source reports having sent arrived, in order, nothing twice (the gaps are its own skips; see the header)
+  def transport_complete?(s) do
+    r = s.reconciliation
+    r["received"] == r["source_sent"] and r["last_seq_received"] == r["source_last_seq"] and s.duplicate == 0 and s.older == 0
+  end
 
   def sha256(bytes), do: :crypto.hash(:sha256, bytes) |> Base.encode16(case: :lower)
 
@@ -374,13 +383,17 @@ finish = fn outcome, code, st ->
     "peer_seen" => st.peer,
     "endpoint_counts" => Map.new(es.counts, fn {k, v} -> {to_string(k), v} end),
     "sources_done" => Enum.map(ds.sources_done, fn s -> Map.new(s, fn {k, v} -> {to_string(k), v} end) end),
-    "sinks_done" => Enum.map(ds.sink_done, fn s -> Map.new(s, fn {k, v} -> {to_string(k), if(is_atom(v) and v not in [nil, true, false], do: to_string(v), else: v)} end) end),
+    "sinks_done" =>
+      Enum.map(ds.sink_done, fn s ->
+        Map.new(s, fn {k, v} -> {to_string(k), if(is_atom(v) and v not in [nil, true, false], do: to_string(v), else: v)} end)
+        |> Map.put("transport_complete", PeerKit.transport_complete?(s))
+      end),
     "sinks_open" => map_size(ds.sink),
     "label" => "M7-L1 transport-only exchange of synthetic courses between two headless peers; no game, no native, no authority"
   }
   File.write!(Path.join(out, "summary.json"), JSON.encode!(summary) <> "\n", [:exclusive])
   ev.("finished", %{"outcome" => outcome, "exit_status" => code})
-  PeerKit.say("FINISHED: #{outcome} (exit #{code}); sent #{Enum.map_join(ds.sources_done, ",", & &1.sent)}, received #{Enum.map_join(ds.sink_done, ",", & &1.received)}, complete #{Enum.map_join(ds.sink_done, ",", & &1.reconciliation["complete"])}")
+  PeerKit.say("FINISHED: #{outcome} (exit #{code}); sent #{Enum.map_join(ds.sources_done, ",", & &1.sent)}, received #{Enum.map_join(ds.sink_done, ",", & &1.received)}, transport complete #{Enum.map_join(ds.sink_done, ",", &PeerKit.transport_complete?/1)}, gaps #{Enum.map_join(ds.sink_done, ",", & &1.gaps)}")
   Supervisor.stop(sup, :normal)
   System.halt(code)
 end
@@ -419,7 +432,7 @@ loop = fn loop, st ->
       PeerKit.say("the connection ended (#{if complete, do: "after", else: "BEFORE"} the exchange completed); no reconnection")
       cond do
         not complete -> finish.("disconnected_before_completion", 4, st)
-        Enum.all?(ds.sink_done, & &1.reconciliation["complete"]) -> finish.("complete", 0, st)
+        Enum.all?(ds.sink_done, &PeerKit.transport_complete?/1) -> finish.("complete", 0, st)
         true -> finish.("complete_unreconciled", 5, st)
       end
 

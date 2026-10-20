@@ -130,10 +130,15 @@ for c in ok1 ok2; do
   for s in lsn con; do
     o=$A/$c/out-$s
     [ "$(jget "$o/summary.json" outcome)" = complete ]; ok $? "$c/$s: outcome complete"
-    [ "$(jget "$o/summary.json" sinks_done.0.reconciliation.complete)" = True ]; ok $? "$c/$s: the inbound stream reconciled complete"
-    sent_other=$(jget "$A/$c/out-$([ $s = lsn ] && echo con || echo lsn)/summary.json" sources_done.0.sent)
+    other=$A/$c/out-$([ $s = lsn ] && echo con || echo lsn)/summary.json
+    [ "$(jget "$o/summary.json" sinks_done.0.transport_complete)" = True ]; ok $? "$c/$s: the inbound stream is transport-complete (all sent received, in order, nothing twice)"
+    sent_other=$(jget "$other" sources_done.0.sent)
     [ "$(jget "$o/summary.json" sinks_done.0.received)" = "$sent_other" ] && [ "$sent_other" -gt 20 ]; ok $? "$c/$s: received = the other side's sent ($sent_other)"
-    [ "$(jget "$o/summary.json" sinks_done.0.source_kind)" = synthetic ] && [ "$(jget "$o/summary.json" sources_done.0.dropped)" = 0 ]; ok $? "$c/$s: synthetic in, nothing dropped out"
+    # every sequence gap is a sample the other side's source skipped itself (inside the stream or after its last sent one)
+    g=$(jget "$o/summary.json" sinks_done.0.gaps); tl=$(( $(jget "$other" sources_done.0.total) - $(jget "$o/summary.json" sinks_done.0.reconciliation.source_last_seq) ))
+    sk=$(( $(jget "$other" sources_done.0.spaced) + $(jget "$other" sources_done.0.dropped) ))
+    [ $((g + tl)) = "$sk" ]; ok $? "$c/$s: gaps $g + skipped tail $tl = the other source's own skips $sk"
+    [ "$(jget "$o/summary.json" sinks_done.0.source_kind)" = synthetic ]; ok $? "$c/$s: the inbound stream is labelled synthetic"
     [ "$(jget "$o/summary.json" endpoint_counts.connections)" = 1 ] && [ "$(jget "$o/summary.json" peer_seen.generation)" = 1 ]; ok $? "$c/$s: one connection, generation 1"
     [ "$(jget "$o/summary.json" endpoint_counts.refused_address)" = 0 ] && [ "$(jget "$o/summary.json" endpoint_counts.handshake_failures)" = 0 ]; ok $? "$c/$s: no refusal on the declared path"
     grep -q '"approval":{"reply_verbatim":"Go ahead"}' "$o/events.ndjson" && [ $s = con ] || [ $s = lsn ]; ok $? "$c/$s: approval recorded verbatim where required"

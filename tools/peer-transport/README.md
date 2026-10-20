@@ -62,11 +62,11 @@ All paths are absolute. `<B>` is the unpacked bundle directory, `<S>` the owned 
 
      | Status | Meaning | Summary written |
      |---|---|---|
-     | 0 | complete and reconciled | yes |
+     | 0 | complete: every inbound stream ended with all its source sent received, in order, nothing twice (gaps are the source's own skips, `spaced` / `dropped` in the other summary) | yes |
      | 2 | refused before any socket | no; the output directory is not created |
      | 3 | no peer, or the lifetime ended | yes |
      | 4 | the connection ended before completion or before identification; never reconnected | yes |
-     | 5 | complete but not reconciled | yes |
+     | 5 | ended, but some inbound stream is not transport-complete | yes |
      | 6 | stopped by `stop.sh` (SIGTERM) | yes |
      | 7 | the endpoint could not start (the declared address not this machine's, or the port taken) | yes |
      | 124 | the hard backstop, lifetime + 15 s | no |
