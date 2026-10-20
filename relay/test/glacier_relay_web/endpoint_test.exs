@@ -227,12 +227,8 @@ defmodule GlacierRelayWeb.EndpointTest do
     endpoint = Process.whereis(Endpoint)
 
     Process.exit(endpoint, :kill)
-
-    wait_until(fn ->
-      is_pid(Process.whereis(Endpoint)) and Process.whereis(Endpoint) != endpoint
-    end)
-
-    wait_until(fn -> match?({:ok, _}, Endpoint.server_info(:http)) end)
+    wait_until(fn -> endpoint_restarted?(endpoint) end)
+    assert Process.whereis(Endpoint) != endpoint
 
     assert Process.whereis(MissionSession) == session
     assert Process.whereis(Listener) == listener
@@ -241,12 +237,8 @@ defmodule GlacierRelayWeb.EndpointTest do
     pubsub = web_child(&(&1 != GlacierRelayWeb.Endpoint))
     endpoint2 = Process.whereis(Endpoint)
     Process.exit(pubsub, :kill)
-
-    wait_until(fn ->
-      is_pid(Process.whereis(Endpoint)) and Process.whereis(Endpoint) != endpoint2
-    end)
-
-    wait_until(fn -> match?({:ok, _}, Endpoint.server_info(:http)) end)
+    wait_until(fn -> endpoint_restarted?(endpoint2) end)
+    assert Process.whereis(Endpoint) != endpoint2
 
     assert Process.whereis(MissionSession) == session
     assert Process.whereis(Listener) == listener
@@ -268,6 +260,34 @@ defmodule GlacierRelayWeb.EndpointTest do
     assert Process.whereis(Endpoint) == nil
     assert is_pid(Process.whereis(MissionSession))
     assert is_pid(Process.whereis(Listener))
+  end
+
+  # The endpoint has restarted when a new endpoint supervisor is registered and has started all of
+  # its children (the predicate of Dashboard.ProjectionTest, 1f7c2fc): its name is registered
+  # before its init/1 runs, and the configuration table `server_info/1` reads is created by its
+  # first child, so asking for the listener earlier raises (the table does not exist yet) rather
+  # than answering "not yet" — the M7-L1 gate's failure here (an ArgumentError from :ets.lookup);
+  # `which_children/1` is answered only once init/1 has returned. After a :kill, the endpoint's
+  # first restart attempt can also fail to start its LiveView socket child (`:already_started`:
+  # the killed endpoint's still terminating) and the web supervisor starts another: that attempt's
+  # `which_children/1` exits and the attempt is gone — not yet; the next one is waited for. A
+  # persistent failure is not hidden: an endpoint that never comes back leaves this false until the
+  # bounded wait raises, and any other exit, or one from a process that is still running, is not
+  # caught.
+  defp endpoint_restarted?(old) do
+    case Process.whereis(Endpoint) do
+      pid when is_pid(pid) and pid != old ->
+        try do
+          _ = Supervisor.which_children(pid)
+          match?({:ok, _}, Endpoint.server_info(:http))
+        catch
+          :exit, {{:shutdown, {:failed_to_start_child, _, _}}, _} = reason ->
+            if Process.alive?(pid), do: exit(reason), else: false
+        end
+
+      _ ->
+        false
+    end
   end
 
   defp wait_until(fun, attempts \\ 100) do
