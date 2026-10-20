@@ -40,9 +40,10 @@ defmodule GlacierRelay.Motion.Supervisor do
           []
 
         peer_opts ->
+          # the endpoint's test seam (:socket_module) is never taken from configuration (verifier V11)
           [
             {Endpoint,
-             Keyword.merge(peer_opts,
+             Keyword.merge(Keyword.delete(peer_opts, :socket_module),
                role: :connect,
                name: GlacierRelay.Motion.PeerEndpoint,
                handler: {Hub, Hub}

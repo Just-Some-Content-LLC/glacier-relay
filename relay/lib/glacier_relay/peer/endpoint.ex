@@ -245,10 +245,14 @@ defmodule GlacierRelay.Peer.Endpoint do
     end
   end
 
+  # verifier V3: :ssl.handshake/3 can also exit (a key that does not decode); either way the acceptor
+  # survives and counts a handshake failure
   defp upgrade(tcp, tls) do
     :ssl.handshake(tcp, tls, TLS.handshake_timeout_ms())
   rescue
     e -> {:error, {:handshake_raised, e.__struct__}}
+  catch
+    :exit, _ -> {:error, :handshake_exited}
   end
 
   # the credentials (with the private key) never appear in a crash report or a :sys.get_status —
@@ -327,6 +331,11 @@ defmodule GlacierRelay.Peer.Endpoint do
   def handle_info({:EXIT, pid, _reason}, %{conn: %{pid: pid}} = state) do
     {:noreply, schedule_reconnect(%{state | conn: nil})}
   end
+
+  # M7-L1 (verifier V3): a profile listener whose acceptor has died stops, closing its socket, rather
+  # than keep a bound socket that no longer closes anyone
+  def handle_info({:EXIT, pid, reason}, %{acceptor: pid, network: %{profile: :lan_ipv4}} = state),
+    do: {:stop, {:acceptor_exited, reason}, state}
 
   def handle_info({:EXIT, _pid, _reason}, state), do: {:noreply, state}
 
