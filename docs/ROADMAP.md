@@ -66,6 +66,14 @@ Two PCs, same mission. Each instance renders the other player's externally drive
 
 Exit: bidirectional movement/input representation survives a bounded test session.
 
+**Status: M7-L2 run 1 done (2026-10-20; `docs/design/M7L2_LAN_TRANSPORT_RECORD.md`); awaiting review.** The qualified headless peer protocol exchanged one bounded synthetic course each way between the Windows/WSL host and the MacBook across the LAN.
+- The Mac used a separate OTP 28 / Elixir 1.19 inside its run directory.
+- The link was mutually authenticated TLS 1.3 with exact pins: 201 / 201 samples each way, content identical, both ends exit 0.
+- One reconciliation check is recorded as failed: the kit's listener record on the connector caught its own outbound socket.
+- This establishes cross-machine transport and accounting, not game following or multiplayer.
+
+M7 stays open; the goal and exit are unchanged.
+
 **Status: M7-L2's preparation stopped at a missing Mac prerequisite (2026-10-20; `docs/design/M7L2_LAN_TRANSPORT_RECORD.md`).** The MacBook's only runtime is Erlang/OTP 29 / Elixir 1.20; the qualified bundle requires OTP 28 / Elixir 1.19. No peer started and no LAN socket was opened; nothing was installed or changed. A decision is needed: stop, or authorize a separate matching runtime on the Mac (recommended if L2 continues). M7 stays open; the goal and exit are unchanged.
 
 **Status: M7-L1 accepted for its demonstrated offline scope; M7-L2 authorized and in preparation (2026-10-20; `docs/design/M7L1_PEER_NETWORK_RECORD.md` section 15; `docs/design/M7L2_LAN_TRANSPORT_RECORD.md`).** The acceptance rests on the corrected code, its gate of record and the rehearsal from the rebuilt bundle; M7-L1's original gate stays NOT MET as recorded. A killed web endpoint's escalation to a web-subtree restart is a documented, deferred M3 limitation. M7-L2 is one bounded, game-free exchange of synthetic courses between the Windows/WSL host and the MacBook. It needs a separate approval of its exact configuration before either peer starts. It can establish cross-machine transport and accounting, not game following or multiplayer. M7 stays open; the goal and exit are unchanged.

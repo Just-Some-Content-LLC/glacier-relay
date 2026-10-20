@@ -1,5 +1,25 @@
 # Handoff checkpoint
 
+Updated: 2026-10-20, after **M7-L2 run 1, one transport-only exchange between the Windows/WSL host and the MacBook** (record `docs/design/M7L2_LAN_TRANSPORT_RECORD.md` sections 9–16; pointer `docs/design/M7_NETWORK_GHOST.md` section 25; evidence `m7l2-run1\`, sealed, 242 entries, manifest `ecc8d118287246625c4738a5f8c89d92fe9b5ffa975873db128e5caa2131d6d8`). No game. No tag. M7 stays open; awaiting review.
+- **Option B:** a separate Erlang/OTP 28.4.2 + Elixir 1.19.6 on the Mac (arm64), inside its run directory.
+  - OTP from `erlef/otp_builds`; the Elixir zip is the build host's own; both verified against two sources on the PC and carried by USB stick.
+  - Amendment 1: the erlef build boots SASL by default, so `Install -minimal`'s two boot-file copies were made. Packet 2 had wrongly said no Install step was needed.
+  - Homebrew's OTP 29 / Elixir 1.20 untouched. The runtime was removed with the run directory afterwards.
+- **The approval:** one combined table (`6ae1b947…`) for both machines, answered with a standalone "Go ahead" (18:49:37Z). An earlier longer reply was not taken as consent.
+- **The run:**
+  - the Mac listened on exactly `192.168.1.17:4760` (operator's `lsof`: `beam.smp` 61051);
+  - the WSL connector came through NAT as 192.168.1.11, route-derived;
+  - one TLS 1.3 connection with exact pins, generation 1, no refused address and no failed handshake;
+  - 201 / 201 samples received each way, in order, content identical, no gaps, no connection drops;
+  - both exit 0, outcome complete; no reconnection.
+- **Reconciliation:** one check FAILS and is kept. The Windows kit record lists the connector's own outbound socket, caught mid-connect, as a "listener" (`PeerKit.listeners()` counts a connecting socket). It is a kit finding; "the connector listens on nothing" is supported, not established.
+- **Close-out:**
+  - scans clean on both machines, and the credentials removed on both;
+  - the Mac outputs returned and verified before the Mac run directory was removed;
+  - no OS permission introduced: the Mac firewall was off, and WezTerm's Local Network grant was pre-existing;
+  - final checks 36 / 36: both M7-L1 seals re-hashed in full; the tags and the native and content identities unchanged.
+- **Next (not granted):** review. M7-D and any game run need their own authorization.
+
 Updated: 2026-10-20, after **M7-L2's preparation stopped at a missing Mac prerequisite** (record `docs/design/M7L2_LAN_TRANSPORT_RECORD.md`; evidence `m7l2-run1\`, not sealed yet). No peer started, no LAN socket, no approval asked, nothing installed or changed on either machine. No tag. M7 stays open.
 - **Prepared on Windows:**
   - the checkpoint, 36 / 36 (attempt 1's miscount kept with a NOTE);

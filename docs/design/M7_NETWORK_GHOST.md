@@ -792,6 +792,15 @@ M7-L1 and its correction are accepted for their demonstrated offline scope (`M7L
 
 The preparation stopped at a missing prerequisite on the MacBook: its only runtime is Erlang/OTP 29 / Elixir 1.20, and the qualified bundle is pinned to OTP 28 / Elixir 1.19 (`M7L2_LAN_TRANSPORT_RECORD.md` sections 4–5). No peer started, no LAN socket was opened, and section 20's profile was not exercised across machines. The options are recorded for a decision. Nothing in sections 15–23 changes.
 
+## 25. M7-L2 run 1 (pointer; 2026-10-20)
+
+Under the operator's option B (a separate OTP 28 / Elixir 1.19 runtime inside the Mac's run directory), one transport-only exchange ran between the Windows/WSL host and the MacBook (`M7L2_LAN_TRANSPORT_RECORD.md` sections 9–16; evidence `m7l2-run1\`, sealed, 242 entries, manifest `ecc8d118287246625c4738a5f8c89d92fe9b5ffa975873db128e5caa2131d6d8`).
+- Section 20's `lan_ipv4` profile carried it: the Mac listened on one declared socket (`192.168.1.17:4760`) and admitted one initiator (`192.168.1.11`, the WSL connector through NAT), over mutually authenticated TLS 1.3 with exact per-run pins.
+- One bounded synthetic course went each way: 201 / 201 received, content identical. Both peers exit 0; no reconnection.
+- One reconciliation check failed, and its result is kept: the kit's listener record on the connector also lists a connecting client socket.
+
+It establishes cross-machine transport and accounting only: no game, native, latency or multiplayer claim. Nothing in sections 15–24 changes. M7 is not complete.
+
 ## 13. Sources
 
 | Claim area | Source (blobs in `source-facts.txt`) |
