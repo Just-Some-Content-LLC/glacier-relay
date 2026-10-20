@@ -1,5 +1,37 @@
 # Handoff checkpoint
 
+Updated: 2026-10-20, after **the M7-L3 preparation — one game-host-to-MacBook LAN experiment, offline** (record `docs/design/M7L3_LAN_GAME_PREPARATION.md`; pointer `docs/design/M7_NETWORK_GHOST.md` section 27; evidence `m7l3-prep\`, sealed, 4,247 entries, manifest `11cabfcc88070277f8826a7c67ab55f392e6769c394e01ea98a7b3582acbfc7e`). No game, Mac contact, LAN socket or live credential. No tag. M7 stays open; awaiting review.
+- **Socket record corrected** (`86c9071`): `PeerKit.Sockets` classifies the VM's sockets by explicit state (listen / connecting / connected) beside the kernel's view, and a failed query reads as unavailable.
+  - Controls 8 / 0; the kit rehearsal 99 / 99.
+  - M7-L2's race replayed on loopback: the connecting socket is now listed as connecting, never as a listener.
+  - The macOS `lsof` branch is parser-tested only.
+- **The Mac's game-facing peer** (`aff8193`): `game-peer.exs` listens for one game host and records its share. It sends M7-C's one course from P (digest `35b0d005…`) only on its operator's `go.sh`, once. Tests 47 / 47 against a stand-in host.
+- **The bundle of record:** `d8680690…` (archive `3dff4ef4…`), the qualified compiled modules byte for byte plus the new kit; nothing compiled.
+- **The game host's run kit** (`m7l3-prep\kit\`, 47 files, frozen), derived from M7-C's:
+  - the LAN connect profile from one pinned host-peer configuration, with one attempt and no reconnect;
+  - `peer-connect` and `peer-close`;
+  - `dest-wait`: the session opens only inside the Mac stream's stationary prefix, measured in the stream's own samples;
+  - the console's own logger check, crash dumps off;
+  - the install / rollback / readiness chain retargeted, with the host key scanned before the credentials are shredded;
+  - M7-L2's helpers re-rooted.
+- **Rehearsed against the frozen native6 probe** with the Mac peer as a second loopback process:
+  - dry run A (49 / 49: the share 950 → 950 → 950, the course with 66 setter calls ending at the opening words, release at baseline);
+  - dry run B (46 / 46: the operator's stop mid-course with the Mac stream running on, then the restoration);
+  - dry run C (38 / 38: no go within the wait, nothing opened);
+  - the installer rehearsal; the drift test; readiness previews (a) 187 / 187 and (b) 185 / 185.
+- **Kept:**
+  - `game-peer-tests-attempt1` FAIL (the harness's FIFO on drvfs; fixed in `0ca801d`);
+  - `readiness-attempt1` (the head not yet pushed);
+  - the development iterations, with the two kit defects they found and fixed before the attempts of record.
+- **Proposed for the later runtime approval:**
+  - the Mac lifetime 600 s, started after R3 and the share go-ahead;
+  - `peer-connect` within 60 s;
+  - `dest-wait` 25 s inside the 30 s arming;
+  - M7-C's share, session limits and course.
+
+  The genuinely unresolved values (addresses, initiator, OS permission state, fresh credentials and digests, the recording method) are in record section 10.
+- **Next (not granted):** review; then the one-game LAN run under its own authorization, with new game and LAN approvals together.
+
 Updated: 2026-10-20, after **M7-L2's acceptance** (authorization "Glacier Relay — M7-L2 acceptance and bounded one-game LAN preparation"; record `docs/design/M7L2_LAN_TRANSPORT_RECORD.md` section 17; pointer `docs/design/M7_NETWORK_GHOST.md` section 26). No code changed by the acceptance. No tag. M7 stays open.
 - **Accepted for its transport scope:**
   - one mutually authenticated TLS 1.3 connection between the real Windows/WSL host and the arm64 MacBook, with exact per-run pins;

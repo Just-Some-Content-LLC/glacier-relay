@@ -66,6 +66,8 @@ Two PCs, same mission. Each instance renders the other player's externally drive
 
 Exit: bidirectional movement/input representation survives a bounded test session.
 
+**Status: M7-L3 preparation done offline (2026-10-20; `docs/design/M7L3_LAN_GAME_PREPARATION.md`); awaiting review.** A later one-game LAN experiment is prepared and rehearsed on owned loopback against the frozen native6 probe: the Windows game host shares its player to the MacBook's headless sink, then offers the Mac's one synthetic course to Agent48. The kit's socket record is corrected. There was no game, Mac contact or LAN socket in this pass. M7 stays open; the goal and exit are unchanged.
+
 **Status: M7-L2 accepted for its transport scope (2026-10-20; `docs/design/M7L2_LAN_TRANSPORT_RECORD.md` section 17); an offline M7-L3 preparation pass for one game-host-to-MacBook LAN experiment is authorized.** The acceptance keeps the failed no-listener check and its limitation. It does not establish native motion across the LAN, real-player mirroring, a second game or multiplayer. M7 stays open; the goal and exit are unchanged.
 
 **Status: M7-L2 run 1 done (2026-10-20; `docs/design/M7L2_LAN_TRANSPORT_RECORD.md`); awaiting review.** The qualified headless peer protocol exchanged one bounded synthetic course each way between the Windows/WSL host and the MacBook across the LAN.

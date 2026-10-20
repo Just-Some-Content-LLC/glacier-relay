@@ -805,6 +805,15 @@ It establishes cross-machine transport and accounting only: no game, native, lat
 
 M7-L2 run 1 is accepted for its demonstrated transport scope (`M7L2_LAN_TRANSPORT_RECORD.md` section 17). The listener-observation limitation stays: the failed reconciliation check is kept as failed, and "the connector listens on nothing" is supported, not established. One offline, tooling- and documentation-only preparation pass is authorized for a later one-game LAN integration experiment (working label **M7-L3**): the Windows game host with native6, and the MacBook as a headless peer. It runs M7-C's two sequential phases across the LAN: a finite real-player share to a Mac sink, then the exact M7-C synthetic out-and-back course from the Mac to Agent48. The pass corrects the kit's socket observation and prepares and rehearses the operator sequence locally. No game, Mac contact or LAN socket is involved. Sections 15–25 are unchanged. M7 is not complete.
 
+## 27. M7-L3 preparation (pointer; 2026-10-20)
+
+One offline pass prepared a later one-game LAN experiment (`M7L3_LAN_GAME_PREPARATION.md`; evidence `m7l3-prep\`, sealed, 4,247 entries, manifest `11cabfcc88070277f8826a7c67ab55f392e6769c394e01ea98a7b3582acbfc7e`). In it, the Windows game host with native6 runs M7-C's two sequential phases against the MacBook's headless peer: a finite real-player share to the Mac's sink, then the Mac's one synthetic course (M7-C's exact course from P) offered to Agent48.
+- **The kit's socket record** now classifies sockets by explicit state (`tools/peer-transport/sockets.exs`). A connecting client is no longer reported as a listener.
+- **The Mac's side** is `game-peer.exs`. It listens for one game host, records the share, and sends its course only on its operator's `go.sh`.
+- **The game host's run kit** is derived from M7-C's. Its peer is Motion.Supervisor's qualified connector under section 20's `lan_ipv4` profile, with one attempt and no automatic reconnect; the destination session opens only inside the Mac stream's stationary prefix.
+
+Everything was rehearsed on owned loopback against the frozen native6 probe. There was no game, no Mac contact and no LAN socket. No contract in sections 15–26 changes: no application, wire, native or limit change. M7 is not complete.
+
 ## 13. Sources
 
 | Claim area | Source (blobs in `source-facts.txt`) |
