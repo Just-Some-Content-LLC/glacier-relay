@@ -4,9 +4,11 @@ Operator tooling for **one transport-only test of the peer link between two mach
 
 - Boundary: `docs/design/M7_NETWORK_GHOST.md` section 20 (the opt-in `lan_ipv4` profile).
 - Record: `docs/design/M7L1_PEER_NETWORK_RECORD.md`; its first LAN use, `docs/design/M7L2_LAN_TRANSPORT_RECORD.md`.
-- **M7-L3** (`docs/design/M7L3_LAN_GAME_PREPARATION.md`) added the socket observation (`sockets.exs`), which replaces M7-L1's listener heuristic; qualified on loopback only.
+- **M7-L3** (`docs/design/M7L3_LAN_GAME_PREPARATION.md`) added two things, prepared and qualified on loopback only:
+  - the socket observation (`sockets.exs`), which replaces M7-L1's listener heuristic;
+  - the game-facing peer (`game-peer.exs`, `go.sh`): the MacBook's side of a later one-game LAN experiment.
 
-**Status.** Prepared and qualified in M7-L1 on the Windows/WSL host only, on owned loopback sockets. M7-L2 then ran the transport-only peer once between the Windows/WSL host and the MacBook, under its own authorization. The M7-L3 socket observation has run on loopback only, never on a Mac or a LAN. Each such use needs its own authorization. A loopback rehearsal is not proof of Mac or LAN compatibility.
+**Status.** Prepared and qualified in M7-L1 on the Windows/WSL host only, on owned loopback sockets. M7-L2 then ran the transport-only peer once between the Windows/WSL host and the MacBook, under its own authorization. The M7-L3 additions have run on loopback only, never on a Mac or a LAN. Each such use needs its own authorization. A loopback rehearsal is not proof of Mac or LAN compatibility.
 
 **What it never does:**
 - start the relay application, the command authority, a motion link, the dashboard or any game-facing listener;
@@ -23,13 +25,17 @@ Operator tooling for **one transport-only test of the peer link between two mach
 | `bundle.sh <commit> <new-dir>` | Windows/WSL | builds the bundle from one exact commit: the relay's compiled modules plus this kit, `BUNDLE.txt`, `MANIFEST.sha256`, a `.tar.gz` and its sha256 |
 | `compat-check.sh [<bundle>] [<port>]` | either | **read-only** compatibility report; ends with MISSING PREREQUISITES |
 | `creds.exs generate` / `import` | either | per-machine, per-run credentials; only public files cross between machines |
+| `rebundle.sh <qualified-bundle> <its-manifest-sha256> <commit> <new-dir>` | Windows/WSL | M7-L3: a kit-only bundle, the qualified bundle's compiled modules byte for byte with one commit's kit; refuses unless that commit's relay tree is the qualified one; compiles nothing |
 | `peer.exs <config> <sha256>` | either | the transport-only peer: checks everything before any socket, then one bounded exchange |
-| `sockets.exs` | either | M7-L3: `PeerKit.Sockets`, one observation of the VM's own TCP sockets (below); loaded by `peer.exs` after the bundle check |
-| `start.sh <bundle> <config> <sha256>` | either | prints and runs the one launch command (foreground) |
+| `game-peer.exs <config> <sha256>` | the Mac | M7-L3: the headless peer facing one game host (below) |
+| `sockets.exs` | either | M7-L3: `PeerKit.Sockets`, one observation of the VM's own TCP sockets (below); loaded by both peers after the bundle check |
+| `start.sh <bundle> <config> <sha256> [peer.exs\|game-peer.exs]` | either | prints and runs the one launch command (foreground) |
 | `stop.sh <out_dir>` | either | stops that run's own recorded process only |
+| `go.sh <out_dir>` | the Mac | M7-L3: the operator's one go for the game-facing peer's course |
 | `scan.exs <dir>... --known-key <key.pem>` / `--selftest <dir>` | either | material-based secret scan, with planted positive controls |
 | `tests/rehearsal.sh` | Windows/WSL | the loopback qualification of the transport kit (M7-L1; M7-L3 added the socket-record checks and the M7-L2 race) |
 | `tests/sockets_test.exs` | Windows/WSL | M7-L3: the socket observation's focused controls |
+| `tests/game-peer-test.sh`, `tests/fake-host.exs` | Windows/WSL | M7-L3: the game-facing peer's focused tests, against a stand-in game host (not the relay's) |
 
 ## Prerequisites (to be checked on the Mac under the L2 authorization, not assumed)
 
@@ -143,7 +149,7 @@ It walks directories without glob expansion and refuses a directory with nothing
 
 M7-L1's `PeerKit.listeners()` counted every TCP socket without a peer as a listener. A client socket that is still connecting has no peer either, so M7-L2's connector record listed its own outbound socket as one (`M7L2_LAN_TRANSPORT_RECORD.md` section 13). `PeerKit.Sockets.observe/0` replaces it, and having no peer no longer means anything.
 
-**One observation** is taken at each reporting point: the endpoint start, the identification, the finish. It is printed and written from the same result. It holds two views, each with its own time; they are two queries, never presented as one atomic result:
+**One observation** is taken at each reporting point: the endpoint start, the identification, the finish (and the game-facing peer's go). It is printed and written from the same result. It holds two views, each with its own time; they are two queries, never presented as one atomic result:
 - **the VM's view:** every `tcp_inet` port of this VM, classified by its explicit inet-driver state (`:inet.info/1`: `listen`, `connecting`, `connected`), with its addresses and owning Erlang process. A socket that closes during the observation is counted, not classified.
 - **the kernel's view of this OS process:** on Linux `ss -tanpH` (this pid's lines only); on macOS `lsof -nP -a -p <pid> -iTCP -F pnT`. The macOS branch was tested through its parser only, never executed on a Mac; there, the operator's second-terminal `lsof` stays the runtime check.
 
@@ -154,3 +160,26 @@ M7-L1's `PeerKit.listeners()` counted every TCP socket without a peer as a liste
 
 "Listens on nothing" (`no_listener?/1`) and "listens only on the declared socket" (`only_listener?/2`) are true only for an `observed` result. This is an operator measurement at those points, not continuous proof and not a monitor.
 
+## The game-facing peer (`game-peer.exs`, M7-L3)
+
+The MacBook's side of the later one-game LAN experiment (design section 26; the M7-L3 record). It runs M7-C's two sequential phases against the Windows game host. It is **not** the transport-only peer: it sends no course by itself.
+- **It listens only:** one declared private socket, for one declared game host (`client_kind` game). The game host connects out.
+- **Phase 1, the share:** it records the game host's real-player share stream in its sink, and sends nothing back. Nothing received ever reaches its source.
+- **Phase 2, the course:** only on the operator's `go.sh <out_dir>`, once, it sends M7-C's one synthetic course. That is `Motion.Course.out_and_back` from P's exact words (`c2b2fae1,416d47ae`): 1.0 m along negative world x at 0.5 m/s, a 4,000 ms stationary prefix, 2,000 ms holds and a 50 ms interval, so 241 samples over 12,000 ms.
+  - The course is compiled into the script; the configuration names the profile and the anchor, and both must equal the compiled ones.
+  - The generated course is checked against its own facts before any socket. Its digest is printed, so the operator can compare it with the game host's course plan.
+- **The go is one-shot.** It is refused before identification, while an inbound stream (the share) is open, or after a course has run. A refused go is final.
+- **The end:** the game host closes the connection, or the lifetime ends (60–900 s). It never reconnects.
+- **Exit status:**
+  - 0: ended by the host after identification, every inbound stream transport-complete, and the course (if any) ended `course_complete`;
+  - 3: the lifetime ended;
+  - 4: the connection ended before identification, or during the course;
+  - 5: the host ended it with a share open or incomplete;
+  - 2, 6, 7 and 124: as for `peer.exs`.
+
+The configuration (`glacier-relay.peer-game-run/1`) has the transport configuration's keys, with these differences:
+- `"role": "listen"` only;
+- `"course": {"profile": "m7c_out_and_back", "anchor_words": ["c2b2fae1", "416d47ae"]}`;
+- `"limits": {"lifetime_s": N}`.
+
+It holds no run token, no authority API and no game state.
