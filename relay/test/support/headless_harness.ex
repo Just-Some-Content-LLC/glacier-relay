@@ -33,13 +33,15 @@ defmodule GlacierRelay.Test.HeadlessHarness do
 
     {:ok, _sup} =
       HeadlessPeer.start_link(
-        ip: {127, 0, 0, 1},
-        port: cfg["port"] || 0,
-        credentials: Enum.flat_map(cfg["credentials"], &credential/1),
-        label: cfg["label"],
-        expected: %{label: cfg["expected_label"], client_kind: "game"},
-        trace_dir: cfg["trace_dir"],
-        sink_bounds: sink_bounds(cfg["sink_bounds"])
+        address(cfg) ++
+          [
+            role: if(cfg["role"] == "connect", do: :connect, else: :listen),
+            credentials: Enum.flat_map(cfg["credentials"], &credential/1),
+            label: cfg["label"],
+            expected: %{label: cfg["expected_label"], client_kind: cfg["expected_kind"] || "game"},
+            trace_dir: cfg["trace_dir"],
+            sink_bounds: sink_bounds(cfg["sink_bounds"])
+          ]
       )
 
     emit(%{
@@ -67,6 +69,20 @@ defmodule GlacierRelay.Test.HeadlessHarness do
       :error -> []
     end
   end
+
+  # M7-L1: an explicit lan_ipv4 profile (the test's input mapped key by key), else B1's loopback
+  defp address(%{"network" => n}) do
+    socket = fn [ip, port] -> {ip, port} end
+
+    [
+      network:
+        [profile: :lan_ipv4, prefix_length: n["prefix_length"]] ++
+          if(n["listen"], do: [listen: socket.(n["listen"]), initiator: n["initiator"]], else: []) ++
+          if(n["connect"], do: [connect: socket.(n["connect"])], else: [])
+    ]
+  end
+
+  defp address(cfg), do: [ip: {127, 0, 0, 1}, port: cfg["port"] || 0]
 
   defp sink_bounds(nil), do: nil
 
@@ -188,8 +204,10 @@ defmodule GlacierRelay.Test.HeadlessHarness do
 
   @doc """
   Spawns the child with `cfg` (`"credentials"` — file-based `Peer.TLS.credentials/1` options with
-  string keys — `"label"`, `"expected_label"`, `"trace_dir"`, `"port"`, `"sink_bounds"`) and waits for
-  its `ready` line. Returns `{port, ready}`.
+  string keys — `"label"`, `"expected_label"`, `"expected_kind"` (default `"game"`), `"trace_dir"`,
+  `"port"` or `"network"` (M7-L1: `%{"prefix_length", "listen" => [ip, port], "initiator"}` or
+  `%{"prefix_length", "connect" => [ip, port]}`), `"role"` (`"listen"` default, `"connect"`),
+  `"sink_bounds"`) and waits for its `ready` line. Returns `{port, ready}`.
   """
   def start_child(cfg, timeout \\ 20_000) do
     elixir = System.find_executable("elixir") || raise "elixir not found"

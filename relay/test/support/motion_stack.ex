@@ -25,7 +25,9 @@ defmodule GlacierRelay.Test.MotionStack do
   @doc """
   Starts the topology. `opts`: `:headless` (default true: start the in-VM headless peer; false
   with `:peer_port` connects the game host to a headless peer elsewhere, e.g. another OS process),
-  `:creds` (a `PeerCredentials.pair/0`),
+  `:creds` (a `PeerCredentials.pair/0`), `:lan` (M7-L1: both peer endpoints use the explicit
+  `lan_ipv4` profile on `127.0.0.1` with a concrete port instead of B1's loopback default; with
+  `headless: false` the other process's listener is at `:peer_port`),
   `:max_sessions`, `:bind_motion` (default true), `:command` (extra command-subtree options),
   `:fake` (extra fake-native options). Returns a map of the parts.
   """
@@ -40,16 +42,23 @@ defmodule GlacierRelay.Test.MotionStack do
     on_exit(fn -> File.rm_rf(dir) end)
     creds = Keyword.get(opts, :creds) || PeerCredentials.pair()
 
+    lan = Keyword.get(opts, :lan, false)
+
     hport =
       if Keyword.get(opts, :headless, true) do
+        lport = if lan, do: free_port(), else: 0
+        address = if lan, do: [network: lan_listen(lport)], else: [port: 0]
+
         start_supervised!(
           {HeadlessPeer,
-           port: 0,
-           credentials: fn -> creds.headless end,
-           label: "headless-test",
-           expected: %{label: "host-test", client_kind: "game"},
-           trace_dir: Path.join(dir, "headless-trace"),
-           sink_bounds: Keyword.get(opts, :sink_bounds)}
+           address ++
+             [
+               credentials: fn -> creds.headless end,
+               label: "headless-test",
+               expected: %{label: "host-test", client_kind: "game"},
+               trace_dir: Path.join(dir, "headless-trace"),
+               sink_bounds: Keyword.get(opts, :sink_bounds)
+             ]}
         )
 
         Endpoint.port(HeadlessPeer.endpoint())
@@ -78,14 +87,17 @@ defmodule GlacierRelay.Test.MotionStack do
               port: 0,
               trace_dir: Path.join(dir, "host-trace"),
               max_sessions: Keyword.get(opts, :max_sessions, 1),
-              peer: [
-                ip: {127, 0, 0, 1},
-                port: hport,
-                credentials: fn -> creds.host end,
-                local: %{label: "host-test", client_kind: "game"},
-                expected: %{label: "headless-test", client_kind: "headless"},
-                reconnect_ms: 200
-              ]
+              peer:
+                if(lan,
+                  do: [network: lan_connect(hport)],
+                  else: [ip: {127, 0, 0, 1}, port: hport]
+                ) ++
+                  [
+                    credentials: fn -> creds.host end,
+                    local: %{label: "host-test", client_kind: "game"},
+                    expected: %{label: "headless-test", client_kind: "headless"},
+                    reconnect_ms: 200
+                  ]
             ] ++ Keyword.get(opts, :motion_extra, [])
         ],
         Keyword.get(opts, :command, [])
@@ -123,6 +135,27 @@ defmodule GlacierRelay.Test.MotionStack do
       adapter: FakeMotionNative.status(fake).adapter,
       headless_port: hport
     }
+  end
+
+  @doc "M7-L1: the `lan_ipv4` listen profile on `127.0.0.1:port` (initiator `127.0.0.1`)."
+  def lan_listen(port),
+    do: [
+      profile: :lan_ipv4,
+      prefix_length: 8,
+      listen: {{127, 0, 0, 1}, port},
+      initiator: {127, 0, 0, 1}
+    ]
+
+  @doc "M7-L1: the `lan_ipv4` connect profile to `127.0.0.1:port`."
+  def lan_connect(port),
+    do: [profile: :lan_ipv4, prefix_length: 8, connect: {{127, 0, 0, 1}, port}]
+
+  @doc "A loopback port free at this moment (the profile takes concrete ports only)."
+  def free_port do
+    {:ok, s} = :gen_tcp.listen(0, ip: {127, 0, 0, 1})
+    {:ok, port} = :inet.port(s)
+    :gen_tcp.close(s)
+    port
   end
 
   def wait(fun, attempts \\ 300, sleep_ms \\ 10),
