@@ -20,7 +20,7 @@ checks=0; fails=0
 say() { echo "$(date -u +%FT%T.%3NZ) $*"; }
 ok() { checks=$((checks + 1)); if [ "$1" = 0 ]; then say "PASS $2"; else fails=$((fails + 1)); say "FAIL $2"; fi; }
 jget() { python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1]))
-for k in sys.argv[2].split("."): d=d[int(k)] if isinstance(d,list) else d.get(k)
+for k in sys.argv[2].split("."): d=(d[int(k)] if int(k) < len(d) else None) if isinstance(d,list) else (d or {}).get(k)
 print(json.dumps(d) if isinstance(d,(dict,list)) else d)' "$1" "$2"; }
 free_port() { python3 -I -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()'; }
 sha() { sha256sum < "$1" | cut -c1-64; }
@@ -85,13 +85,14 @@ mac_start() {
   MBG=$!
   wait_grep "$d/console-mac.txt" "waiting for the game host" 150
 }
-# host_start <case-dir> <port> : the stand-in host, driven through a FIFO on fd 8
+# host_start <case-dir> <port> : the stand-in host, driven through a FIFO on fd 8. The FIFO lives in the state directory (the Linux
+# filesystem): the Windows drive (drvfs) has none ("mkfifo: Operation not supported": game-peer-tests-attempt1 of m7l3-prep)
 host_start() {
-  local d=$1 port=$2
-  mkfifo -m 600 "$d/host-in"
-  $EX "$T/fake-host.exs" "$port" "$S/creds-host/own-cert.pem" "$S/creds-host/own-key.pem" "$S/creds-host/peer-ca.pem" "$MPIN" l3-host l3-mac < "$d/host-in" > "$d/host-out.txt" 2>&1 &
+  local d=$1 port=$2 fifo=$S/host-in-$(basename "$1")
+  mkfifo -m 600 "$fifo" || { say "ABORT: no FIFO at $fifo"; exit 3; }
+  $EX "$T/fake-host.exs" "$port" "$S/creds-host/own-cert.pem" "$S/creds-host/own-key.pem" "$S/creds-host/peer-ca.pem" "$MPIN" l3-host l3-mac < "$fifo" > "$d/host-out.txt" 2>&1 &
   HBG=$!
-  exec 8> "$d/host-in"
+  exec 8> "$fifo"
   wait_grep "$d/host-out.txt" '"event":"ready"' 150
 }
 # req <case-dir> <json-without-id> <timeout-0.1s> : one request; prints the answer line (without @@)
