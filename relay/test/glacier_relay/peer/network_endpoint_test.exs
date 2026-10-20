@@ -377,7 +377,7 @@ defmodule GlacierRelay.Peer.NetworkEndpointTest do
     assert boot2 != boot1
   end
 
-  test "B1's loopback listener: the TLS listen socket (it embeds the key) is redacted from its status",
+  test "B1's loopback listener: its listen socket no longer embeds the key, and stays redacted from its status",
        %{c: c} do
     start_supervised!(
       {Endpoint,
@@ -391,9 +391,11 @@ defmodule GlacierRelay.Peer.NetworkEndpointTest do
     )
 
     {_, key} = Keyword.fetch!(c.headless, :key)
-    # the socket itself does hold the key (OTP keeps the TLS options in the listen socket's term)
-    assert :binary.match(:erlang.term_to_binary(:sys.get_state(:b1_ep).listen_socket), key) !=
-             :nomatch
+    # B1's TLS listen socket held the key (OTP keeps the TLS options in an ssl listen socket's term);
+    # since the M7-L1 correction the default listener's is a TCP socket, which holds no TLS option
+    ls = :sys.get_state(:b1_ep).listen_socket
+    assert is_port(ls) and Port.info(ls, :name) == {:name, ~c"tcp_inet"}
+    assert :binary.match(:erlang.term_to_binary(ls), key) == :nomatch
 
     status = :sys.get_status(:b1_ep)
     assert :binary.match(:erlang.term_to_binary(status), key) == :nomatch

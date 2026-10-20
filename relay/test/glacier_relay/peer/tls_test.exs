@@ -88,6 +88,11 @@ defmodule GlacierRelay.Peer.TLSTest do
   defp downs(probe), do: for({:down, _info, reason} <- Probe.events(probe), do: reason)
   defp conn(ep), do: Endpoint.status(ep).connection
 
+  # one connection at a time: a client closed by the listener's connection is refused as busy until
+  # the endpoint has seen that connection end (since the M7-L1 correction the refusal is a prompt
+  # TCP closure), so a test's next client waits for that first
+  defp idle(ep), do: wait(fn -> conn(ep) == nil end)
+
   setup do
     %{c: PeerCredentials.pair()}
   end
@@ -241,12 +246,14 @@ defmodule GlacierRelay.Peer.TLSTest do
           Codec.hello("someone-else", "game", Schema.uuid4()),
           Codec.hello("host-t", "headless", Schema.uuid4())
         ] do
+      idle(:ep_l)
       s = raw_client(c, port)
       {:ok, {:hello, _}} = recv_line(s)
       :ok = :ssl.send(s, hello)
       assert closed?(s)
     end
 
+    idle(:ep_l)
     s = raw_client(c, port)
     {:ok, {:hello, theirs}} = recv_line(s)
     :ok = :ssl.send(s, Codec.hello("host-t", "game", theirs.boot_id))
@@ -285,6 +292,7 @@ defmodule GlacierRelay.Peer.TLSTest do
     ]
 
     for {hello, msg} <- cases do
+      idle(:ep_l)
       s = raw_client(c, port)
       {:ok, {:hello, _}} = recv_line(s)
       if hello, do: :ok = :ssl.send(s, hello)

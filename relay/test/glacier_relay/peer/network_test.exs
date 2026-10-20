@@ -110,8 +110,12 @@ defmodule GlacierRelay.Peer.NetworkTest do
       assert {:error, {:listen_failed, :injected_no_network}} =
                start(c, role: :listen, port: 0)
 
+      # since the M7-L1 correction the loopback listener accepts TCP itself as the profile's does:
+      # its listen call carries socket options only (the TLS options go to the upgrade)
       assert_received {:nonet_listen, 0, opts}
-      assert Keyword.get_values(opts, :ip) == [{127, 0, 0, 1}]
+      assert for({:ip, v} <- opts, do: v) == [{127, 0, 0, 1}]
+      assert :binary in opts and {:active, false} in opts and {:backlog, 2} in opts
+      assert for({k, _} when k in [:cert, :key, :cacerts] <- opts, do: k) == []
     end
   end
 
