@@ -72,3 +72,11 @@ These are amendments. The proposal above did not contain them.
 11. **A restoration result proves the restoration.** A motion restore releases the candidate only with the whole restoration-result contract (design 17.2), journaled before it takes effect. Anything less is non-releasing and terminal for the session. This changes no M5 path and no accepted M6 operation semantics.
 12. **The peer sender's queue** is the implemented one, accepted for the first bounded headless-peer scope: drop-newest at 8, with stale (100 ms) and share-bound drops, the per-stream rate enforced by the producers (design 17.3). It is not a proof of absolute freshness.
 13. **The TLS observation is scoped** to the tested OTP 28 / ssl 11.5.4 configuration (design 15.7). No TLS redesign follows from it.
+
+## Amendment of M7-L1 (2026-10-20; design section 20)
+
+14. **The peer link may leave loopback only through one explicit profile.** Without it, 4760 keeps B1's loopback-only refusal (amendment 6). The `lan_ipv4` profile names one concrete private IPv4 socket for the endpoint's role:
+    - a listener's own address and port, plus the one approved initiator;
+    - a connector's one destination.
+
+    It refuses wildcard, multicast, broadcast, malformed, non-private and IPv6 addresses, and invalid ports. Under it only a headless endpoint listens; the game host only connects out. Authentication, authority, the wire and the native are unchanged, and an allowed address is not authentication. No other listener, epmd or Erlang distribution is exposed. Using the profile on a LAN needs its own authorization.

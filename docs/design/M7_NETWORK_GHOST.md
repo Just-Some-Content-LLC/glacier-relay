@@ -713,6 +713,57 @@ M7-B2 implemented the native side of sections 15 and 17 offline, in ZHMModSDK `r
 
 M7-B2 was accepted for its offline scope (`M7B2_NATIVE_RECORD.md` section 13), and M7-C ran once on the one Windows host (`M7C_ATTENDED_RECORD.md`; evidence `m7c-run1\`, sealed, `5da4a64a…`): native6 loaded in HITMAN for the first time; one 60 s read-only share of the local hero reached the headless sink (1,100 sent, 1,099 relayed, one refused by the host's rate floor); one synthetic out-and-back course drove Agent48 1.0 m along negative world x and back through 78 checked setter calls, ending bit-exact at its opening words, so it was released at baseline without a restoration. The operator saw a gradual translation. Nothing in this design was widened or changed. M7 is not complete. **Accepted** for that bounded one-host scope (`M7C_ATTENDED_RECORD.md` section 11, 2026-10-20), with the accounts by layer and the bounded video inspection recorded there.
 
+## 20. M7-L1: the opt-in peer-network profile (normative; amends 4.3 and 15.7; 2026-10-20)
+
+Authorization "Glacier Relay — M7-C acceptance and M7-L1 offline peer-network preparation". Until now `Peer.Endpoint` refused every non-loopback address for both roles (`TLS.bind_allowed?/1`), so a LAN peer cannot be reached by configuration alone. This section amends that boundary **explicitly, for the peer endpoint only**, before any code. It is written before the implementation; the M7-L1 record (`M7L1_PEER_NETWORK_RECORD.md`) says what was built and tested.
+
+### 20.1 What does not change
+
+- **The default.** Without a network profile the endpoint behaves exactly as in B1: `{127, 0, 0, 1}` only, every other address refused at start as `{:not_loopback, ip}`, the same port handling. The motion subtree and its peer stay off by default (`config :glacier_relay, :motion, enabled: false, peer: nil`).
+- **Every other listener:** 4747, 4748, 4749, 4750 and the dashboard keep their loopback configuration and refusals. The command authority, the run console's spool, the local adapter links, the dashboard, epmd and Erlang distribution are never reachable from the LAN; distribution is never the peer transport.
+- **Authentication** (15.7): TLS 1.3 only, mutual, per-side CA trust, exact leaf pins checked in the callback and again on the received DER, the `hello` identity and kind, boot / connection / stream bindings. An allowed address is not authentication. No trust on first use, no downgrade, no weakened callback, no routing by label.
+- **Authority and data:** peer samples stay data; they cannot open, extend, widen, restore or re-arm a motion session. Provenance labels, the sink's record-only rule, deadlines, accounting, queue policy, exclusion and restart behaviour are unchanged.
+- **Failure:** wrong peers or configuration fail closed; a reconnect never restores an expired session; the hello, idle, handler, send-age and send deadlines are not lengthened in anticipation of a LAN.
+- **The wire, the native and the motion rules:** no schema, codec, Source / Destination or native change; no prediction, smoothing, mapping, compression, discovery or relay.
+
+### 20.2 The `lan_ipv4` profile (the one opt-in)
+
+The endpoint takes an explicit `network` option. Its only profile, `lan_ipv4`, names exactly one concrete IPv4 socket for the endpoint's role, approved and pinned for one run:
+
+| Role | Declares | Refused alongside |
+|---|---|---|
+| listen | `listen: {address, port}` — this machine's own unicast address; `initiator: address` — the one approved initiating machine; `prefix_length` | a `connect` entry; `:ip` / `:port` given as well |
+| connect | `connect: {address, port}` — the listening peer; `prefix_length` | a `listen` or `initiator` entry; `:ip` / `:port` given as well |
+
+**Address rules** (pure validation, before any socket):
+- IPv4 only: a 4-tuple, or a strict dotted quad (`:inet.parse_ipv4strict_address/1`). No hostname, no resolution, no shorthand form, no IPv6 (`unsupported_family`).
+- Allowed: `127.0.0.1` (owned local tests and loopback rehearsals of the same wiring) and RFC 1918 private unicast (10/8, 172.16/12, 192.168/16).
+- Refused: unspecified and 0/8, other 127/8 addresses, multicast (224/4), reserved (240/4), the limited broadcast, link-local (169.254/16) and every other range (public, shared 100.64/10, documentation).
+- `prefix_length` 8–30 is declared, never discovered. The network address and the directed broadcast of that prefix are refused, and the listener's initiator must lie inside its prefix.
+- The port is an integer 1024–65535: no 0, no privileged port.
+
+**Role rules:**
+- The profile's role must equal the endpoint's role.
+- Under the profile only a `client_kind: headless` endpoint may listen. The game host only connects out (its endpoint in `Motion.Supervisor` is connect-only already).
+
+**Socket rules:**
+- The listener binds exactly the declared address and port, and verifies that its socket name equals them.
+- It closes, before any TLS handshake, an accepted connection whose remote address is not the initiator (counted `refused_address`).
+- The connector verifies that its peer name equals the declared destination.
+- There is no wildcard fallback, no automatic interface selection, no subnet sweep, no UPnP and no port proxy.
+
+### 20.3 The headless connector
+
+A transport-only test between two machines needs no game: two headless peers, each a labelled synthetic source and a record-only sink, exchange one finite course in each direction. The initiating machine (the Windows host) must still only connect out. `HeadlessPeer` therefore takes `role: :connect` as well as its default `:listen`; nothing else in it changes. A headless connector does not reconnect unless asked, and nothing it receives reaches its source. A headless-to-headless result establishes transport, credentials, bounded exchange, counters and teardown across the machines; it never establishes anything about a game, a native or the M7 exit.
+
+### 20.4 Not authorized by this section
+
+- Any LAN socket during M7-L1: the tests bind and contact owned loopback endpoints only; accepted non-loopback profiles are evaluated as pure inputs or through injected socket calls that never touch the network.
+- Any Mac, firewall, WSL, router or epmd action.
+- A real-game LAN run.
+
+Each of these needs its own authorization naming the actual addresses, the port, the certificate pins, the owned processes and the cleanup.
+
 ## 13. Sources
 
 | Claim area | Source (blobs in `source-facts.txt`) |
