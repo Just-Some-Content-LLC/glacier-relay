@@ -49,10 +49,14 @@ defmodule GlacierRelay.Motion.RestoreResultTest do
     %{x_word: xw, y_word: yw} = List.last(Course.samples(course))
     away = TransformWords.encode([xw, yw])
 
+    # the destination's confirmed reference starts at the opening snapshot (P): the course's end must
+    # differ from it, and at least one target must have been applied there
+    refute away == TransformWords.encode([elem(@p, 0), elem(@p, 1)])
+
     wait(fn ->
       s = Hub.status().session
 
-      s.status == :active and s.summary.confirmed_pos == away and
+      s.status == :active and s.summary.counts.applied >= 1 and s.summary.confirmed_pos == away and
         Enum.slice(
           TransformWords.decode_world(FakeMotionNative.status(st.fake).world) |> elem(1),
           9,
