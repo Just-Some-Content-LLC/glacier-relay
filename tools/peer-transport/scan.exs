@@ -166,7 +166,7 @@ defmodule Scan do
       "unknown-pem-in-json.json" => {JSON.encode!(%{"leaked" => unknown}), "pem"},
       "base64-in-prose.txt" => {"value=" <> Base.encode64(der) <> " end\n", "known-base64"},
       "hex-in-prose.txt" => {"k " <> Base.encode16(der, case: :lower) <> "\n", "known-hex"},
-      "HEX-in-prose.txt" => {"K " <> Base.encode16(der) <> "\n", "known-HEX"},
+      "upper-hex-in-prose.txt" => {"K " <> Base.encode16(der) <> "\n", "known-HEX"},
       "raw.bin" => {:crypto.strong_rand_bytes(100) <> der <> :crypto.strong_rand_bytes(100), "known-der"},
       "one-body-line.txt" => {"fragment: #{body_line}\n", "known-base64-line"},
       # how the BEAM prints a key (verifier V1): inspect in full and at its default limit, Erlang ~p, the decoded record
@@ -187,9 +187,29 @@ defmodule Scan do
       "key_file.json" => JSON.encode!(%{"key_file" => "/path/to/own-key.pem", "peer_pin" => String.duplicate("ab", 32)})
     }
 
+    # every control a file of its own, also where names are case-insensitive (drvfs, macOS APFS by default): two names that
+    # differ only by case would be one file there (kit rehearsal attempt 1)
+    names = Map.keys(positives) ++ Map.keys(negatives)
+    if length(Enum.uniq(Enum.map(names, &String.downcase/1))) != length(names),
+      do: (IO.puts("selftest: REFUSED: control names collide when case is ignored"); System.halt(2))
+
+    try do
+      selfcheck(dir, pos, neg, positives, negatives, keyfile)
+    after
+      # nothing planted stays, whatever happened above: the key file and every positive control (each holds key material) are
+      # removed (logical deletion); their names, sizes and digests are in positive-controls.txt, the negatives stay as they are
+      for {n, _} <- positives, do: File.rm(Path.join(pos, n))
+      File.rmdir(pos)
+      File.rm(keyfile)
+      IO.puts("selftest: the planted key and the #{map_size(positives)} positive controls were removed (listing: positive-controls.txt)")
+    end
+  end
+
+  defp selfcheck(dir, pos, neg, positives, negatives, keyfile) do
     for {n, {b, _class}} <- positives, do: File.write!(Path.join(pos, n), b)
     for {n, b} <- negatives, do: File.write!(Path.join(neg, n), b)
-    IO.puts("selftest: planted #{map_size(positives)} positive and #{map_size(negatives)} negative controls in #{dir}")
+    planted = length(File.ls!(pos)) + length(File.ls!(neg))
+    IO.puts("selftest: planted #{map_size(positives)} positive and #{map_size(negatives)} negative controls in #{dir} (#{planted} files)")
 
     found =
       for h <- scan([pos], [keyfile]), into: %{},
@@ -200,25 +220,22 @@ defmodule Scan do
     missed = for {n, {_b, class}} <- positives, class not in Map.get(found, n, []), do: "#{n} (#{class})"
     fails = length(missed) + length(nh)
     IO.puts("selftest: positives found #{length(ph)} / #{map_size(positives)} (missed #{inspect(missed)}); negatives flagged #{length(nh)} (#{inspect(nh)})")
-    # nothing planted stays: the key file and every positive control (each holds key material) are removed after the check
-    # (logical deletion); their names, sizes and digests stay in positive-controls.txt, the negatives stay as they are
     listing =
       for {n, {b, class}} <- Enum.sort(positives),
           do: "#{n}\t#{byte_size(b)} B\tsha256 #{Base.encode16(:crypto.hash(:sha256, b), case: :lower)}\tmust be found as #{class}\tfound as #{Enum.join(Map.get(found, n, []), ",")}\n"
 
     File.write!(Path.join(dir, "positive-controls.txt"), listing)
-    for {n, _} <- positives, do: File.rm!(Path.join(pos, n))
-    File.rmdir!(pos)
-    File.rm!(keyfile)
-    IO.puts("selftest: the planted key and the #{map_size(positives)} positive controls were removed after the check (listing: positive-controls.txt)")
+    fails = fails + if(planted == map_size(positives) + map_size(negatives), do: 0, else: 1)
     IO.puts("SELFTEST RESULT: #{if fails == 0, do: "PASS", else: "FAIL"} (#{fails} failures)")
-    System.halt(if fails == 0, do: 0, else: 1)
+    # the result is printed here; the exit happens after the cleanup (System.halt would skip the `after`)
+    send(self(), {:selftest_exit, if(fails == 0, do: 0, else: 1)})
   end
 end
 
 case System.argv() do
   ["--selftest", dir] ->
     Scan.selftest(dir)
+    receive do: ({:selftest_exit, code} -> System.halt(code)), after: (0 -> System.halt(1))
 
   args when args != [] ->
     {known, dirs} =
