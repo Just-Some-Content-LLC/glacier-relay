@@ -788,6 +788,10 @@ Nothing else in sections 15–21 changes. M7 is not complete; full M7-L1 accepta
 
 M7-L1 and its correction are accepted for their demonstrated offline scope (`M7L1_PEER_NETWORK_RECORD.md` section 15). The original gate stays NOT MET as recorded. The killed-endpoint escalation (record 14.7 finding 3) is a documented, deferred M3 reliability limitation. M7-L2 is authorized: one bounded transport-only exchange between the Windows/WSL host and the MacBook, under section 20's profile, after a separate approval of its exact configuration; no game. Its record is `M7L2_LAN_TRANSPORT_RECORD.md`. Sections 15–22 are unchanged. M7 is not complete.
 
+## 24. M7-L2 preparation stopped (pointer; 2026-10-20)
+
+The preparation stopped at a missing prerequisite on the MacBook: its only runtime is Erlang/OTP 29 / Elixir 1.20, and the qualified bundle is pinned to OTP 28 / Elixir 1.19 (`M7L2_LAN_TRANSPORT_RECORD.md` sections 4–5). No peer started, no LAN socket was opened, and section 20's profile was not exercised across machines. The options are recorded for a decision. Nothing in sections 15–23 changes.
+
 ## 13. Sources
 
 | Claim area | Source (blobs in `source-facts.txt`) |

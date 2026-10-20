@@ -1,5 +1,24 @@
 # Handoff checkpoint
 
+Updated: 2026-10-20, after **M7-L2's preparation stopped at a missing Mac prerequisite** (record `docs/design/M7L2_LAN_TRANSPORT_RECORD.md`; evidence `m7l2-run1\`, not sealed yet). No peer started, no LAN socket, no approval asked, nothing installed or changed on either machine. No tag. M7 stays open.
+- **Prepared on Windows:**
+  - the checkpoint, 36 / 36 (attempt 1's miscount kept with a NOTE);
+  - the qualified bundle reused, not rebuilt (`61720a82…` / `20987b6c…`);
+  - `compat-check.sh` clean, and a new read-only logger check: SASL off; exactly `:default` plus OTP ssl's stock `:ssl_handler`; both negative controls fail as intended;
+  - Windows on Wi-Fi 192.168.1.11/24, WSL in NAT mode, its firewall untouched.
+- **Packet 1** went to the Mac session by USB stick and was read back 7 / 7. The Mac session runs separately; the operator relays between the two.
+- **The blocker:** the Mac's only runtime is Homebrew's Erlang/OTP 29.0.5 / Elixir 1.20.3. The bundle is qualified on OTP 28 / Elixir 1.19.x.
+- **Mac facts (relayed):** 192.168.1.17/24 on en0, port 4760 free, the application firewall off.
+- **Windows credentials:** generated early, never used, then scanned (0 hits) and removed.
+- **Decision needed** (record section 5):
+  - A: stop here;
+  - B (recommended if L2 continues): a separate OTP 28 / Elixir 1.19 on the Mac, under a new authorization, keeping the qualified bundle and its pins;
+  - C: rebuild and requalify;
+  - D: change the runtime pin, an unqualified pairing.
+- **Open points:**
+  - The Mac session works in `/Users/justsomedude/dev/glacier-relay/runs/m7l2-run1/`, not the agreed `~/glacier-relay-peer-l2`; to confirm.
+  - The Mac's raw logs are still on the Mac.
+
 Updated: 2026-10-20, after **M7-L1's acceptance** (authorization "Glacier Relay — M7-L1 acceptance and M7-L2 transport-only authorization"; record `docs/design/M7L1_PEER_NETWORK_RECORD.md` section 15; pointer `docs/design/M7_NETWORK_GHOST.md` section 23). No code changed. No tag. M7 stays open.
 - **Accepted for its demonstrated offline scope:**
   - the corrected default listener: busy closure, handshake handling, acceptor lifetime and teardown;
