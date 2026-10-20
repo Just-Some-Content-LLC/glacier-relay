@@ -9,7 +9,9 @@ defmodule GlacierRelay.Motion.Supervisor do
   Children, `rest_for_one`: the motion trace (required evidence; its loss restarts everything after
   it), `Motion.Hub`, the motion-link supervisor, the motion-link listener (`127.0.0.1:4750`), and —
   when a peer is configured — the peer endpoint, which on a game host only **connects out** to the
-  one allowlisted peer (loopback only in B1). A hub restart drops every link, and the native closes
+  one allowlisted peer (loopback by default; a `network:` `lan_ipv4` connect profile in the peer
+  options names one private destination instead — M7-L1, design section 20 — and a listen profile
+  is refused here, since the endpoint's role is always `:connect`). A hub restart drops every link, and the native closes
   its share and session on the loss.
   """
 

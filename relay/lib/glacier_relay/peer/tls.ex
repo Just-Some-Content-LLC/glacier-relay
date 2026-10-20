@@ -18,7 +18,9 @@ defmodule GlacierRelay.Peer.TLS do
   endpoint's state is redacted in crash reports.
 
   B1 binds loopback only: `bind_allowed?/1` accepts `{127, 0, 0, 1}` and nothing else — not
-  `{0, 0, 0, 0}`, not `::`, not a LAN address.
+  `{0, 0, 0, 0}`, not `::`, not a LAN address. That stays the endpoint's default; the one explicit
+  opt-in beyond it is `Peer.Network`'s `lan_ipv4` profile (M7-L1, design section 20), which changes
+  nothing here: the same TLS policy, credentials and pins apply on every address.
   """
 
   @pin ~r/^[0-9a-f]{64}$/
@@ -26,7 +28,7 @@ defmodule GlacierRelay.Peer.TLS do
 
   def handshake_timeout_ms, do: @handshake_timeout_ms
 
-  @doc "B1's bind policy: loopback IPv4 only."
+  @doc "B1's bind policy, the endpoint's default: loopback IPv4 only."
   def bind_allowed?({127, 0, 0, 1}), do: true
   def bind_allowed?(_), do: false
 
@@ -131,6 +133,34 @@ defmodule GlacierRelay.Peer.TLS do
 
   @doc "Options for `:ssl.handshake/3` on an accepted transport socket (none beyond the listen set)."
   def handshake_options(_creds), do: []
+
+  @doc """
+  M7-L1, the `lan_ipv4` listener: the plain TCP listen options. The listener accepts TCP itself so
+  that a connection from anyone but the declared initiator is closed (`:gen_tcp.close/1`) before any
+  TLS byte; on OTP 28 `:ssl.close/1` refuses a `transport_accept` socket
+  (`notsup_on_transport_accept_socket`). Accepted sockets inherit these options.
+  """
+  def tcp_listen_options(ip),
+    do: [
+      :binary,
+      packet: :raw,
+      active: false,
+      ip: ip,
+      reuseaddr: true,
+      backlog: 2,
+      send_timeout: 500,
+      send_timeout_close: true
+    ]
+
+  @doc """
+  M7-L1, the `lan_ipv4` listener: the server-side TLS options for `:ssl.handshake/3` on an admitted
+  TCP socket — the same policy as `listen_options/2` (TLS 1.3, `verify_peer`, the one trusted CA,
+  the pin callback, `fail_if_no_peer_cert`), without the socket options the TCP socket already has.
+  """
+  def upgrade_options(creds),
+    do:
+      Keyword.drop(common(creds), [:mode, :packet, :active, :send_timeout, :send_timeout_close]) ++
+        [fail_if_no_peer_cert: true]
 
   @doc "Connect options (the initiator side)."
   def connect_options(creds), do: common(creds) ++ [server_name_indication: :disable]

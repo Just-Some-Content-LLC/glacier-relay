@@ -94,7 +94,9 @@ config :glacier_relay, :motion,
   # absolute motion-trace directory; nil means $XDG_STATE_HOME/glacier-relay/motion or
   # ~/.local/state/glacier-relay/motion (the WSL2 filesystem)
   trace_dir: nil,
-  # the one allowlisted peer (Peer.Endpoint options); nil: no peer link
+  # the one allowlisted peer (Peer.Endpoint options); nil: no peer link. Loopback unless its
+  # options carry an explicit `network:` lan_ipv4 connect profile (M7-L1, design section 20);
+  # nothing here sets one
   peer: nil
 
 # The HTTP endpoint. Loopback only, a different port from the wire listener (4747), never
