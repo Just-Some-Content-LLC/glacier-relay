@@ -63,6 +63,24 @@ defmodule GlacierRelay.Peer.NetworkWiringTest do
     assert Endpoint.status(Motion.PeerEndpoint).counts.connections == 1
   end
 
+  defmodule Boom do
+    @moduledoc false
+    def connect(_ip, _port, _opts, _timeout) do
+      send(:persistent_term.get({__MODULE__, :owner}), :seam_used)
+      {:error, :seam_used}
+    end
+  end
+
+  test "configuration cannot inject the endpoint's test seam into the host (verifier V11)" do
+    :persistent_term.put({Boom, :owner}, self())
+    on_exit(fn -> :persistent_term.erase({Boom, :owner}) end)
+    MotionStack.start(lan: true, peer_extra: [socket_module: Boom])
+    assert Hub.status().peer != nil
+    refute_received :seam_used
+
+    assert :sys.get_state(Motion.PeerEndpoint).sock == nil
+  end
+
   test "the game host's peer endpoint refuses a listen profile" do
     c = PeerCredentials.pair()
     Process.flag(:trap_exit, true)

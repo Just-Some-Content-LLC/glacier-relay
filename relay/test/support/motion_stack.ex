@@ -27,7 +27,8 @@ defmodule GlacierRelay.Test.MotionStack do
   with `:peer_port` connects the game host to a headless peer elsewhere, e.g. another OS process),
   `:creds` (a `PeerCredentials.pair/0`), `:lan` (M7-L1: both peer endpoints use the explicit
   `lan_ipv4` profile on `127.0.0.1` with a concrete port instead of B1's loopback default; with
-  `headless: false` the other process's listener is at `:peer_port`),
+  `headless: false` the other process's listener is at `:peer_port`), `:peer_extra` (extra options
+  of the host's peer endpoint, as configuration would give them),
   `:max_sessions`, `:bind_motion` (default true), `:command` (extra command-subtree options),
   `:fake` (extra fake-native options). Returns a map of the parts.
   """
@@ -97,7 +98,7 @@ defmodule GlacierRelay.Test.MotionStack do
                     local: %{label: "host-test", client_kind: "game"},
                     expected: %{label: "headless-test", client_kind: "headless"},
                     reconnect_ms: 200
-                  ]
+                  ] ++ Keyword.get(opts, :peer_extra, [])
             ] ++ Keyword.get(opts, :motion_extra, [])
         ],
         Keyword.get(opts, :command, [])

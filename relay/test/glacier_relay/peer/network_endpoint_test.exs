@@ -241,9 +241,18 @@ defmodule GlacierRelay.Peer.NetworkEndpointTest do
     stop_supervised!(:nc_ep)
     stop_supervised!(:nc_probe)
 
-    # a client certificate from a foreign CA: the listener refuses it
-    initiator(other.host, port)
+    # a client certificate from a foreign CA, the initiator otherwise trusting and pinning the right
+    # listener (verifier V8): the listener itself refuses the client's certificate
+    initiator(PeerCredentials.opts(other.host_leaf, c.headless_root, c.headless_leaf), port)
     wait(fn -> Endpoint.status(:nl_ep).counts.handshake_failures >= 1 end)
+    refute up(:nl_probe)
+    stop_supervised!(:nc_ep)
+    stop_supervised!(:nc_probe)
+
+    # a client leaf from the right CA that is not the pinned one: refused by the listener's pin
+    unpinned = PeerCredentials.leaf(c.host_root)
+    initiator(PeerCredentials.opts(unpinned, c.headless_root, c.headless_leaf), port)
+    wait(fn -> Endpoint.status(:nl_ep).counts.handshake_failures >= 2 end)
     refute up(:nl_probe)
     stop_supervised!(:nc_ep)
     stop_supervised!(:nc_probe)
@@ -253,6 +262,75 @@ defmodule GlacierRelay.Peer.NetworkEndpointTest do
     wait(fn -> downs(:nc_probe) != [] or Endpoint.status(:nl_ep).counts.connections >= 1 end)
     wait(fn -> Endpoint.status(:nl_ep).connection == nil end)
     refute up(:nl_probe)
+  end
+
+  test "under the profile a client with no certificate, and a TLS 1.2 client, are refused at the handshake",
+       %{c: c, port: port} do
+    listener(c.headless, port)
+    {:ok, creds} = TLS.credentials(fn -> c.host end)
+    no_cert = Keyword.drop(TLS.connect_options(creds), [:cert, :key])
+
+    r1 = :ssl.connect({127, 0, 0, 1}, port, no_cert, 3_000)
+    assert match?({:error, _}, r1) or closed?(elem(r1, 1))
+    wait(fn -> Endpoint.status(:nl_ep).counts.handshake_failures >= 1 end)
+
+    tls12 =
+      Keyword.merge(TLS.connect_options(creds),
+        versions: [:"tlsv1.2"],
+        ciphers: :ssl.cipher_suites(:default, :"tlsv1.2")
+      )
+
+    assert {:error, _} = :ssl.connect({127, 0, 0, 1}, port, tls12, 3_000)
+    wait(fn -> Endpoint.status(:nl_ep).counts.handshake_failures >= 2 end)
+    assert Endpoint.status(:nl_ep).counts.connections == 0
+    refute up(:nl_probe)
+  end
+
+  # a TLS 1.3 client may see its handshake "succeed" before the server's verdict on its (missing)
+  # certificate arrives; the server's alert then closes it at the first read
+  defp closed?(socket) do
+    case :ssl.recv(socket, 0, 2_000) do
+      {:error, _} -> true
+      _ -> false
+    end
+  end
+
+  test "a handshake that exits (a key that does not decode) leaves the acceptor serving; non-initiators are still closed",
+       %{c: c, port: port} do
+    {_t, der} = c.headless[:key]
+    bad = Keyword.put(c.headless, :key, {:ECPrivateKey, binary_part(der, 0, 60)})
+    listener(bad, port)
+    acceptor = :sys.get_state(:nl_ep).acceptor
+    {:ok, creds} = TLS.credentials(fn -> c.host end)
+    assert {:error, _} = :ssl.connect({127, 0, 0, 1}, port, TLS.connect_options(creds), 3_000)
+    wait(fn -> Endpoint.status(:nl_ep).counts.handshake_failures >= 1 end)
+    assert Process.alive?(acceptor)
+
+    {:ok, raw} =
+      :gen_tcp.connect({127, 0, 0, 1}, port, [:binary, active: false, ip: {127, 0, 0, 2}], 1_000)
+
+    assert {:error, :closed} = :gen_tcp.recv(raw, 0, 2_000)
+    wait(fn -> Endpoint.status(:nl_ep).counts.refused_address == 1 end)
+  end
+
+  @tag :capture_log
+  test "a profile listener whose acceptor dies stops and closes its socket", %{c: c, port: port} do
+    Process.flag(:trap_exit, true)
+
+    {:ok, ep} =
+      Endpoint.start_link(
+        role: :listen,
+        network: MotionStack.lan_listen(port),
+        credentials: fn -> c.headless end,
+        local: @l,
+        expected: @c,
+        handler: {Probe, :none}
+      )
+
+    acceptor = :sys.get_state(ep).acceptor
+    Process.exit(acceptor, :kill)
+    assert_receive {:EXIT, ^ep, {:acceptor_exited, :killed}}, 2_000
+    assert {:error, :econnrefused} = :gen_tcp.connect({127, 0, 0, 1}, port, [:binary], 1_000)
   end
 
   test "a bound-port conflict fails closed; nothing else is tried", %{c: c, port: port} do
