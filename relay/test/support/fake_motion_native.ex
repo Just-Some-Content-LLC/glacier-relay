@@ -19,7 +19,10 @@ defmodule GlacierRelay.Test.FakeMotionNative do
   status (`{:restore_status, status}`). Every `ghost.target` line read from the motion socket is
   logged (`{:target_line, session_id, seq, fake_ms}`), so a test can show which target bytes
   reached the native; `:hold_motion_out` queues every line the fake would write on the motion link
-  until `release_motion_out/1` (in order); `{:share_overrun_ms, ms}` keeps the fake's share
+  until `release_motion_out/1` (in order; `hold_motion_out/1` sets it and answers the share's last
+  written sequence number in one step, and `release_motion_out/2` writes only the first `n` held
+  lines and keeps holding — M7-L1 correction: a test's explicit control of which sample the relay
+  sees, and when); `{:share_overrun_ms, ms}` keeps the fake's share
   sampling past its own duration, and `{:session_overrun_ms, ms}` its session open past its own
   duration (a native whose own close comes late).
 
@@ -77,6 +80,10 @@ defmodule GlacierRelay.Test.FakeMotionNative do
   def drop_command(pid), do: GenServer.call(pid, :drop_command)
   def bind_motion(pid), do: GenServer.call(pid, :bind_motion)
   def release_motion_out(pid), do: GenServer.call(pid, :release_motion_out)
+  def release_motion_out(pid, n), do: GenServer.call(pid, {:release_motion_out, n})
+
+  @doc "Sets `:hold_motion_out`; answers `{:ok, last_seq}`, the share's last WRITTEN sample (or nil)."
+  def hold_motion_out(pid), do: GenServer.call(pid, :hold_motion_out)
   def stop(pid), do: GenServer.stop(pid)
 
   @doc "An observed read-back field object (for `{:restore_field, key, value}`)."
@@ -250,6 +257,7 @@ defmodule GlacierRelay.Test.FakeMotionNative do
        session: state.session && Map.drop(state.session, [:pending]),
        closed_sessions: state.closed_sessions,
        share: state.share,
+       held_motion_out: length(state.held_out),
        m6_ledger: state.m6_ledger,
        events: Enum.reverse(state.events)
      }, state}
@@ -305,6 +313,18 @@ defmodule GlacierRelay.Test.FakeMotionNative do
     state = %{state | held_out: [], faults: List.delete(state.faults, :hold_motion_out)}
     if state.motion, do: Enum.each(held, &:gen_tcp.send(state.motion, &1))
     {:reply, length(held), log(state, {:released_motion_out, length(held)})}
+  end
+
+  def handle_call({:release_motion_out, n}, _from, state) do
+    {now, later} = Enum.split(state.held_out, n)
+    if state.motion, do: Enum.each(now, &:gen_tcp.send(state.motion, &1))
+    {:reply, length(now), log(%{state | held_out: later}, {:released_motion_out, length(now)})}
+  end
+
+  # every share sample up to the answered sequence number was written; every later one is held
+  def handle_call(:hold_motion_out, _from, state) do
+    state = %{state | faults: [:hold_motion_out | List.delete(state.faults, :hold_motion_out)]}
+    {:reply, {:ok, state.share && state.share.seq}, state}
   end
 
   @impl true

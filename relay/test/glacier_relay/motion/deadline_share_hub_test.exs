@@ -49,34 +49,75 @@ defmodule GlacierRelay.Motion.DeadlineShareHubTest do
     Enum.find(Driver.status().sink_done, &(&1.stream_id == share))
   end
 
+  # Explicit control of the fake's samples around the bound (the M7-L1 correction; the gate's two
+  # failures were this test's own timing assumptions: a hold armed after the last sample decided
+  # before the bound, and a sample before k withheld by the share's 45 ms rate guard): from
+  # @hold_from ms before the bound the fake's motion lines are held, the hub is seen to have decided
+  # every line written before, and exactly ONE held line is released @release_at ms before the
+  # bound (and at least 50 ms after the last relayed decision) — so the sample under test is a known
+  # one, decided before the bound, whatever the fake's cadence and the test process's wake-ups.
+  @hold_from 300
+  @release_at 120
+
+  defp hold_fake_output(st) do
+    {:ok, n} = FakeMotionNative.hold_motion_out(st.fake)
+    # barrier: the hub has decided every sample written before the hold (relayed or refused)
+    wait(fn -> :sys.get_state(Hub).share.src.last_seq == n end, 300, 2)
+    wait(fn -> FakeMotionNative.status(st.fake).held_motion_out >= 1 end, 300, 2)
+    src = :sys.get_state(Hub).share.src
+    %{n: n, handed: src.last_handed_seq, last_sent_r: src.last_sent_r}
+  end
+
+  defp release_one_before(st, bound, held) do
+    sleep_until(max(bound - @release_at, held.last_sent_r + 50))
+    assert Clock.now_ms() < bound - 40, "the release came too late to precede the bound"
+    1 = FakeMotionNative.release_motion_out(st.fake, 1)
+  end
+
   test "T1: a sample whose trace write is held across the share's bound is not handed over" do
     st = MotionStack.start()
     proxy = start_supervised!({TraceProxy, real: GlacierRelay.Motion.Trace, notify: self()})
     {share, bound} = share(st)
     :sys.replace_state(Hub, &%{&1 | trace: proxy})
+    link = Hub.status().link
+    %{pid: conn} = Endpoint.status(GlacierRelay.Motion.PeerEndpoint).connection
 
-    sleep_until(bound - 60)
+    sleep_until(bound - @hold_from)
+    held = hold_fake_output(st)
     :ok = TraceProxy.hold_next(proxy, "source.relayed")
+    release_one_before(st, bound, held)
     assert_receive {:held, recs, held_at}, 1_000
     rel = Enum.find(recs, &(&1["event"] == "source.relayed"))
     k = rel["seq"]
-    assert rel["beam_mono_ms"] < bound
+    # the precondition, established: the one released sample, decided before the bound
+    assert k == held.n + 1 and rel["beam_mono_ms"] < bound
     sleep_until(bound + 15)
-    assert Clock.now_ms() - held_at < 150
+    hold_ms = Clock.now_ms() - held_at
     :ok = TraceProxy.release(proxy)
+    # the rest of the fake's samples reach the hub only after the bound
+    _ = FakeMotionNative.release_motion_out(st.fake)
 
     done = sink_done(share)
     :sys.replace_state(Hub, &%{&1 | trace: GlacierRelay.Motion.Trace})
     r = done.reconciliation
+    cs = Connection.status(conn).counts
+
+    # the hold left the hub's callers undisturbed (the motion link waits 500 ms for the hub, and the
+    # fake wrote nothing more meanwhile): the same motion link and peer connection
+    assert Hub.status().link == link and Connection.status(conn).phase == :identified,
+           "the #{hold_ms} ms hold disturbed the hub's callers"
+
     # control: the samples relayed before the bound arrived; the held one never did
     assert done.received >= 10
 
-    assert r["last_seq_received"] == k - 1,
+    assert r["last_seq_received"] <= held.handed and held.handed < k,
            "sample #{k} reached the peer after the share's bound: #{inspect(done)}"
 
-    # the stream's end names only what was handed over, and everything handed over arrived (a
-    # native sample that reached the hub before the share activated is a counted gap: B1 8.2)
-    assert r["source_last_seq"] == k - 1 and r["source_sent"] == r["received"], inspect(r)
+    # the stream's end names only what was handed over, and every handed sample arrived or was
+    # counted by the connection itself (exact; a native sample that reached the hub before the share
+    # activated is a counted gap: B1 8.2)
+    assert r["source_last_seq"] == held.handed, inspect(r)
+    assert r["source_sent"] == r["received"] + cs.samples_stale + cs.samples_expired, inspect(r)
     sh = Hub.status().share.summary
     assert sh.close.reason == "duration" and sh.counts.cancelled_before_send == 1
     assert sh.counts.handed == sh.counts.relayed
@@ -87,39 +128,41 @@ defmodule GlacierRelay.Motion.DeadlineShareHubTest do
     {share, bound} = share(st)
     %{pid: conn} = Endpoint.status(GlacierRelay.Motion.PeerEndpoint).connection
 
-    # 80 ms before the bound: at least one sample of the 50 ms cadence is handed over meanwhile
-    sleep_until(bound - 80)
-    :sys.suspend(conn)
-
     queued = fn ->
       Enum.flat_map(mailbox(conn), fn
-        {:"$gen_cast", {:sample, f, _enqueued, not_after}} -> [{f["seq"], not_after}]
+        {:"$gen_cast", {:sample, f, enqueued, not_after}} -> [{f["seq"], enqueued, not_after}]
         _ -> []
       end)
     end
 
-    wait(fn -> queued.() != [] end, 200, 2)
-    assert Clock.now_ms() < bound, "no sample was handed over before the bound"
+    sleep_until(bound - @hold_from)
+    held = hold_fake_output(st)
+    # barrier: the connection has taken every sample handed before (written, or counted dropped)
+    c0 = Connection.status(conn).counts
+    :sys.suspend(conn)
+    release_one_before(st, bound, held)
+    # the hub hands the released sample to the suspended connection, before the bound
+    wait(fn -> :sys.get_state(Hub).share.src.last_handed_seq == held.n + 1 end, 300, 2)
+    assert [{k, enqueued, not_after}] = queued.()
+    assert k == held.n + 1 and enqueued < bound and not_after == bound
     sleep_until(bound + 10)
-    # every sample handed over before the bound, all still waiting in the suspended connection
-    handed = queued.()
-    assert Enum.all?(handed, fn {_seq, not_after} -> not_after == bound end)
-    seqs = Enum.map(handed, &elem(&1, 0))
-    k = Enum.min(seqs)
     :sys.resume(conn)
-
-    wait(fn -> Connection.status(conn).counts.samples_expired == length(seqs) end)
+    wait(fn -> Connection.status(conn).counts.samples_expired == c0.samples_expired + 1 end)
+    _ = FakeMotionNative.release_motion_out(st.fake)
     done = sink_done(share)
     r = done.reconciliation
+    cs = Connection.status(conn).counts
     assert done.received >= 10
 
-    assert r["last_seq_received"] == k - 1,
+    assert r["last_seq_received"] <= held.handed and held.handed < k,
            "sample #{k} was written after the share's bound: #{inspect(done)}"
 
     # the share handed it over, so its end names it: the sink records the connection's drop as a
-    # gap — "sent" means handed to the connection, not written to TLS
-    assert r["source_last_seq"] == Enum.max(seqs), inspect(r)
-    assert r["source_sent"] == r["received"] + length(seqs), inspect(r)
+    # gap — "sent" means handed to the connection, not written to TLS; every handed sample arrived
+    # or was counted by the connection (exactly this one expired)
+    assert r["source_last_seq"] == k, inspect(r)
+    assert cs.samples_expired - c0.samples_expired == 1
+    assert r["source_sent"] == r["received"] + cs.samples_stale + cs.samples_expired, inspect(r)
     refute r["complete"]
   end
 end
