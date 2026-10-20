@@ -391,6 +391,7 @@ defmodule GlacierRelay.Peer.NetworkEndpointTest do
     )
 
     {_, key} = Keyword.fetch!(c.headless, :key)
+
     # B1's TLS listen socket held the key (OTP keeps the TLS options in an ssl listen socket's term);
     # since the M7-L1 correction the default listener's is a TCP socket, which holds no TLS option
     ls = :sys.get_state(:b1_ep).listen_socket

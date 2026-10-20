@@ -12,11 +12,18 @@ defmodule GlacierRelay.Peer.ListenerLifecycleTest do
   - a lost acceptor stops its endpoint (closing its socket and its connection) and nothing
     unrelated; under `HeadlessPeer`'s supervisor only the endpoint is restarted, and it serves;
   - teardown, with a connection up or with a handshake in progress, leaves no acceptor,
-    connection, listening or accepted socket of the endpoint behind;
+    connection, listening or accepted TCP socket on the listener's port behind;
   - the disposable private key appears in none of the channels these tests read: the endpoint's
-    `:sys.get_status/1` and `Endpoint.status/1`, its exit reason after an acceptor loss, and the
-    log captured during each case (the refusals, both handshake-failure paths, the acceptor loss
-    with its crash report, teardown). No other report, dump or diagnostic is covered here.
+    `:sys.get_status/1` and `Endpoint.status/1`, its exit reason after an acceptor loss
+    (`{:acceptor_exited, :killed}`, the one stop reason exercised), and the formatted log text
+    captured during each case at `:debug` level with OTP's SASL reports let through (the
+    refusals, both handshake-failure paths with the endpoint's info lines, the acceptor loss with
+    its crash report and the endpoint's `State:`, teardown). In log text only the key's byte
+    forms are checked: a SASL report legitimately names public_key's `:ECPrivateKey` ASN.1
+    decoder in a stack frame. Raw report terms are not checked: OTP's ssl keeps the TLS options,
+    the key included, in its connection supervisor's child start arguments, which reach a handler
+    only with SASL reports enabled (`handle_sasl_reports` is false in every configuration). No
+    other report, dump or diagnostic is covered here.
   """
   use ExUnit.Case, async: false
 
@@ -107,7 +114,16 @@ defmodule GlacierRelay.Peer.ListenerLifecycleTest do
     do: Enum.find_value(Probe.events(probe), fn ev -> match?({:up, _}, ev) && elem(ev, 1) end)
 
   defp acceptor(ep), do: :sys.get_state(ep).acceptor
-  defp tcp_ports, do: Enum.count(Port.list(), &(Port.info(&1, :name) == {:name, ~c"tcp_inet"}))
+
+  # the TCP sockets on this test's listener port in this VM — the listen socket, accepted sockets
+  # (local port) and clients' (remote port) — never another test's, whose closes are asynchronous
+  defp tcp_ports(port) do
+    Enum.count(Port.list(), fn p ->
+      Port.info(p, :name) == {:name, ~c"tcp_inet"} and
+        (match?({:ok, {_, ^port}}, :inet.sockname(p)) or
+           match?({:ok, {_, ^port}}, :inet.peername(p)))
+    end)
+  end
 
   # a TLS record header and the start of a ClientHello: a client that has begun TLS
   @client_hello_start <<22, 3, 1, 0, 200, 1, 0, 0, 196, 3, 3>>
@@ -198,10 +214,33 @@ defmodule GlacierRelay.Peer.ListenerLifecycleTest do
         &(String.contains?(text, &1) or :binary.match(bin, &1) != :nomatch)
       )
 
-    refute leaked or text =~ "PrivateKey", "key material in #{channel}"
+    # a term's printed form must not name a private-key record either (the log text may: a SASL
+    # report's stack frame names the :ECPrivateKey decoder module)
+    refute leaked or (not is_binary(data) and text =~ "PrivateKey"), "key material in #{channel}"
   end
 
   setup do
+    # the log channel at its widest (as Command.AuthorityRedactionTest): :debug, so the endpoint's
+    # info lines and a crash report's State: are captured, and OTP's [otp, sasl] reports (the
+    # proc_lib crash and supervisor reports) let through for the test's duration; both restored
+    level = Logger.level()
+    Logger.configure(level: :debug)
+    on_exit(fn -> Logger.configure(level: level) end)
+    %{filters: filters} = :logger.get_primary_config()
+    {translate, translator_config} = Keyword.fetch!(filters, :logger_translator)
+    :ok = :logger.remove_primary_filter(:logger_translator)
+
+    :ok =
+      :logger.add_primary_filter(
+        :logger_translator,
+        {translate, %{translator_config | sasl: true}}
+      )
+
+    on_exit(fn ->
+      :logger.remove_primary_filter(:logger_translator)
+      :logger.add_primary_filter(:logger_translator, {translate, translator_config})
+    end)
+
     %{c: PeerCredentials.pair()}
   end
 
@@ -243,7 +282,6 @@ defmodule GlacierRelay.Peer.ListenerLifecycleTest do
 
     test "#{mode}: a handshake that fails closes its socket; the acceptor keeps serving and a legitimate peer connects",
          %{c: c} do
-      before = tcp_ports()
       {ep, port} = listener(@mode, c.headless)
       a = acceptor(ep)
       other = PeerCredentials.pair()
@@ -267,8 +305,9 @@ defmodule GlacierRelay.Peer.ListenerLifecycleTest do
           wait(fn -> Endpoint.status(ep).counts.handshake_failures == 2 end)
         end)
 
-      # the endpoint's sockets: its listen socket only; the failed attempts' are closed
-      wait(fn -> tcp_ports() == before + 1 end)
+      # on the listener's port: its listen socket only; the failed attempts' are closed
+      wait(fn -> tcp_ports(port) == 1 end)
+      assert log =~ "peer endpoint: handshake refused ("
       assert acceptor(ep) == a and Process.alive?(a)
       connector(@mode, c.host, port)
       wait(fn -> up(:lc_lprobe) end)
@@ -278,7 +317,6 @@ defmodule GlacierRelay.Peer.ListenerLifecycleTest do
 
     test "#{mode}: a handshake that exits (a key that does not decode) closes its socket; the acceptor survives",
          %{c: c} do
-      before = tcp_ports()
       {_t, der} = c.headless[:key]
       bad = Keyword.put(c.headless, :key, {:ECPrivateKey, binary_part(der, 0, 60)})
       {ep, port} = listener(@mode, bad)
@@ -297,7 +335,8 @@ defmodule GlacierRelay.Peer.ListenerLifecycleTest do
         end)
 
       assert acceptor(ep) == a and Process.alive?(a) and Process.alive?(ep)
-      wait(fn -> tcp_ports() == before + 1 end)
+      wait(fn -> tcp_ports(port) == 1 end)
+      assert log =~ "peer endpoint: handshake refused ("
       # the truncated key, and the whole key it was cut from (its scalar lies inside the cut)
       for creds <- [bad, c.headless] do
         refute_key(creds, "the log of the exiting handshakes", log)
@@ -333,6 +372,8 @@ defmodule GlacierRelay.Peer.ListenerLifecycleTest do
       # unrelated: the listener's handler, the other side's endpoint (which saw its connection end)
       assert Process.alive?(probe) and Process.alive?(cep)
       wait(fn -> Endpoint.status(cep).connection == nil end)
+      # the crash report, with the endpoint's (redacted) state, is in the text checked
+      assert log =~ "{:acceptor_exited, :killed}" and log =~ "State:"
       refute_key(c.headless, "the log of the acceptor loss (with the crash report)", log)
     end
 
@@ -381,7 +422,6 @@ defmodule GlacierRelay.Peer.ListenerLifecycleTest do
 
     test "#{mode}: teardown with a connection up leaves no acceptor, connection or socket of the endpoint",
          %{c: c} do
-      before = tcp_ports()
       {ep, port} = listener(@mode, c.headless)
       cep = connector(@mode, c.host, port)
       wait(fn -> up(:lc_lprobe) && up(:lc_cprobe) end)
@@ -399,14 +439,13 @@ defmodule GlacierRelay.Peer.ListenerLifecycleTest do
       assert {:error, :econnrefused} = :gen_tcp.connect({127, 0, 0, 1}, port, [:binary], 1_000)
       wait(fn -> Endpoint.status(cep).connection == nil end)
       stop_supervised!(:lc_cep)
-      # nothing of either endpoint is left: every TCP socket this test made is closed
-      wait(fn -> tcp_ports() == before end)
+      # nothing of either endpoint is left on the listener's port
+      wait(fn -> tcp_ports(port) == 0 end)
       refute_key(c.headless, "the log of the teardown", log)
     end
 
     test "#{mode}: teardown during a handshake ends it at once (it does not wait out its 5 s deadline)",
          %{c: c} do
-      before = tcp_ports()
       {ep, port} = listener(@mode, c.headless)
       a = acceptor(ep)
       # an admitted client that has begun TLS and then says nothing more: the acceptor waits in
@@ -431,7 +470,7 @@ defmodule GlacierRelay.Peer.ListenerLifecycleTest do
       assert {:closed, _alert} = read_end(raw)
       assert System.monotonic_time(:millisecond) - t0 < @closure_ms
       :gen_tcp.close(raw)
-      wait(fn -> tcp_ports() == before end)
+      wait(fn -> tcp_ports(port) == 0 end)
     end
   end
 
