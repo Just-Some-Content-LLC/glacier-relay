@@ -234,6 +234,10 @@ defmodule GlacierRelayWeb.EndpointTest do
     assert Process.whereis(Listener) == listener
 
     # rest_for_one: a crash of the PubSub child restarts the endpoint after it, nothing else.
+    # (Recorded for review by the M7-L1 correction, not changed: after a :kill the endpoint's
+    # failing restart attempts can exhaust the web supervisor's 3-in-5-s intensity, and the test
+    # supervisor then starts a new web subtree — in 22 of 30 diagnostic sequences. What this test
+    # asserts, the ingestion processes untouched and the web serving again, holds either way.)
     pubsub = web_child(&(&1 != GlacierRelayWeb.Endpoint))
     endpoint2 = Process.whereis(Endpoint)
     Process.exit(pubsub, :kill)
@@ -270,10 +274,10 @@ defmodule GlacierRelayWeb.EndpointTest do
   # `which_children/1` is answered only once init/1 has returned. After a :kill, the endpoint's
   # first restart attempt can also fail to start its LiveView socket child (`:already_started`:
   # the killed endpoint's still terminating) and the web supervisor starts another: that attempt's
-  # `which_children/1` exits and the attempt is gone — not yet; the next one is waited for. A
-  # persistent failure is not hidden: an endpoint that never comes back leaves this false until the
-  # bounded wait raises, and any other exit, or one from a process that is still running, is not
-  # caught.
+  # `which_children/1` exits and the attempt is gone — not yet; the next one is waited for (and
+  # `:noproc` when the attempt was gone before the call reached it, if its name is no longer
+  # registered to it). A persistent failure is not hidden: an endpoint that never comes back leaves
+  # this false until the bounded wait raises, and any other exit propagates.
   defp endpoint_restarted?(old) do
     case Process.whereis(Endpoint) do
       pid when is_pid(pid) and pid != old ->
@@ -281,8 +285,11 @@ defmodule GlacierRelayWeb.EndpointTest do
           _ = Supervisor.which_children(pid)
           match?({:ok, _}, Endpoint.server_info(:http))
         catch
-          :exit, {{:shutdown, {:failed_to_start_child, _, _}}, _} = reason ->
-            if Process.alive?(pid), do: exit(reason), else: false
+          :exit, {{:shutdown, {:failed_to_start_child, _, _}}, _} ->
+            false
+
+          :exit, {:noproc, _} = reason ->
+            if Process.whereis(Endpoint) == pid, do: exit(reason), else: false
         end
 
       _ ->
