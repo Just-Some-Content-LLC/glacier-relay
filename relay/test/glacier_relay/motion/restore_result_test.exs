@@ -13,6 +13,7 @@ defmodule GlacierRelay.Motion.RestoreResultTest do
 
   alias GlacierRelay.{Command, Motion}
   alias GlacierRelay.Command.{TransformReadback, TransformWords}
+  alias GlacierRelay.HeadlessPeer.Driver
   alias GlacierRelay.Motion.{Course, Hub}
   alias GlacierRelay.Test.{FakeMotionNative, MotionStack}
 
@@ -23,21 +24,44 @@ defmodule GlacierRelay.Motion.RestoreResultTest do
   defp done?, do: match?(%{status: :done}, Hub.status().session)
   defp registry(sid), do: Enum.find(Command.status().motion.sessions, &(&1.session_id == sid))
 
-  # a short course that ends 0.1 m from P, so the candidate is displaced at the close
+  # a course that moves 0.1 m from P and then HOLDS there until the test ends its stream (the M7-L1
+  # correction: it used to end 100 ms after arriving, so a session admitted late in its 600 ms —
+  # the gate's failure — met no displacement, closed restorable at the preimage, and was caught
+  # only by the displaced-state assertion below)
   defp away_course do
     {ax, ay} = {TransformWords.to_float(elem(@p, 0)), TransformWords.to_float(elem(@p, 1))}
 
-    Course.build([{:hold, 300}, {:line, {ax + 0.1, ay}}, {:hold, 100}],
+    Course.build([{:hold, 300}, {:line, {ax + 0.1, ay}}, {:hold, 20_000}],
       origin_words: @p,
       speed_mps: 0.5
     )
   end
 
-  # one native-confirmed, clean, displaced session, then its restore answered under `faults`
+  # one native-confirmed, clean, displaced session, then its restore answered under `faults`: the
+  # session is admitted, the native confirms a target at the course's held end (the destination's
+  # confirmed reference and the fake's candidate both there), and only then does the stream end,
+  # closing the session as before (the stream's end)
   defp restore_with(faults) do
     st = MotionStack.start(max_sessions: 2)
-    stream = MotionStack.start_course(away_course())
+    course = away_course()
+    stream = MotionStack.start_course(course)
     {sid, _cid} = MotionStack.open_session(st.adapter, stream)
+    %{x_word: xw, y_word: yw} = List.last(Course.samples(course))
+    away = TransformWords.encode([xw, yw])
+
+    wait(fn ->
+      s = Hub.status().session
+
+      s.status == :active and s.summary.confirmed_pos == away and
+        Enum.slice(
+          TransformWords.decode_world(FakeMotionNative.status(st.fake).world) |> elem(1),
+          9,
+          2
+        ) ==
+          [xw, yw]
+    end)
+
+    :ok = Driver.stop_course(:test_displaced)
     wait(&done?/0, 800)
     assert Hub.status().session.summary.restorable
     assert FakeMotionNative.status(st.fake).world != FakeMotionNative.pre()
