@@ -886,6 +886,20 @@ It establishes a locally qualified start in terms of processed observations and 
 - `Peer.Connection` and the source's queue policy.
 - Every caller that does not pass an `admission`.
 
+## 30. The source-sequence admission correction (pointer; 2026-10-20)
+
+Section 29 is implemented and validated offline (`M7L3_LAN_GAME_PREPARATION.md` section 14; evidence `m7l3-admission\`, sealed, 6,009 entries, manifest `655ec5f875759d3413e569c3a8af0a56d9838da13f06ac5f0bedc7b9b310be2e`):
+- **The code:** `Motion.StreamProgress` and `Motion.Admission`; the hub enforces the condition at preparation and at activation, and the destination at the first target (`abf3922`). The counterexample is `4ea020f`, and the regressions are `8613481` and `4666102`.
+- **The gate:** five full suites of 923 / 0. The application tree is now `62ad2803`.
+- **The corrected build and bundle:** the console's build `acbe456c…` (91 modules), and the bundle `peer-transport-46661029c862` (`645624b4…`).
+- **The PC kit:** its `dest-wait` gates on the stream's source progress.
+- **The rehearsals** against the native6 probe pass A, C, D and E; B fails on a pre-existing defect.
+- **Two pre-existing defects remain for a decision:**
+  - the kit converts the envelope's exact-boundary `refused_displacement` into a HARD STOP;
+  - `game-peer.exs` can crash at its end when the host closes right after its stream ends.
+
+Sections 15–29 are unchanged. M7 is not complete.
+
 ## 13. Sources
 
 | Claim area | Source (blobs in `source-facts.txt`) |

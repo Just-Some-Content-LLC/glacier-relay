@@ -1,5 +1,40 @@
 # Handoff checkpoint
 
+Updated: 2026-10-20, after **the M7-L3 source-sequence admission correction** (authorization "Glacier Relay — M7-L3 source-sequence admission correction", option A; record `docs/design/M7L3_LAN_GAME_PREPARATION.md` section 14; contract `docs/design/M7_NETWORK_GHOST.md` section 29 and ADR 0010 amendment 15; pointer section 30; evidence `m7l3-admission\`, sealed, 6,009 entries, manifest `655ec5f875759d3413e569c3a8af0a56d9838da13f06ac5f0bedc7b9b310be2e`). Offline only. No game, Mac, LAN socket or live credential. `m7l3-run1` is unused. No tag. M7 stays open; awaiting review.
+- **The correction:**
+  - **Progress:** for every open peer stream, the hub keeps its received source progress (highest sequence with its words, qualification and two times; counts; observed gaps), scoped to the connection, boot and stream.
+  - **The admission:** an opt-in `stationary_prefix` admission is enforced at three points: at preparation (<= 55), at activation after the native-open result (<= 61; else the existing close-on-activation path), and at the first target (a qualified prefix sample at exactly P below 82, confirmed before anything displaced).
+  - **Commits:** the contract first (`75b9532`), then the counterexample (`4ea020f`), the code (`abf3922`) and the tests (`8613481`, `4666102`).
+- **Proof:**
+  - **The counterexample:** on the old code, receipt 2 at sequence 83 passes the former count gate and a 0.075 m first target is applied.
+  - **The tests:** 35 new ones (17 pure, 17 integration, 1 counterexample).
+  - **The controls:** each protection removed alone fails its regressions; without the first-target gate, sequence 83's bytes reach the native.
+  - **The gate:** compiles, format and areas pass, and five full suites run 923 / 0 on declared seeds.
+- **Identities:**
+  - the application tree `62ad2803`;
+  - the console's dev build `acbe456c…` (91 modules);
+  - the bundle `peer-transport-46661029c862` (`MANIFEST.sha256` `645624b4…`, archive `768cc8db…`, 103 files; `bundle.sh` of `4666102`);
+  - the PC kit `m7l3-admission\kit\` (49 files, ten changed);
+  - the packet templates `m7l3-admission\packets\`.
+
+  The m7l3-prep bundle and readiness pins (`9e764bf3…`, `43f603a2…`) are superseded; native6 and the content are unchanged.
+- **Rehearsals of record** (native6 probe): A 50 / 50, C 38 / 38, D 39 / 39, E 42 / 42; B **FAIL** 40 / 47.
+  - D is receipt 2 at sequence 83: nothing opened.
+  - E is a valid start, then 83 …: closed `acquisition_missed` before any target, with no setter call.
+  - Also: the game-facing peer tests 47 / 47; the kit rehearsal 99 / 99; the installer rehearsal and the drift test pass.
+  - Record (a) preview: NOT READY, only on `dryrun-b` (pin `24939057…`).
+- **Retained failures:**
+  - A attempts 2 and 4 and B attempt 3 failed on finding 1;
+  - B attempts 1 and 2 on finding 2;
+  - C attempt 1 on the harness's old message pattern.
+
+  The harness was fixed and the dry runs rerun on its final version.
+- **Findings for a decision** (pre-existing, not changed):
+  1. **The boundary refusal:** the kit's `dest.no-uncertain-no-refusal` makes the envelope's exact-boundary `refused_displacement` a HARD STOP. That refusal is a float32 0.0500031 m against 0.05 m, after a pacing supersession at exactly 50 ms of credit. Its rate on the fake native is 4 of 8 runs on the old code and 1 of 8 on the corrected code.
+  2. **The Mac-end race:** `game-peer.exs:574` can crash with exit 1, and no `summary.json`, when `peer-close` lands right at its stream end.
+  3. **The fake's close reasons:** the fake native does not bound `ghost.closed` reasons to 64 bytes, where native6 does.
+- **Next (not granted):** review; a decision on findings 1 and 2; then a new attended-run authorization with fresh game and LAN approvals.
+
 Updated: 2026-10-20, after **the M7-L3 acceptance and the attended run's stop before live execution** (authorization "Glacier Relay — M7-L3 reviewed attended one-game LAN authorization"; record `docs/design/M7L3_LAN_GAME_PREPARATION.md` sections 12–13; pointer `docs/design/M7_NETWORK_GHOST.md` section 28). No code or kit changed. No evidence root claimed. No tag. M7 stays open; awaiting a decision.
 - **Accepted:** the M7-L3 preparation, for its demonstrated offline scope.
   - The review read the record, the socket code, the game-facing peer and `go.sh`. It did not execute or re-hash the PC kit or the sealed artefacts.

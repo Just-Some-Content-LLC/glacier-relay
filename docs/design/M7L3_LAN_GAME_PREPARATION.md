@@ -6,7 +6,7 @@
 
 M7-L3 is the working label of that next subdivision of M7-L.
 
-**Status: preparation DONE offline (2026-10-20); ACCEPTED for its demonstrated offline scope (section 12). The attended run authorized with that acceptance STOPPED before live execution: the sealed `dest-wait` cannot establish its stationary-prefix admission (section 13). Awaiting a decision.** The later experiment would join two capabilities already demonstrated separately:
+**Status: preparation DONE offline (2026-10-20); ACCEPTED for its demonstrated offline scope (section 12). The attended run authorized with that acceptance STOPPED before live execution: the sealed `dest-wait` cannot establish its stationary-prefix admission (section 13). Option A was then implemented and validated offline (section 14: the source-sequence admission correction, 2026-10-20); two pre-existing defects found by its rehearsals remain for a decision. Awaiting review.** The later experiment would join two capabilities already demonstrated separately:
 - M7-C: on one host, a real-player share to a headless sink, then a synthetic course driving Agent48;
 - M7-L2: transport and accounting between the Windows/WSL host and the MacBook.
 
@@ -451,3 +451,195 @@ The qualified files are unchanged. The authorization's run-specific values were 
   - This establishes the fact afterwards but prevents nothing; the acquisition step of at most 0.1 m stays possible.
   - It changes a qualified kit file and relies on the Destination's envelope.
 - **C: run with the count gate as a disclosed limitation**, and reconcile afterwards from both machines' files (the Mac's per-sample source outcomes and stale count; the host's first routed sequence number). This changes the stated admission rule, which only the reviewer can do.
+
+## 14. The source-sequence admission correction (option A; 2026-10-20)
+
+**Authorization:** "Glacier Relay — M7-L3 source-sequence admission correction" (2026-10-20), dispatched by Stephen. It chose option A of section 13 and authorized one sequential, offline BEAM / test / operator-tooling pass, implemented and validated here. Options B and C are not used. Sections 12–13 stand as written. The attended run of section 12 is **not** resumed by this pass: `m7l3-run1` stays unused, and the corrected artifacts return for review first.
+
+**Basis, kept apart:**
+- **Source reasoning:** the architectural review read the committed Hub, facade, activation, Destination and source paths, and section 13. It did not execute a counterexample or inspect the sealed kit.
+- **Coordinator-reported observations:** section 13's reading of the sealed `dest-wait`.
+- **Newly performed tests:** everything below. Each is an attempt directory in `m7l3-admission\` (index: `ATTEMPTS.txt`).
+
+**Evidence:** `%TEMP%\glacier-m0\hitmen\m7l3-admission\`.
+- Claimed from bash 2026-10-20T22:53:32Z, so the claim record carries the guard hash `426347f2…`.
+- **Sealed:** 6,009 entries, manifest `655ec5f875759d3413e569c3a8af0a56d9838da13f06ac5f0bedc7b9b310be2e`. It verifies and has 0 unlisted files. The temporary manifest was in the state root, and the guard refuses the root.
+- The state root `~/.local/state/glacier-relay-m7l3-admission` is empty.
+- **Final scan:** 6,009 files, 0 key material. The 4 armour-like texts are the scanner's own source and its negative fixtures.
+- **Frozen-basis checkpoint:** 37 / 37 (`checkpoint-attempt1`):
+  - the Git refs and trees, the SDK and the tags;
+  - native6's artefacts re-hashed;
+  - the m7l3-prep seal, with its kit, bundle, packets and scripts re-hashed against it;
+  - the sealed `cmd-m7l3.exs` (`533bed53…`);
+  - the old Mac bundle;
+  - the preserved Mac runtime archives;
+  - the old dev build (`aae979a5…`);
+  - no process, ports free.
+
+**Commits** (glacier-relay `main`; pushed):
+
+| Commit | Content |
+|---|---|
+| `75b9532` | the contract, before code: design section 29 (normative) and ADR 0010 amendment 15 |
+| `4ea020f` | the strict counterexample, on its own (it passes against the unchanged application code) |
+| `abf3922` | the correction: `Motion.StreamProgress` and `Motion.Admission` (new), `Motion.Hub`, `Motion.Destination`, the `Motion` facade, `Command.MotionControl` |
+| `8613481`, `4666102` | the regressions; then AD-5 / AD-6 asserting the behaviour before the reason |
+
+The application tree is now `62ad2803` (it was `90d40033`); the kit tree is unchanged (`2fd701c8`). No native, wire, codec, limit, deadline or budget change.
+
+### 14.1 Before and after
+
+| | Before (sealed `dest-wait`, `533bed53…`) | After |
+|---|---|---|
+| What admits the session | the hub's count of unrouted samples received since `prepare`: <= 55 before the open, <= 61 at activation (kit only) | the stream's own **highest observed source sequence**: <= 55 at preparation and <= 61 when the native's open result is processed, both inclusive, the sample qualified and at exactly P; then the **first target** a qualified prefix sample at exactly P with sequence <= 81, confirmed before anything displaced |
+| Where it is enforced | `dest-wait` only (a status reading, then a later open) | `dest-wait` (its reading); the hub at `prepare_session` (its current record); the hub at activation (the same record, before any sample is routed); the destination at its first target |
+| Receipt 2 at source sequence 83 | admitted; sequence 84 (0.075 m) applied as the first target (the counterexample) | refused at preparation; nothing issued |
+
+The numbers belong to the opted-in course (`stationary_prefix`: anchor, course text, 55 / 61 / 82), never to motion in general. A session opened without an admission keeps the earlier contract exactly (the counterexample still passes on the corrected code).
+
+### 14.2 Per-stream progress and its context (design 29.2)
+
+The hub keeps `progress` for every stream open on the current connection, updated for every processed sample (unrouted, opening, or routed), and shows it in `Hub.status()`:
+- `received`; `advanced` / `not_advanced` (duplicates and older samples, which never move `high` or overwrite it);
+- `first_seq`; `index_gaps` (observed gaps, cause not inferred);
+- `high`: sequence, x / y words, `qualified`, source time and receiver time, kept apart; nil until the first sample.
+
+The record is invalidated with its context:
+- it is gone with the stream (`stream.end`), the connection and the boot;
+- a stream identity that ended on the connection and is opened again is marked `reopened` and cannot qualify;
+- a new connection generation starts with no streams;
+- a stream bound once is never bound again.
+
+Decision evidence goes to the trace (`hub.admission`, at both phases) and the journal (`motion.session.admission_not_met`; the activation entry's `admission`). The authority journals the admission with the approval and checks its anchor against the qualified inspection's x / y (`admission_anchor_not_the_inspection`).
+
+### 14.3 How the three races are closed
+
+- **Status reading versus preparation:** the hub decides at `prepare_session` from its own current record (AD-4: an earlier reading of 50, then 56 at P, is refused).
+- **Progress while the open is in flight:** the record is re-evaluated when the authority's cast with the native-open result is processed, before any sample is routed. A failure takes the existing close-on-activation path: the open was issued and applied natively, no target is sent, and nothing is refunded (AD-5).
+- **The first target:** a prefix observation at activation is not enough.
+  - While acquiring, a sample past the prefix or off the anchor closes the session unforwarded, even inside the 0.1 m bound. That covers both a displaced 83 as the first routed sample (AD-6, dry run E) and an anchor sample still pending and superseded by a displaced one (unit).
+  - The one in-flight slot keeps a displaced target behind the acquisition target.
+  - Acquisition is established only by its acknowledgement at the anchor: `skipped_identical` or exact `applied`.
+
+The guarantee is a locally qualified start in processed observations and forwarded targets. It is not proof that the Mac is stationary, that no newer bytes sit in transport buffers, or anything about freshness or latency.
+
+### 14.4 Tests, controls and the gate
+
+- **The counterexample:** `counterexample-old-code-attempt1`, then the committed bytes on a copy of `4ea020f`. Against the old code, receipt 2 at sequence 83 passes the former count gate and sequence 84 is applied.
+- **New tests: 35.**
+  - **Pure (17):** progress semantics; validation; inclusive bounds 55 / 56 and 61 / 62; acquisition.
+  - **Integration (17):** on the real fake native and motion socket, checking the `ghost.target` lines the fake read and what it applied.
+  - **The counterexample (1).**
+
+  The integration cases (AD-1 … AD-8) are:
+  - M7-C's unchanged course from the real headless driver over TLS;
+  - receipt 2 at 83 refused, with nothing issued;
+  - benign prefix omissions pass;
+  - the current record wins over an earlier reading;
+  - crossing 61 while the open is in flight closes before any target, with 61 itself inclusive;
+  - a displaced 83 after a valid activation is closed unforwarded;
+  - nothing manufactures eligibility: unqualified, off-anchor, none, older-after-higher, course, another stream, unknown, reopened, a new generation, the inspection's anchor, non-synthetic, malformed;
+  - stream end, operator close and peer loss while opening keep their reasons.
+- **Controls:** on disposable copies of the committed tree. The unmutated control is 35 / 35. Each protection removed alone makes its regressions fail:
+
+  | Protection removed | Failures | Including |
+  |---|---|---|
+  | Preparation check | 6 | AD-2 |
+  | Activation check | 4 | AD-5, whose session then **activated** |
+  | First-target gate | 4 | AD-6, where **sequence 83's target bytes reached the native** and were applied (printed `~c"S"`) |
+- **The BEAM gate of record** (`beam-gate-attempt1`; `4666102`, relay tree `62ad2803`; seeds 271828 314159 161803 141421 577215, declared before the runs):
+  - strict dev and test compiles, and the scoped format check;
+  - the areas: 269 (peer + motion), 207 (command), 21 (headless + boundary), 11 (web endpoint);
+  - **five full suites, 923 / 0** (888 + 35). PASS; no leftover process or port.
+- **The console's build:** the gate's compile-dev step built the dev build `acbe456c80426e3826e3d7eaa42020d3d3eb4e2ca0d6b9990280a956efb8da15` (91 modules), identified by `build-identity.exs` against `4666102`. The dry runs ran it.
+
+### 14.5 The bundle, the kit and the packets
+
+- **The bundle:** `bundle.sh` of `4666102`. The source-bundle path was used, never the kit-only rebundler.
+  - Name `peer-transport-46661029c862`, 103 listed files (91 modules).
+  - `MANIFEST.sha256` `645624b4b1213e7bb8cc73b2c59ae4d1ab6f96e1d51a9a7aff5724b6a118ae83`.
+  - Archive `768cc8db823af85a50cdbcd253290334f6b7584a4cfe5507d18b5cc3f9f541e2`.
+  - `game-peer.exs` and the rest of the kit are the commit's, unchanged.
+  - Tested on the new bundle: game-facing peer tests 47 / 47; kit rehearsal 99 / 99.
+- **The PC kit:** `m7l3-admission\kit\`, 49 files, copied from m7l3-prep and verified against its seal (49 / 49). Ten files changed; the diffs are in `kit-derivation\KIT-DIFF-ADMISSION.txt`, and `SOURCE.txt` (`a8771106…`) was appended:
+  - **`cmd-m7l3.exs`** (`05d32c78…`), whose `dest-wait`:
+    - waits for exactly one new stream, with a sample, under the current pinned peer and its generation;
+    - shows the stream's source progress, and gates on it rather than on unrouted deltas;
+    - opens with the admission and the peer generation;
+    - reads the hub's activation evidence from the journal;
+    - checks the acquisition. `counts` also records the streams' progress;
+  - `seq-dest.sh`;
+  - `RUNBOOK.txt` (`73bda90a…`);
+  - `run_manifest.py`:
+    - the new bundle, the dev build and this gate (the M7-L1 gate is historical only);
+    - the socket controls reused by their actual file identities;
+    - this root once sealed;
+  - `record-check.py` and `relied-on.py`;
+  - and the bundle path in `cleanup-l3.sh`, `creds-host.sh`, `run-rehearsal.sh` and `scan-host.sh`.
+- **The packet templates** (`m7l3-admission\packets\`):
+  - the Mac packet (`7ae9f649…`): the new bundle and its counts;
+  - the permission table (`78f18ef8…`): the corrected code and the admission line.
+
+  The m7l3-prep templates stay sealed there, superseded.
+- **Superseded readiness pins** (kept, never overwritten): m7l3-prep's record (a) preview `9e764bf3…` and record (b) preview `43f603a2…`.
+
+### 14.6 The rehearsals against the frozen native6 probe
+
+All dry runs used the run console, the corrected kit, bundle and build, and the frozen native6 probe.
+- **A, B and C** use the unchanged game-facing peer from the new bundle.
+- **D and E** use `scripts\scripted-peer.exs`, a rehearsal control and never a kit or bundle file. It is `game-peer.exs`'s listener and declaration, sending M7-C's exact course words for the sequence numbers the driver releases: the game-facing peer cannot omit chosen indices.
+
+Of record (the final harness `d3117c56…`):
+
+| Dry run | Result | What it shows |
+|---|---|---|
+| A (attempt 5) | PASS 50 / 50 | share 948 sent → 948 relayed → 948 recorded by the Mac's sink, value for value; admitted at source sequence 2 (preparation) and 4 (activation); acquisition at sequence 5 at P; 66 applied; course complete at the opening words; reconciliation |
+| B (attempt 3) | **FAIL 40 / 47** | the operator's close and the admission and acquisition checks ok; then finding 1 below (one boundary refusal) → the kit's HARD STOP → the restoration refused under it |
+| C (attempt 2) | PASS 38 / 38 | no stream within the wait: nothing opened, HARD STOP |
+| D (attempt 1) | PASS 39 / 39 | receipt 2 at source sequence 83: nothing opened; the former gate's quantity (2 <= 55) reported beside it; the stream ends unrouted |
+| E (attempt 1) | PASS 42 / 42 | admitted at sequence 1; then 83 … 241 released the moment the session was active: closed `acquisition_missed:past_prefix:83` before any target; the probe attempted no setter call; HARD STOP; R6 read-only at baseline |
+
+**Also:**
+- the installer / cleanup rehearsal: PASS; in case V the known-key scan is clean before the 4 credential files are shredded;
+- the drift test: PASS, 7 cases;
+- **record (a) preview: NOT READY.** 188 ok and 1 FAIL (`dryrun-b`), 0 invalidated, 17 reused; pin `24939057…`. Every entry this correction rewired is ok. The refresh (b) preview needs an ok record (a) and was not performed.
+
+**Retained failures and superseded attempts** (all kept; `ATTEMPTS.txt`):
+- A attempts 2 and 4 failed on finding 1. Attempts 1 and 3 passed with earlier harness versions.
+- B attempts 1 and 2 failed on finding 2; every PC-side check passed in them.
+- C attempt 1 failed only on the sealed harness's message pattern, since `dest-wait` now says "no stream with a sample".
+- The harness's E check was fixed twice, the second time for a stray quote caught by `bash -n` before any run.
+- The first kit verification record was cut to three lines by a pipe; the complete record supersedes it.
+- An attempt to remove a scratch copy through a variable was refused by the safety check; it was redone with literal paths, and the scratch copy was left in the scratchpad.
+
+### 14.7 Findings for a decision (pre-existing; not changed here)
+
+1. **The unchanged envelope's boundary refusal becomes the kit's HARD STOP.**
+   - **The mechanism:** after a supersession forced by forward pacing, a two-step target can be forwarded at exactly 50 ms of credit. Float32 position words put it at 0.0500031 m against an allowance of 0.05 m, so it is withheld (`refused_displacement`). That is correct and harmless: the course goes on.
+   - **The kit's response:** the M7-C-derived `dest.no-uncertain-no-refusal` treats any BEAM refusal as critical. The session is classified a HARD STOP, and the baseline release or restoration is then refused.
+   - **The rate (diagnostic, not of record):** on the same course with no admission, on the fake native, 4 of 8 runs on the **old** code and 1 of 8 on the corrected code. In the dry runs here it was 2 of 5 A runs and 1 of 3 B runs. None of m7l3-prep's six rehearsal sessions or M7-C's one live session hit it.
+   - **Status:** this pass is barred from timing-policy relaxation. The decision (the kit's classification, the destination's boundary arithmetic, or accepting it) is the reviewer's.
+2. **`game-peer.exs` can crash at its very end** (line 574, unchanged since `aff8193`).
+   - **The mechanism:** after its course ends, the peer reads `Endpoint.status` and then `Connection.status`. The host's `peer-close` closes about 20 ms after the stream end, and in B's timeline the connection exited between the two reads.
+   - **The effect:** exit 1, with no `summary.json`. The Mac's finish record is lost; this is not a safety issue.
+   - **Status:** a live run can meet it whenever `peer-close` lands at the stream end. The pass required the game-facing peer's behaviour unchanged, so it was not fixed.
+3. **The fake native echoes `ghost.closed` reasons unbounded**, where native6 bounds them to 64 bytes. This was met while writing the tests. The new reasons are kept short instead (`"beam:" + reason` within 64 bytes); the fake is not changed.
+
+### 14.8 Performed, reused, not executed
+
+- **Reused by identity:**
+  - native6, its loop, imports, scans and clean build;
+  - the content;
+  - the socket observer's controls;
+  - the Mac runtime archives;
+  - the accepted L2 evidence;
+  - the guard, timestamp, readiness, placement and content tests.
+- **Not executed:**
+  - the activation-boundary race against the probe: only in ExUnit, with the fake's delayed open answer, since it is not deterministic with the probe;
+  - the refresh (b) preview;
+  - anything on a Mac, a LAN, the game or a live credential;
+  - the macOS `lsof` branch.
+
+No timing claim is made.
+
+**Next (not granted):** review. The attended run needs the two findings decided and a fresh authorization with new game and LAN approvals; nothing resumes automatically. M6 closed, M7-C and M7-L2 accepted, M7 open; no tag.
