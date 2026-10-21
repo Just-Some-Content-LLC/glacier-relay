@@ -643,3 +643,45 @@ Of record (the final harness `d3117c56…`):
 No timing claim is made.
 
 **Next (not granted):** review. The attended run needs the two findings decided and a fresh authorization with new game and LAN approvals; nothing resumes automatically. M6 closed, M7-C and M7-L2 accepted, M7 open; no tag.
+
+## 15. The admission correction accepted (bounded); the kit-completion correction (2026-10-21)
+
+**Authorization:** "Glacier Relay — M7-L3 admission acceptance and tooling-completion correction" (2026-10-21), dispatched by Stephen. It accepts section 14's correction for its demonstrated offline scope and authorizes one sequential, offline tooling / test / documentation pass for two corrections, A and B below. No application-library, native, wire, envelope, course, credential or transport change; no game, installation, Mac, USB, LAN, live credential, Ready request, milestone completion or tag. `m7l3-run1` stays unused.
+
+### 15.1 The acceptance (bounded)
+
+Accepted, for the inputs section 14 qualified (application source `46661029`, relay tree `62ad2803`, dev build `acbe456c…`, 91 modules):
+- per-current-stream receipt count and source progress are distinct, and the qualified position evidence belongs to the high-water sample;
+- current-state admission at preparation (sequence <= 55, inclusive) and at the native-open activation (<= 61, inclusive);
+- a qualified exact-P prefix target, sequence below 82, confirmed before any displaced target;
+- context invalidation, duplicate / older handling, the opt-in synthetic-only scope, and unchanged behaviour outside that condition;
+- the strict five-suite gate (923 / 0) and the focused regression and control results for those inputs.
+
+It does **not** establish the producer's present wall-clock phase, absolute freshness, every intermediate course sample, LAN behaviour, or a successful overall operator rehearsal. A5 is a passing execution, not proof that the unchanged full rehearsal was reliable. The old-code diagnostic shows the boundary withholding also occurs without the correction; the small before / after counts do not prove the absence of any scheduling perturbation (no further frequency campaign is run).
+
+**Unchanged facts:** L3 preparation stays **NOT READY**. Section 14's failed attempts (A2, A4, B1–B3, C1), their harness identities and the rejected record (a) preview `24939057…` stay as recorded; nothing here rewrites them or waives the final readiness gate.
+
+**Kept apart:** the review's source reasoning (the pushed admission modules, the hub's preparation and activation, the destination's acquisition / withholding / acknowledgement paths, the peer's finish loop, the committed record; no suite rerun, no probe, no sealed-kit inspection) and this coordinator's recorded execution below.
+
+### 15.2 The tooling policy, decided before code
+
+**Correction A — keep the envelope strict; correct the run verdict.** The kit's interpretation changes, not the destination's arithmetic. `refused_displacement` withholds a target: the counter rises, the pending slot clears, the trace records it, and no `ghost.target` is sent for that sequence. That is not a native refusal, an uncertain application or a violated admission. The 0.0500031 m request against 0.05 m stays withheld. No epsilon, rounding, credit, speed, pacing, clamp, resend, course, deadline or manufactured acknowledgement change.
+
+The kit's former expectation of zero BEAM refusals (`dest.no-uncertain-no-refusal`) is amended explicitly, not by claiming every refusal is harmless. The run verdict types each outcome:
+
+| Outcome | Class | Effect on the run |
+|---|---|---|
+| `refused_displacement` after the acquisition is established, on the bound stream, at a plan point (its distance from its confirmed reference equal to the plan's, and above its allowance), never forwarded, acknowledged or applied | **accounted local withholding** | reported with its sequence, reference, distance and allowance; not forwarded, acknowledged, applied or uncertain; no fatal latch |
+| `not_open` (received after the close) | after the close (as before) | not critical |
+| a native `session_closed` refusal of the target in flight after a requested close | close-caused (as before) | not critical |
+| any other BEAM refusal reason, a reason not in the table, or a withholding that fails any condition above | critical | HARD STOP |
+| any other native refusal; any uncertainty; an unresolved or timed-out target; mismatched acknowledgements | critical | HARD STOP |
+| an admission or acquisition failure; a disagreement close (report, acknowledgement, postimage, open unknown / unverified); audit or trace degradation | critical | HARD STOP |
+| missing or unreconciled evidence (no summary, records that do not account for every validated sample) | critical | HARD STOP |
+| identity / control checks, deadlines, stall and the other close rules | unchanged | as before |
+
+- **Continuation:** a withholding alone does not latch. The unchanged state machine decides whether later samples are eligible; a stall or other terminal condition it leads to is honoured, with no resumption and no new session.
+- **Completion and fidelity are reported apart:** envelope enforcement, course coverage and session completion. A run with a withheld point is not an exact playback: the kit reports the received, validated, superseded, withheld, forwarded, applied and skipped totals, and an outcome line says whether any point was withheld. No numeric tolerance is added.
+- **R6:** accounted withholdings alone do not prohibit the baseline release or the restoration decision. The clean close, ledger, journal, current inspection, identity, generation, parent, control and uncertainty requirements still govern. At the baseline the release is made without a write; a displaced, still-eligible clean session is restored only under the existing separate approval and arming. Never after uncertainty or a genuine HARD STOP, and a historical stop marker is never removed to resume a run.
+
+**Correction B — terminal reporting survives the connection's disappearance.** The fix is in `game-peer.exs`, not the protocol or the application library. The connection-status read itself handles the connection ending between the endpoint's snapshot and the read (a process check before it is not enough), within the call's bounded wait. Unavailable counters are recorded as unavailable with the reason, never as zeros or as the source's enqueue counts. The summary, the finish event, the exit status and the owned-process teardown still happen, from the driver's and endpoint's own facts. `course_complete` versus link loss keeps its meaning; a disconnect during the course stays a non-success. Only that read's exit is caught; its raw term is never printed; a genuinely unexpected failure stays a failure, with its class recorded. No sleep, reconnection, rerun or delay of the host's stop. A summary is not motion authority and changes no session or restore eligibility.
