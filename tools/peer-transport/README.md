@@ -36,6 +36,7 @@ Operator tooling for **one transport-only test of the peer link between two mach
 | `tests/rehearsal.sh` | Windows/WSL | the loopback qualification of the transport kit (M7-L1; M7-L3 added the socket-record checks and the M7-L2 race) |
 | `tests/sockets_test.exs` | Windows/WSL | M7-L3: the socket observation's focused controls |
 | `tests/game-peer-test.sh`, `tests/fake-host.exs` | Windows/WSL | M7-L3: the game-facing peer's focused tests, against a stand-in game host (not the relay's) |
+| `tests/close-race-test.sh` | Windows/WSL | M7-L3: the game-facing peer's end-of-run reporting when the host closes the connection between the endpoint's snapshot and the status read (a deterministic test-only seam in a scratch bundle copy) |
 
 ## Prerequisites (to be checked on the Mac under the L2 authorization, not assumed)
 
@@ -175,7 +176,9 @@ The MacBook's side of the later one-game LAN experiment (design section 26; the 
   - 3: the lifetime ended;
   - 4: the connection ended before identification, or during the course;
   - 5: the host ended it with a share open or incomplete;
+  - 8: the connection's status read failed unexpectedly at the course's end (a timeout, an abnormal exit or a malformed reply; only its class is recorded);
   - 2, 6, 7 and 124: as for `peer.exs`.
+- **The connection's own counters** are read once, when the course's stream has ended. The host's close can land between the endpoint's snapshot and that read. The read handles it, and `summary.json`'s `connection_counts_read` records it: `available` true, or false with the reason (`connection_ended_before_the_read`, class `noproc` or `ended_during`; `status_read_failed`; `not_read`). Unavailable counters are never reported as zeros. The run still ends with its summary, its `finished` event and its exit status (M7-L3 record section 15).
 
 The configuration (`glacier-relay.peer-game-run/1`) has the transport configuration's keys, with these differences:
 - `"role": "listen"` only;

@@ -31,7 +31,10 @@
 # Exit status: 0 ended by the game host after identification, every inbound stream ended and transport-complete, and the course,
 # if one ran, ended by its own course_complete; 2 refused before any socket; 3 the lifetime ended (identified or not); 4 the connection ended before
 # identification, or during the course; 5 ended by the game host with an inbound stream open or not transport-complete; 6 stopped
-# by stop.sh (SIGTERM); 7 the endpoint could not start; 124 the hard backstop (lifetime + 15 s). Never a reconnection.
+# by stop.sh (SIGTERM); 7 the endpoint could not start; 8 the connection's status read failed unexpectedly at the course's end (a
+# timeout, an abnormal exit, a malformed reply: its class only is recorded); 124 the hard backstop (lifetime + 15 s). Never a
+# reconnection. The summary's connection_counts_read says whether the connection's own counters were read: a host close between
+# the endpoint's snapshot and the read leaves them unavailable (recorded with the reason), never zeros (M7-L3 record section 15).
 # No private key, CA key or certificate body is ever printed or written by this script.
 
 alias GlacierRelay.HeadlessPeer
@@ -360,6 +363,35 @@ defmodule GamePeer do
 
   def limits(%{"lifetime_s" => l} = m) when map_size(m) == 1 and is_integer(l) and l in 60..900, do: %{lifetime_ms: l * 1_000}
   def limits(other), do: PeerKit.refuse("limits must be exactly {\"lifetime_s\": 60..900}: #{inspect(other)}")
+
+  # the connection's own counters, read once after the course's stream ended, from the connection the endpoint's snapshot listed
+  # (M7-L3 record section 15). The game host may close it between that snapshot and this read: its peer-close lands about 20 ms
+  # after the stream's end (m7l3-admission dry-run-B-attempt1 / -2, where the read exited the run without its summary). The read
+  # itself handles it: GenServer.call monitors the connection, so an exit before or during the read ends the wait at once, and
+  # the library's call timeout (5,000 ms) bounds the rest. Only this read's exit is caught, and only its class is kept (never
+  # the exit's term):
+  #   {:ok, counts}                    read
+  #   {:unavailable, "noproc"}         the connection had already ended          } expected: the host's close; counters
+  #   {:unavailable, "ended_during"}   it ended (normal / shutdown) during it    } unavailable, never zeros or enqueue counts
+  #   {:failed, "timeout" | "exit_abnormal" | "malformed_status"}   unexpected: the run ends as a failure (exit 8)
+  def connection_counts(pid) do
+    reply =
+      try do
+        Connection.status(pid)
+      catch
+        :exit, {reason, {GenServer, :call, [^pid | _]}} -> {:exit, reason}
+      end
+
+    case reply do
+      {:exit, :noproc} -> {:unavailable, "noproc"}
+      {:exit, r} when r in [:normal, :shutdown] -> {:unavailable, "ended_during"}
+      {:exit, {:shutdown, _}} -> {:unavailable, "ended_during"}
+      {:exit, :timeout} -> {:failed, "timeout"}
+      {:exit, _} -> {:failed, "exit_abnormal"}
+      %{counts: c} when is_map(c) -> {:ok, Map.new(c, fn {k, v} -> {to_string(k), v} end)}
+      _ -> {:failed, "malformed_status"}
+    end
+  end
 end
 
 # ================================================================================================================================
@@ -485,6 +517,7 @@ finish = fn outcome, code, st ->
     "peer_seen" => st.peer,
     "endpoint_counts" => Map.new(es.counts, fn {k, v} -> {to_string(k), v} end),
     "connection_counts" => st.conn_counts,
+    "connection_counts_read" => st.conn_read || %{"available" => false, "reason" => "not_read", "why" => "no course stream ended while the endpoint listed the connection (no course, the connection ended first, or the run stopped)"},
     "course" => Map.merge(course_view, %{"go" => st.go}),
     "sources_done" => Enum.map(ds.sources_done, fn s -> Map.new(s, fn {k, v} -> {to_string(k), v} end) end),
     "sinks_done" =>
@@ -569,12 +602,35 @@ loop = fn loop, st ->
       PeerKit.say("a connection came and went without an identification; no reconnection")
       finish.("connection_ended_before_identification", 4, st)
 
-    # the connection's own counters, read once when the course's stream has ended and the connection is still up
-    st.up_at != nil and st.conn_counts == nil and ds.source == nil and ds.sources_done != [] and es.connection != nil ->
-      cc = Connection.status(es.connection.pid).counts |> Map.new(fn {k, v} -> {to_string(k), v} end)
-      ev.("course_ended", %{"elapsed_ms" => t, "sources_done" => Enum.map(ds.sources_done, fn s -> Map.new(s, fn {k, v} -> {to_string(k), v} end) end), "connection_counts" => cc})
-      PeerKit.say("the course stream ended (sent #{Enum.map_join(ds.sources_done, ",", & &1.sent)}); waiting for the game host to close the connection")
-      loop.(loop, %{st | conn_counts: cc})
+    # the connection's own counters, read once when the course's stream has ended while the endpoint lists the connection; the
+    # host may close it in between (GamePeer.connection_counts/1): then they are unavailable, and the host's close ends the run
+    # through the branch below, by the driver's and endpoint's own facts
+    st.up_at != nil and st.conn_read == nil and ds.source == nil and ds.sources_done != [] and es.connection != nil ->
+      read = GamePeer.connection_counts(es.connection.pid)
+
+      {cc, rec} =
+        case read do
+          {:ok, cc} -> {cc, %{"available" => true, "elapsed_ms" => t}}
+          {:unavailable, class} -> {nil, %{"available" => false, "reason" => "connection_ended_before_the_read", "class" => class, "elapsed_ms" => t}}
+          {:failed, class} -> {nil, %{"available" => false, "reason" => "status_read_failed", "class" => class, "elapsed_ms" => t}}
+        end
+
+      ev.("course_ended", %{"elapsed_ms" => t, "sources_done" => Enum.map(ds.sources_done, fn s -> Map.new(s, fn {k, v} -> {to_string(k), v} end) end), "connection_counts" => cc, "connection_counts_read" => rec})
+      st = %{st | conn_counts: cc, conn_read: rec}
+
+      case read do
+        {:ok, _} ->
+          PeerKit.say("the course stream ended (sent #{Enum.map_join(ds.sources_done, ",", & &1.sent)}); waiting for the game host to close the connection")
+          loop.(loop, st)
+
+        {:unavailable, class} ->
+          PeerKit.say("the course stream ended (sent #{Enum.map_join(ds.sources_done, ",", & &1.sent)}); the connection ended before its counters were read (#{class}): they are unavailable")
+          loop.(loop, st)
+
+        {:failed, class} ->
+          PeerKit.say("the course stream ended (sent #{Enum.map_join(ds.sources_done, ",", & &1.sent)}); the connection's status read FAILED (#{class}): an unexpected failure, the run ends")
+          finish.("connection_status_unreadable", 8, st)
+      end
 
     st.up_at != nil and ds.peer == nil ->
       ev.("peer_down", %{"elapsed_ms" => t})
@@ -594,4 +650,4 @@ loop = fn loop, st ->
   end
 end
 
-loop.(loop, %{up_at: nil, peer: nil, go: nil, conn_counts: nil, obs: [PeerKit.compact("endpoint", obs0)]})
+loop.(loop, %{up_at: nil, peer: nil, go: nil, conn_counts: nil, conn_read: nil, obs: [PeerKit.compact("endpoint", obs0)]})

@@ -153,9 +153,13 @@ r=$(req "$d" '{"op":"wait_course","ms":20000}' 220); echo "$r" > "$d/course-rece
 [ "$(jf "$r" digest)" = "$EXP_DIGEST" ]; ok $? "$c: the received course is M7-C's, sample for sample (digest $(jf "$r" digest))"
 [ "$(jf "$r" open.source_kind)" = synthetic ] && [ "$(jf "$r" open.course)" = "$EXP_DESC" ] && [ "$(jf "$r" open.src_clock)" = beam ]; ok $? "$c: the stream declares synthetic, src_clock beam, M7-C's course description"
 [ "$(jf "$r" stream_end.reason)" = course_complete ] && [ "$(jf "$r" stream_end.sent)" = "$EXP_N" ] && [ "$(jf "$r" stream_end.last_seq)" = "$EXP_N" ]; ok $? "$c: stream.end course_complete, sent $EXP_N, last seq $EXP_N"
+# the host closes only after the Mac has read its connection's counters (M7-L3 record section 15: close-race-test.sh forces the
+# other order)
+wait_grep "$d/out-mac/events.ndjson" '"event":"course_ended"' 50
 r=$(req "$d" '{"op":"close"}' 50); [ "$(jf "$r" closed)" = True ]; ok $? "$c: the host closes the connection"
 wait $MBG; MRC=$?; host_stop
 [ "$MRC" = 0 ] && [ "$(jget "$d/out-mac/summary.json" outcome)" = ended_by_host ]; ok $? "$c: the Mac ends by itself: exit $MRC, $(jget "$d/out-mac/summary.json" outcome)"
+[ "$(jget "$d/out-mac/summary.json" connection_counts_read.available)" = True ] && [ "$(jget "$d/out-mac/summary.json" connection_counts.samples_out)" = "$EXP_N" ] && [ "$(grep -c '"event":"finished"' "$d/out-mac/events.ndjson")" = 1 ]; ok $? "$c: the connection's counters read at the course's end (available $(jget "$d/out-mac/summary.json" connection_counts_read.available), samples_out $(jget "$d/out-mac/summary.json" connection_counts.samples_out)); one finished event"
 [ "$(jget "$d/out-mac/summary.json" sinks_done.0.received)" = 40 ] && [ "$(jget "$d/out-mac/summary.json" sinks_done.0.transport_complete)" = True ] && [ "$(jget "$d/out-mac/summary.json" sinks_done.0.source_kind)" = game ]; ok $? "$c: the Mac's sink recorded the share: 40 received, transport-complete, source kind game"
 [ "$(jget "$d/out-mac/summary.json" sources_done.0.sent)" = "$EXP_N" ] && [ "$(jget "$d/out-mac/summary.json" sinks_open)" = 0 ]; ok $? "$c: the Mac's source sent $EXP_N; no inbound stream left open"
 o=$(obs_ok "$d/out-mac/summary.json" "127.0.0.1:$port"); [ "${o%% *}" = 1 ]; ok $? "$c: every socket observation (endpoint, identification, go, finish) is 'observed', listening exactly 127.0.0.1:$port: ${o#* }"
@@ -189,6 +193,7 @@ mac_start "$d" "$port"; host_start "$d" "$port"; req "$d" '{"op":"wait_up","ms":
 sh "$B/kit/go.sh" "$d/out-mac" > "$d/go.txt" 2>&1; sleep 2
 req "$d" '{"op":"close"}' 50 > /dev/null; wait $MBG; MRC=$?; host_stop
 [ "$MRC" = 4 ] && [ "$(jget "$d/out-mac/summary.json" outcome)" = disconnected_during_course ] && [ "$(jget "$d/out-mac/summary.json" endpoint_counts.connections)" = 1 ]; ok $? "$c: exit $MRC, disconnected during the course, one connection (no reconnection)"
+[ "$(jget "$d/out-mac/summary.json" connection_counts_read.available)" = False ] && [ "$(jget "$d/out-mac/summary.json" connection_counts)" = None ]; ok $? "$c: the counters marked unavailable ($(jget "$d/out-mac/summary.json" connection_counts_read.reason)), never zeros"
 
 # ---- stop.sh during the run: exit 6 with a summary ----------------------------------------------------------------------------------
 c=stop; d=$A/$c; mkdir -p "$d"; port=$(free_port); gcfg "$d/mac.json" "$port" "$d/out-mac"
@@ -196,6 +201,7 @@ mac_start "$d" "$port"
 sh "$B/kit/stop.sh" "$d/out-mac" > "$d/stop.txt" 2>&1; ok $? "$c: stop.sh accepts the game-facing peer's recorded pid"
 wait $MBG; MRC=$?
 [ "$MRC" = 6 ] && [ "$(jget "$d/out-mac/summary.json" outcome)" = stopped_by_signal ]; ok $? "$c: exit $MRC, stopped_by_signal, summary written"
+[ "$(jget "$d/out-mac/summary.json" connection_counts_read.reason)" = not_read ]; ok $? "$c: the counters marked not read"
 
 # ---- no game host within the lifetime: exit 3 (the minimum lifetime, 60 s) ------------------------------------------------------------
 c=lifetime; d=$A/$c; mkdir -p "$d"; port=$(free_port); gcfg "$d/mac.json" "$port" "$d/out-mac"
