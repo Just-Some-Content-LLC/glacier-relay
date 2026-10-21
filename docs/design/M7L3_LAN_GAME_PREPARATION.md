@@ -6,7 +6,7 @@
 
 M7-L3 is the working label of that next subdivision of M7-L.
 
-**Status: preparation DONE offline (2026-10-20); ACCEPTED for its demonstrated offline scope (section 12). The attended run authorized with that acceptance STOPPED before live execution: the sealed `dest-wait` cannot establish its stationary-prefix admission (section 13). Option A was then implemented and validated offline (section 14: the source-sequence admission correction, 2026-10-20); two pre-existing defects found by its rehearsals remain for a decision. Awaiting review.** The later experiment would join two capabilities already demonstrated separately:
+**Status: preparation DONE offline (2026-10-20); ACCEPTED for its demonstrated offline scope (section 12). The attended run authorized with that acceptance STOPPED before live execution: the sealed `dest-wait` cannot establish its stationary-prefix admission (section 13). Option A was then implemented and validated offline (section 14: the source-sequence admission correction, 2026-10-20); accepted for its offline scope, and the two defects its rehearsals found corrected in the kit and the game-facing peer (section 15: the kit completion, 2026-10-21; the readiness previews ok). Awaiting review.** The later experiment would join two capabilities already demonstrated separately:
 - M7-C: on one host, a real-player share to a headless sink, then a synthetic course driving Agent48;
 - M7-L2: transport and accounting between the Windows/WSL host and the MacBook.
 
@@ -685,3 +685,134 @@ The kit's former expectation of zero BEAM refusals (`dest.no-uncertain-no-refusa
 - **R6:** accounted withholdings alone do not prohibit the baseline release or the restoration decision. The clean close, ledger, journal, current inspection, identity, generation, parent, control and uncertainty requirements still govern. At the baseline the release is made without a write; a displaced, still-eligible clean session is restored only under the existing separate approval and arming. Never after uncertainty or a genuine HARD STOP, and a historical stop marker is never removed to resume a run.
 
 **Correction B — terminal reporting survives the connection's disappearance.** The fix is in `game-peer.exs`, not the protocol or the application library. The connection-status read itself handles the connection ending between the endpoint's snapshot and the read (a process check before it is not enough), within the call's bounded wait. Unavailable counters are recorded as unavailable with the reason, never as zeros or as the source's enqueue counts. The summary, the finish event, the exit status and the owned-process teardown still happen, from the driver's and endpoint's own facts. `course_complete` versus link loss keeps its meaning; a disconnect during the course stays a non-success. Only that read's exit is caught; its raw term is never printed; a genuinely unexpected failure stays a failure, with its class recorded. No sleep, reconnection, rerun or delay of the host's stop. A summary is not motion authority and changes no session or restore eligibility.
+
+**Evidence:** `%TEMP%\glacier-m0\hitmen\m7l3-kit-completion\`, claimed from bash 2026-10-21T02:25:04Z (guard `426347f2…`). **Sealed:** 2,996 entries, manifest `804c277d2b5ddc3e81834daddefbce1f83ba8c941f267e4e4cb33549df4be13a`; it verifies, has 0 unlisted files, its temporary manifest was written in the state root, and the guard refuses the root. The state root is empty. **Final scan:** 2,995 files, 0 key material; the 5 armour-like texts are the scanner's own source (twice), `rehearsal.sh`'s source and the self-test's two negative fixtures. Every attempt, failed and development ones included, is indexed in `ATTEMPTS.txt`.
+
+**Frozen basis** (`checkpoint-attempt1`, 38 / 38): `6c90c6c` (parent `46661029`; only `docs/` since), relay tree `62ad2803`, kit tree `2fd701c8`, SDK `8129d721`, the tags, the runtime, the dev build `acbe456c…` (91 modules), native6, the content, the m7l3-admission seal with its kit, bundle, packets, scripts and the retained dry runs A2 / A4 / A5 / B1–B3 re-hashed, the current Mac bundle, the M7-L2 seal and the Mac runtime archives; no process, ports free.
+
+**Commits** (glacier-relay `main`; pushed): `fe7de44` (15.1–15.2, before code) and `7c05456` (correction B). The relay tree is unchanged (`62ad2803`); the kit tree is now `73debc26`.
+
+### 15.3 Correction A as implemented (the PC kit)
+
+`kit\dest_verdict.exs` (new; `M7l3.DestVerdict`, pure; loaded by `console.exs` before the relay starts) types the session's outcome from the hub's summary, the host trace's records of the session and the presented plan's words. `cmd-m7l3.exs` `dest-wait` calls it in place of the former `dest.no-uncertain-no-refusal`. Its six lines are `dest.*` lines, so `seq-dest.sh`'s unchanged rule (any `dest.*` NOT is the HARD STOP) applies to them:
+
+| Line | NOT when |
+|---|---|
+| `dest.no-uncertain-no-native-refusal` | any uncertainty; a native refusal other than a `session_closed` refusal after a requested close; trace and counters disagree |
+| `dest.beam-refusals-none-critical` | a BEAM refusal by any reason except `not_open` (after the close) and `refused_displacement` (judged per record); a reason this kit does not know |
+| `dest.withheld-points-accounted` | a `refused_displacement` record that is not after the established acquisition (trace order), not above its allowance, whose reference is not a confirmed forwarded target at its plan point, whose distance is not bit-equal to the plan's distance between the two plan points (the destination's own arithmetic), or that has a forward or acknowledgement; a count without its records |
+| `dest.no-control-failure-close` | a disagreement close (report, acknowledgement, postimage, open unknown / unverified, `ack_timeout`), `uncertain:` / `native_refused:` / `acquisition_missed:` / `admission_not_met`, `audit_degraded`, `trace_unhealthy`; an unresolved or timed-out target; mismatched acknowledgements; no close |
+| `dest.forwarded-targets-are-plan-points` | a forwarded target that is not the plan's point of its sequence |
+| `dest.validated-samples-accounted` | validated is not forwarded + superseded + withheld + dropped at the close + withdrawn + cancelled before send |
+
+- **Reported, never latched:** each withheld point as a `WITHHELD` line (sequence, reference, distance, allowance), a `FOLLOW` line and `<label>-follow.json` (received, validated, superseded, withheld, forwarded, applied, skipped, refused natively, uncertain, dropped; the plan points confirmed in the received span; exact playback of every point), and `outcome.no-point-withheld`, an outcome line that does not stop the run. `seq-dest.sh` repeats the follow totals and every withheld point.
+- **R6:** no code change was needed. An accounted withholding leaves every `dest.*` line ok, so no stop marker is written, and `r6-decide`, `confirm-baseline` and `restore` run under their unchanged rules.
+- **The application's own rule, observed:** its `restorable` excludes uncertainty and the disagreements, but not a native-refusal or audit-degraded clean close (KV-8, KV-15a). After those, the kit's HARD STOP is what withholds a restoration, as before.
+- **`reconcile-l3.py`:** a `refused_displacement` record is the destination's decision on a sample already received, not a receipt (A2, A4 and B3 each failed its span and sent = before + during + after checks on that second record). Each withheld sequence is reconciled: received and validated once, never forwarded or acknowledged, no native target line of any kind, the Mac's sent words equal to the plan's. Every course sample the Mac sent must be the plan's point of its sequence.
+- **The other kit files:** the RUNBOOK (R5's typed verdict, R6, the Mac's final report, the stop conditions, the paths and identities), `run_manifest.py`, `make-readiness.sh`, `record-check.py`, `relied-on.py`, and the bundle path in four scripts (`kit-derivation\KIT-DIFF-COMPLETION.txt`).
+
+### 15.4 Correction B as implemented (`game-peer.exs`, `7c05456`)
+
+- `GamePeer.connection_counts/1` makes the read itself handle the connection's end. It catches only that call's exit (`{reason, {GenServer, :call, [pid | _]}}`) and keeps only its class:
+  - `noproc` → unavailable, `noproc`;
+  - `normal`, `shutdown`, `{:shutdown, _}` → unavailable, `ended_during`;
+  - `timeout`, any other exit, or a reply without counters → a failure: `connection_status_unreadable`, **exit 8**.
+- The wait is bounded by the call itself: its monitor ends it at the connection's exit, and the library's 5,000 ms timeout bounds the rest. No sleep, retry or reconnection.
+- `summary.json` gains `connection_counts_read` (`available`, or the reason and class; `not_read` when no read was made). `connection_counts` stays nil when unavailable, never zeros. `course_ended` carries the same.
+- The `finished` event, the exit status and the teardown happen as before. The outcome still comes from the driver's and endpoint's own facts, so `course_complete` versus link loss is unchanged.
+- **The adjacent calls reviewed:** `Driver.status` and `Endpoint.status` in the loop and at the finish read permanent children of the peer's supervisor, not the connection; they do not share the race.
+- **Tests:**
+  - `tests\close-race-test.sh` (new) forces the race with a test-only seam in a scratch copy of the bundle (never shipped; its diff is kept);
+  - `tests\game-peer-test.sh` now orders its normal close after the counters' read and asserts the marker.
+
+### 15.5 Proof: before and after
+
+| | Before | After |
+|---|---|---|
+| The boundary withholding (the retained dry runs, replayed read-only: `replay-attempt4`) | A2, A4, B3: `dest.no-uncertain-no-refusal` NOT → HARD STOP (B3's restoration refused under it); `reconcile-l3.py` FAIL (2) on each | the same evidence: one **accounted** withholding each (sequences 106, 163, 108: 0.0500030517578125 m > 0.05 m, reference two steps back), no typed line NOT; reconciliation PASS, each withheld sequence never forwarded or acknowledged, no native line, the Mac's sent words the plan's. A5, B1, B2: none. E1: critical (`acquisition_missed`) |
+| The Mac's end (`close-race-old-attempt1` / `close-race-corrected-attempt1`) | the host's close forced between the endpoint's snapshot and the read: **exit 1, no `summary.json`**, no `finished` event (`noproc` at `game-peer.exs:576` = 574 plus the two seam lines) | ended by the host, exit 0, the summary with the counters unavailable (`noproc`), one `course_ended` and one `finished` event, no exit term printed; the source's `course_complete` and 241 sent kept |
+| The live installer's record check (`qual-consistency-attempt1`) | the m7l3-admission kit's list names `gate-beam-l1`, absent from its record (a) | all 21 qualifications present and ok in this pass's record (a) preview |
+
+**The kit-verdict tests** (`kit-verdict-attempt1`; seed 0, declared; 17 tests, 0 failures, no warning), in a scratch copy of the unchanged relay tree `62ad2803`:
+- **The exact boundary through the production `Motion.Destination`, with M7-C's words** (KV-1 to KV-3): reference 104 sent at R, 105 pending, 106 superseding it at exactly R + 50. Allowance 0.05 m, distance 0.0500030517578125 m: withheld, with no send action. The reference, its time and the last forward time are unchanged. 107 at R + 100 is forwarded against 104 (allowance 0.1 m). The stall still closes at exactly R + 250. The kit's classifier calls 106 an accounted withholding and no line NOT. The former rule's zero-refusal condition would have latched.
+- **Negative controls** (KV-4 to KV-12), each keeping a `dest.*` line NOT that `seq-dest.sh`'s own pattern (read from the kit file) classifies as the HARD STOP:
+  - a native refusal; an uncertain effect; an acquisition failure; an acknowledgement timeout; audit degradation;
+  - a reason this kit does not know (a synthetic summary);
+  - an older sample;
+  - an off-plan target: withheld, it is not accounted; forwarded inside the envelope, it is critical;
+  - missing evidence.
+- **The loopback stack** (KV-13 to KV-15c; the real hub, authority and fake native):
+  - **A deterministic in-plan withholding:** 106 sent after 100, a source omission, 0.15 m from the reference and above any allowance. The fake read no `ghost.target` line for 106 and applied nothing for it. The classifier accounts it. The course returned to P and the authority's own `confirm_baseline` released it (`at_baseline`).
+  - **The same, displaced at the operator's close:** the authority's own restoration was applied and judged `restored`, with the fake back at the opening words.
+  - **Three faults:** a native refusal (critical in the kit; the application still holds the clean close restorable), an uncertain effect and an acknowledgement timeout (both critical; the authority refuses the restoration).
+
+### 15.6 The bundle, the kit, the packets and readiness
+
+- **The kit-only bundle** (`rebundle.sh` for `7c05456`, from the m7l3-admission bundle `645624b4…`):
+  - `peer-transport-7c05456c561b`; `MANIFEST.sha256` `a1c5d7d21ff38dba593140975584f0ccea3417e4bb7c5b466aa3910b9f2572e1`; archive `ebb021e8579ffb6fd2e015fb610ebdb9df60b46640b78640864b05acb2a1e980`; 103 files.
+  - The 92 `ebin` entries (91 modules and the app file) are identical to the qualified bundle's. Only `BUNDLE.txt`, `kit/game-peer.exs` (`49a8ea6e…`) and `kit/README.md` differ.
+- **The PC kit:** `m7l3-kit-completion\kit\`, 50 files: the verified m7l3-admission kit, 14 files changed and `dest_verdict.exs` (`1cfddcee…`) added; `cmd-m7l3.exs` `a2dd903e…`, RUNBOOK `42ebb9bb…`.
+- **The packet templates:** Mac `a8206475…`, permission table `2d37503e…`.
+- **Readiness:**
+  - the installer / cleanup rehearsal: PASS (0 failures);
+  - the drift test: PASS (7 cases);
+  - **record (a) preview: RESULT ok.** 198 ok, 0 FAIL, 0 invalidated; 179 performed, 19 reused. Pin `e4422de10762082b82b849e7a4944ee7b6dd61f7834af7b14149f8b486a90196`. The BEAM gate is reused by its own relay trees (46661029's), not the kit tree;
+  - **record (b) preview: RESULT ok.** 194 ok; pin `f280064d…`; run id `m7l3-kit-completion-preview`, a scratch confirmation that no installer accepts; the game was only read.
+- **Superseded, kept:** the m7l3-admission bundle and its record (a) preview `24939057…` (NOT READY); m7l3-prep's previews.
+- **Reused by identity:** the application, its dev build, native6 and the content.
+
+### 15.7 The rehearsal set and the attempts kept
+
+One predeclared set against the frozen native6 probe: A, B, C, D and E, each once. The harness (`92081390…`) was derived from the sealed one by `scripts\derive-dry-run.py` (`kit-derivation\DRY-RUN-DIFF.txt`), with the inputs frozen first (`frozen-inputs.txt`). None failed:
+
+| Dry run | Result | What it shows |
+|---|---|---|
+| A (attempt 1) | PASS 52 / 52 | share 951 → sink value for value; admitted at 3 / 3; acquisition at 4; the typed lines ok; 238 received, 20 superseded, 218 forwarded, none withheld; course complete at the opening words; baseline released without a write; the Mac's counters read |
+| B (attempt 1) | PASS 49 / 49 | the operator's close mid-course; the typed lines ok (`not_open` after the close); restore-eligible; the one restoration judged restored, back at the opening words; the Mac's final report intact |
+| C (attempt 1) | PASS 39 / 39 | no stream within the wait: nothing opened, HARD STOP |
+| D (attempt 1) | PASS 39 / 39 | receipt 2 at source sequence 83: nothing opened |
+| E (attempt 1) | PASS 43 / 43 | closed `acquisition_missed` before any target, typed critical; HARD STOP; R6 read-only |
+
+Neither A nor B happened to meet a boundary withholding, and neither happened to meet the close race. A passing set is not a frequency claim. Both cases are proved deterministically above.
+
+**Kept, not of record** (`ATTEMPTS.txt`):
+- the development iterations, including two that failed and were fixed: the close-race test's scratch copy listed its own temporary manifest, and two compile warnings in the kit-verdict test;
+- replay attempts 1–3: the session dump would not decode with `binary_to_term [:safe]`, because it holds atoms no loaded module defines. Attempt 4 decodes this kit's own sealed output plainly, after the checkpoint re-hashed it;
+- the first game-peer and kit-rehearsal attempts: both passed, but `run-tests.sh` gave their outputs other names than the ones `run_manifest.py` reads. They were rerun once with the sealed names; editing `run_manifest.py` would have invalidated A–C;
+- record (a) preview attempt 1: NOT READY only because the two commits were not yet pushed; every reuse was ok.
+
+### 15.8 Disclosures
+
+1. **A pre-existing defect in the m7l3-admission kit, found and fixed here:** its `record-check.py` named `gate-beam-l1` among record (a)'s required qualifications, while its `run_manifest.py` emits `gate-beam-l3a`. The live installer's record check would have refused that kit's record (a). The installer rehearsal runs only the `rehearse` mode, which does not examine record (a), so nothing caught it. It failed closed (no installation would have proceeded), and nothing ran live.
+2. **The application's restoration rule:** see 15.3. Unchanged; the kit's stop covers those closes.
+3. **The fake native's unbounded `ghost.closed` reasons** (14.7, finding 3): unchanged.
+4. **The test-only seam** exists only in scratch copies, never in the shipped bytes. In the mid-course disconnect the counters' marker can be `not_read` or unavailable, depending on which of the endpoint's view and the driver's comes first. The outcome (exit 4, `disconnected_during_course`, `peer_link_lost`) is strict.
+
+### 15.9 Performed, reused, not executed
+
+- **Performed:**
+  - the checkpoint and the two corrections;
+  - the close-race tests (old and corrected), the game-peer tests, the kit rehearsal and the kit-verdict tests;
+  - the replay on the retained runs;
+  - the kit-only bundle;
+  - the A–E set;
+  - the installer rehearsal, the drift test, record (a) and the record (b) preview, the consistency check;
+  - the scan and the seal.
+- **Reused by identity:**
+  - the application and its BEAM gate (923 / 0 × 5 on `46661029`);
+  - the dev build `acbe456c…`; the compiled modules, byte for byte;
+  - native6 with its loop, imports, scans and clean build; the content;
+  - the socket controls; the Mac runtime archives; the accepted L2 evidence;
+  - the guard, timestamp, readiness, placement and content tests.
+- **Not executed:**
+  - no suite campaign, application or native build;
+  - nothing on a Mac, a LAN, the game or a live credential;
+  - the macOS `lsof` branch;
+  - the activation-boundary race against the probe (14.8);
+  - no timing claim.
+
+### 15.10 Status
+
+Findings 1 and 2 of 14.7 are corrected within the kit and the game-facing peer, the application unchanged; finding 3 (the fake native) stands. The offline preparation's readiness previews are ok on this pass's inputs. No specific blocker remains offline; nothing required an application or native change.
+
+This is not an authorization. The attended run needs review and a fresh authorization with new game and LAN approvals; its own records (a) and (b) are made at the run for its roots, record (b) after a fresh Ready. `m7l3-run1` stays unused. M6 closed, M7 open; no tag.

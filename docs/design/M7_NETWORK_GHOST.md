@@ -900,6 +900,16 @@ Section 29 is implemented and validated offline (`M7L3_LAN_GAME_PREPARATION.md` 
 
 Sections 15–29 are unchanged. M7 is not complete.
 
+## 31. The kit completion (pointer; 2026-10-21)
+
+Section 30's correction is accepted for its offline scope, and its two defects are corrected outside the application (`M7L3_LAN_GAME_PREPARATION.md` section 15; evidence `m7l3-kit-completion\`, sealed, 2,996 entries, manifest `804c277d2b5ddc3e81834daddefbce1f83ba8c941f267e4e4cb33549df4be13a`):
+- **The run verdict is typed** (the PC kit's `dest_verdict.exs`). The envelope's `refused_displacement`, after the acquisition, at a plan point and never forwarded, is an accounted local withholding: reported, not a HARD STOP. Every other refusal, any uncertainty, a control-failure close and unreconciled evidence stay critical. The envelope itself (section 15.3) is unchanged.
+- **The game-facing peer's final report** survives the host's close between the endpoint's snapshot and its counters' read: they are recorded as unavailable, never as zeros, and an unexpected read failure is exit 8 (`7c05456`).
+- **Identities:** the application, its gate (923 / 0), the dev build `acbe456c…`, native6 and the content are reused by identity. The kit-only bundle is `peer-transport-7c05456c561b` (`a1c5d7d2…`), with the compiled modules byte for byte.
+- **Validation:** one A–E rehearsal set passes, and the readiness previews (a) and (b) are ok.
+
+Sections 15–30 are unchanged. M7 is not complete.
+
 ## 13. Sources
 
 | Claim area | Source (blobs in `source-facts.txt`) |

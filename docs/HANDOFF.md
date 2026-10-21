@@ -1,5 +1,30 @@
 # Handoff checkpoint
 
+Updated: 2026-10-21, after **the M7-L3 admission acceptance and the kit completion** (authorization "Glacier Relay — M7-L3 admission acceptance and tooling-completion correction"; record `docs/design/M7L3_LAN_GAME_PREPARATION.md` section 15; pointer `docs/design/M7_NETWORK_GHOST.md` section 31; evidence `m7l3-kit-completion\`, sealed, 2,996 entries, manifest `804c277d2b5ddc3e81834daddefbce1f83ba8c941f267e4e4cb33549df4be13a`). No application, native, wire, envelope, course or content change. No game, Mac, LAN or live credential. No tag. M7 stays open; awaiting review.
+- **Accepted (bounded):** section 14's source-sequence admission, for its demonstrated offline scope (15.1). Not established: the producer's wall-clock phase, freshness, LAN behaviour.
+- **Correction A, the run verdict typed** (the PC kit; `kit\dest_verdict.exs`):
+  - the envelope's `refused_displacement` after the acquisition, at a plan point, never forwarded is an **accounted local withholding**: reported (`WITHHELD`, `FOLLOW`, `outcome.no-point-withheld`), not a HARD STOP;
+  - every other refusal, any uncertainty, a control-failure close and unreconciled evidence stay critical;
+  - R6 is unchanged; `reconcile-l3.py` treats a withholding as a decision, not a receipt.
+- **Correction B, the Mac peer's final report** (`7c05456`): the counters' read handles the host's close (unavailable, never zeros); an unexpected read failure is exit 8; the summary, the `finished` event and the teardown always happen.
+- **Proof:**
+  - **The close race:** the forced race on the old script gave exit 1 and no summary; the corrected script gives exit 0 with a truthful summary (close-race 12 / 12 and 25 / 25).
+  - **The retained runs:** replayed, A2 / A4 / B3 go from HARD STOP and reconciliation FAIL to one accounted withholding each and PASS.
+  - **The kit-verdict tests:** 17 / 17, covering the production Destination's exact boundary, the negative controls, and the loopback stack with the authority's own baseline release and restoration.
+- **Found and fixed:** the m7l3-admission kit's `record-check.py` named `gate-beam-l1`; its live installer check would have refused its own record (a).
+- **Identities:**
+  - the kit-only bundle `peer-transport-7c05456c561b` (`MANIFEST.sha256` `a1c5d7d2…`, archive `ebb021e8…`, 103 files; the modules byte for byte);
+  - the kit `m7l3-kit-completion\kit\` (50 files); the packet templates in `m7l3-kit-completion\packets\`;
+  - reused: the relay tree `62ad2803`, the dev build `acbe456c…`, native6 and the content.
+- **Rehearsals of record** (native6 probe), each once: A 52 / 52, B 49 / 49, C 39 / 39, D 39 / 39, E 43 / 43. Neither A nor B met a withholding or the race; the deterministic tests cover both.
+- **Readiness:**
+  - the installer rehearsal and the drift test pass;
+  - **record (a) preview ok**: 198 ok, pin `e4422de1…`;
+  - **record (b) preview ok**: 194 ok, pin `f280064d…`.
+
+  The m7l3-admission bundle and its preview `24939057…` are superseded.
+- **Next (not granted):** review; then a fresh attended-run authorization with new game and LAN approvals. `m7l3-run1` stays unused.
+
 Updated: 2026-10-20, after **the M7-L3 source-sequence admission correction** (authorization "Glacier Relay — M7-L3 source-sequence admission correction", option A; record `docs/design/M7L3_LAN_GAME_PREPARATION.md` section 14; contract `docs/design/M7_NETWORK_GHOST.md` section 29 and ADR 0010 amendment 15; pointer section 30; evidence `m7l3-admission\`, sealed, 6,009 entries, manifest `655ec5f875759d3413e569c3a8af0a56d9838da13f06ac5f0bedc7b9b310be2e`). Offline only. No game, Mac, LAN socket or live credential. `m7l3-run1` is unused. No tag. M7 stays open; awaiting review.
 - **The correction:**
   - **Progress:** for every open peer stream, the hub keeps its received source progress (highest sequence with its words, qualification and two times; counts; observed gaps), scoped to the connection, boot and stream.
